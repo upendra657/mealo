@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sqlite:copy": "node scripts/copy-sqlite.mjs",
+    "predev": "npm run sqlite:copy",
+    "prebuild": "npm run sqlite:copy",
+    "prepreview": "npm run sqlite:copy"
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "^3.53.4-build1",

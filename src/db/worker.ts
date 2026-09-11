@@ -10,8 +10,33 @@
  * possible failure mode for a health log.
  */
 
-import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { MIGRATIONS } from './migrations';
+
+/**
+ * Loaded from a static URL rather than imported as a package dependency.
+ *
+ * The OPFS VFS spawns its own async proxy worker and finds it relative to the
+ * module that loaded it. Bundling breaks that path under `vite dev`: the proxy
+ * fails to load, OPFS refuses to install, and SQLite quietly falls back to an
+ * in-memory database. Serving the distribution untouched from /sqlite-wasm/
+ * makes dev and production resolve it the same way.
+ *
+ * scripts/copy-sqlite.mjs puts the files there; predev and prebuild run it.
+ */
+const SQLITE_URL = '/sqlite-wasm/index.mjs';
+
+type Sqlite3Init = (config?: Record<string, unknown>) => Promise<unknown>;
+
+async function loadSqlite3(): Promise<unknown> {
+  // Indirect import: Vite rewrites analysable dynamic imports and then refuses
+  // to transform a file living in public/. Going through Function keeps the
+  // URL opaque to the bundler so the distribution is fetched verbatim.
+  const load = new Function('u', 'return import(u)') as (
+    u: string,
+  ) => Promise<{ default: Sqlite3Init }>;
+  const mod = await load(SQLITE_URL);
+  return mod.default();
+}
 
 type Req =
   | { id: number; type: 'init' }
@@ -44,7 +69,7 @@ let mode: 'opfs' | 'memory' = 'memory';
 async function init(): Promise<{ mode: string; version: number }> {
   if (db) return { mode, version: currentVersion() };
 
-  const sqlite3 = await sqlite3InitModule();
+  const sqlite3 = await loadSqlite3();
 
   const oo1 = (sqlite3 as unknown as { oo1: Record<string, unknown> }).oo1;
   capi = (sqlite3 as unknown as { capi: Capi }).capi;

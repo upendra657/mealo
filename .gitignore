@@ -15,3 +15,6 @@ logs
 
 # Your Feb 2026 Flutter + FastAPI build. Kept on disk, out of this repo.
 legacy
+
+# Copied from node_modules by scripts/copy-sqlite.mjs
+public/sqlite-wasm

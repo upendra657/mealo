@@ -54,10 +54,5 @@ export default defineConfig({
   ],
   server: { headers: crossOriginIsolation },
   preview: { headers: crossOriginIsolation },
-  optimizeDeps: {
-    // The sqlite-wasm package ships its own worker plumbing and does not
-    // survive Vite's dependency pre-bundling.
-    exclude: ['@sqlite.org/sqlite-wasm'],
-  },
   worker: { format: 'es' },
 });
