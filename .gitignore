@@ -12,3 +12,6 @@ logs
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Your Feb 2026 Flutter + FastAPI build. Kept on disk, out of this repo.
+legacy
