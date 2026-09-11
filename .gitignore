@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.log
+logs
+.vscode/*
+!.vscode/extensions.json
+.idea
