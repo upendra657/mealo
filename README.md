@@ -85,6 +85,34 @@ Cross-Origin-Embedder-Policy: require-corp
 back to an in-memory database that loses everything on reload. The status bar at
 the top of the app reports which mode is live — watch it after you deploy.
 
+## Deploying
+
+Cloudflare Pages, free tier. The host **must** send the two isolation headers,
+which is why `public/_headers` exists and why GitHub Pages is not an option —
+it cannot set custom headers at all.
+
+1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** →
+   **Connect to Git**, and pick this repository.
+2. Build settings:
+   - Framework preset: **None**
+   - Build command: `npm run build`
+   - Build output directory: `dist`
+3. Deploy. Every push to `main` rebuilds automatically.
+
+**Check the status bar on the deployed page before anything else.** If it reads
+`in-memory` rather than `OPFS`, the headers aren't arriving and nothing you log
+will survive a reload.
+
+### Installing on iOS
+
+Open the deployed HTTPS URL in Safari → Share → **Add to Home Screen**. It has
+to be the deployed URL, not `localhost`, and it has to be Safari — Chrome on iOS
+cannot install web apps.
+
+Storage durability improves once installed: browsers weigh user engagement when
+deciding whether to grant persistent storage, and an installed app scores higher
+than a tab. Export regularly until the status bar says `persistent`.
+
 ## Project layout
 
 ```

@@ -1,0 +1,18 @@
+# Cloudflare Pages reads this from the build output root.
+#
+# These two headers are not optional. SQLite's OPFS backend requires the page
+# to be cross-origin isolated; without them the app silently falls back to an
+# in-memory database that loses everything on reload. The status bar at the top
+# of the app reports which mode is live — check it after the first deploy.
+#
+# GitHub Pages cannot set custom headers at all, which is why it isn't an
+# option for hosting this.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+# The wasm binary is content-hashed by the build, so it can be cached hard.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
