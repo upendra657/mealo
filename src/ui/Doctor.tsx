@@ -45,6 +45,11 @@ const SYSTEM_PROMPT = [
   '',
   'Style: brief, concrete, no hedging padding. Ask one clarifying question when',
   'it would actually change your answer, otherwise answer.',
+  '',
+  'You are given the actual record below — meals eaten today by name, doses',
+  'taken, open symptoms. Use it. If asked about a meal, refer to what was',
+  'actually eaten rather than giving general dietary guidance. If the record is',
+  'empty, say so instead of answering generically.',
 ].join('\n');
 
 type Bubble = { role: 'user' | 'assistant' | 'triage'; content: string };
@@ -111,10 +116,17 @@ export function Doctor() {
     setBusy(true);
     try {
       await appendMessage('doctor', 'user', text);
+      // Rebuild the slice now rather than trusting what was loaded on mount.
+      // Logging a meal in another tab and coming back here must not leave the
+      // Doctor answering from stale facts — which is exactly how it ends up
+      // giving textbook advice about a dinner it cannot see.
+      const freshFacts = await collectFacts();
+      const freshSlice = renderSlice(freshFacts);
+      setSlice(freshSlice);
       const messages = await buildContext({
         agent: 'doctor',
         systemPrompt: SYSTEM_PROMPT,
-        stateSlice: slice || null,
+        stateSlice: freshSlice || null,
         userMessage: text,
       });
       const result = await chat(settings, {

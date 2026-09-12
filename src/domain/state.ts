@@ -31,9 +31,26 @@ export type CurrentState = {
   updated_at: number;
 };
 
+export type MealSummary = {
+  type: string;
+  time: string;
+  items: string[];
+  energy: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  fibre: number;
+};
+
 export type StateFacts = {
   medications: { name: string; dose: string | null; schedule: string | null }[];
   adherence7d: { taken: number; skipped: number };
+  /** Per-medication status today — "taken at 08:15" beats "9 doses this week". */
+  dosesToday: { name: string; status: string; time: string }[];
+  /** What was actually eaten today, by name. Averages cannot answer
+      "was my dinner alright" — only the dishes can. */
+  mealsToday: MealSummary[];
+  todayTotals: { energy: number; protein: number; fat: number; carbs: number; fibre: number };
   openSymptoms: { label: string; daysAgo: number; severity: number | null }[];
   nutrition7d: {
     daysLogged: number;
@@ -79,6 +96,82 @@ export async function collectFacts(): Promise<StateFacts> {
       ORDER BY noted_at DESC LIMIT 10`,
   );
 
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const todayMs = dayStart.getTime();
+
+  const dosesToday = await db.query<{
+    name: string;
+    status: string;
+    taken_at: number;
+  }>(
+    `SELECT m.name, e.status, e.taken_at
+       FROM intake_events e
+       JOIN medications m ON m.id = e.medication_id
+      WHERE e.deleted_at IS NULL AND e.taken_at >= ?
+      ORDER BY e.taken_at`,
+    [todayMs],
+  );
+
+  const mealRows = await db.query<{
+    id: string;
+    meal_type: string | null;
+    eaten_at: number;
+  }>(
+    `SELECT id, meal_type, eaten_at FROM meals
+      WHERE deleted_at IS NULL AND eaten_at >= ?
+      ORDER BY eaten_at`,
+    [todayMs],
+  );
+
+  const itemRows = mealRows.length
+    ? await db.query<{
+        meal_id: string;
+        label: string;
+        energy_kcal: number | null;
+        protein_g: number | null;
+        fat_g: number | null;
+        carbs_g: number | null;
+        fibre_g: number | null;
+      }>(
+        `SELECT meal_id, label, energy_kcal, protein_g, fat_g, carbs_g, fibre_g
+           FROM meal_items
+          WHERE deleted_at IS NULL AND meal_id IN (${mealRows.map(() => '?').join(',')})`,
+        mealRows.map((m) => m.id),
+      )
+    : [];
+
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const mealsToday = mealRows.map((m) => {
+    const mine = itemRows.filter((i) => i.meal_id === m.id);
+    const sum = (k: 'energy_kcal' | 'protein_g' | 'fat_g' | 'carbs_g' | 'fibre_g') =>
+      r1(mine.reduce((a, i) => a + (i[k] ?? 0), 0));
+    return {
+      type: m.meal_type ?? 'meal',
+      time: new Date(m.eaten_at).toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      items: mine.map((i) => i.label),
+      energy: sum('energy_kcal'),
+      protein: sum('protein_g'),
+      fat: sum('fat_g'),
+      carbs: sum('carbs_g'),
+      fibre: sum('fibre_g'),
+    };
+  });
+
+  const todayTotals = mealsToday.reduce(
+    (a, m) => ({
+      energy: r1(a.energy + m.energy),
+      protein: r1(a.protein + m.protein),
+      fat: r1(a.fat + m.fat),
+      carbs: r1(a.carbs + m.carbs),
+      fibre: r1(a.fibre + m.fibre),
+    }),
+    { energy: 0, protein: 0, fat: 0, carbs: 0, fibre: 0 },
+  );
+
   const nutrition = await db.query<{
     days: number;
     e: number | null;
@@ -110,6 +203,16 @@ export async function collectFacts(): Promise<StateFacts> {
       taken: Number(intake.find((r) => r.status === 'taken')?.n ?? 0),
       skipped: Number(intake.find((r) => r.status === 'skipped')?.n ?? 0),
     },
+    dosesToday: dosesToday.map((d) => ({
+      name: d.name,
+      status: d.status,
+      time: new Date(d.taken_at).toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    })),
+    mealsToday,
+    todayTotals,
     openSymptoms: symptoms.map((s) => ({
       // The label if the user gave one, otherwise a short excerpt. Never the
       // full free text — that stays local.
@@ -146,9 +249,38 @@ export function renderSlice(facts: StateFacts): string {
     lines.push('Currently taking: nothing recorded.');
   }
 
+  if (facts.dosesToday.length) {
+    lines.push(
+      'Doses today: ' +
+        facts.dosesToday
+          .map((d) => `${d.name} ${d.status} at ${d.time}`)
+          .join('; '),
+    );
+  } else if (facts.medications.length) {
+    lines.push('Doses today: nothing logged yet.');
+  }
+
   const { taken, skipped } = facts.adherence7d;
   if (taken + skipped > 0) {
     lines.push(`Last 7 days: ${taken} doses taken, ${skipped} skipped.`);
+  }
+
+  if (facts.mealsToday.length) {
+    lines.push('Eaten today:');
+    for (const m of facts.mealsToday) {
+      lines.push(
+        `  ${m.type} ${m.time} — ${m.items.join(', ') || 'unspecified'} ` +
+          `(${m.energy} kcal, protein ${m.protein}g, fat ${m.fat}g, ` +
+          `carbs ${m.carbs}g, fibre ${m.fibre}g)`,
+      );
+    }
+    const t = facts.todayTotals;
+    lines.push(
+      `  Day so far: ${t.energy} kcal, protein ${t.protein}g, fat ${t.fat}g, ` +
+        `carbs ${t.carbs}g, fibre ${t.fibre}g.`,
+    );
+  } else {
+    lines.push('Eaten today: nothing logged yet.');
   }
 
   if (facts.openSymptoms.length) {
