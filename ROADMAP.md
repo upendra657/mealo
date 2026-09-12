@@ -115,16 +115,34 @@ Speaking a meal beats typing it, and P6 says logging friction is the product.
 
 ## Phase 3 — Doctor and shared state · 2 weekends
 
-- [ ] Symptom logging into structured records
-- [ ] `current_state` written by the Doctor, read by the other two
-- [ ] Persona router and per-agent conversation threads
-- [ ] Rolling summary in place of full history
+- [x] Symptom logging into structured records — Doctor-only table
+- [x] `current_state` written by the Doctor, read by the other two
+- [x] Per-agent conversation threads
+- [x] Rolling summary in place of full history
+- [x] **Red-flag gate — pulled forward from Phase 4** (see below)
+- [x] De-identified slice, with a "what it can see" view in the UI
 
 **Done when:** the Doctor answers "how has my week been" correctly from real
 logged data, and both other agents read `current_state` rather than calling it.
 
 **Trap:** letting agents message each other because it feels more agentic. It is
 slower, costs tokens, and fails in ways a table read cannot.
+
+*R1 moved here from Phase 4.* It cannot be later than the first screen that
+accepts a symptom — shipping something called "Doctor" that answers "I have
+chest pain" with a model response is the exact failure this project was designed
+to avoid. `src/safety/redflags.ts`, 12 patterns, runs before any model call.
+
+*What the R1 test caught.* Three of the twelve phrases silently failed on the
+first run: the patterns ended with `\b`, and "drooping" does not end where
+"droop" does, so a word boundary immediately after rejected the match. Two more
+were word-order misses — people under stress write "speech is slurred", not
+"slurred speech". The patterns now match a pair of ideas near each other rather
+than a fixed phrasing. This is why R1 is a test and not a checklist item.
+
+*`current_state` is composed deterministically*, not by asking a model. It is
+structured facts — what is being taken, what is open, what the week looked like.
+A model there would add cost, latency and the chance of inventing a medication.
 
 ---
 
@@ -134,7 +152,7 @@ Turns a chatbot with a health theme into something you can responsibly rely on.
 
 - [ ] RxNorm resolution and openFDA label fetch, cached locally
 - [ ] Interaction surfacing from label section 7, with citations
-- [ ] Red-flag rule table and pre-model gate
+- [x] ~~Red-flag rule table and pre-model gate~~ → **done in Phase 3**
 - [ ] Dose-pattern output filter
 - [ ] Adapter-level de-identification, with the outbound log as the check
 

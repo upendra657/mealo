@@ -343,3 +343,26 @@ button.wide { width: 100%; padding: 14px; font-size: 15px; }
   margin-bottom: 3px;
 }
 .macro-inputs input { padding: 7px 8px; font-family: var(--mono); font-size: 13px; }
+
+/* ---------------------------------------------------------------- Chat */
+
+.chat { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; max-height: 60vh; overflow-y: auto; }
+.bubble { padding: 10px 13px; border-radius: var(--radius); font-size: 14.5px; line-height: 1.55; max-width: 88%; }
+.bubble p { margin: 0; white-space: pre-wrap; }
+.bubble--user { background: var(--surface-2); align-self: flex-end; }
+.bubble--assistant { background: var(--ground); border: 1px solid var(--border); align-self: flex-start; }
+/* Emergencies do not look like ordinary replies. */
+.bubble--triage {
+  background: var(--bad-bg);
+  border-left: 3px solid var(--bad);
+  align-self: stretch;
+  max-width: 100%;
+}
+.bubble--triage strong {
+  display: block;
+  color: var(--bad);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}

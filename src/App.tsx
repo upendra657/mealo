@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Doctor } from './ui/Doctor';
 import { LogMeal } from './ui/LogMeal';
 import { Medications } from './ui/Medications';
 import { Playground } from './ui/Playground';
@@ -7,10 +8,11 @@ import { StatusBar } from './ui/StatusBar';
 import { Today } from './ui/Today';
 import './styles.css';
 
-type Tab = 'today' | 'food' | 'meds' | 'settings' | 'dev';
+type Tab = 'today' | 'doctor' | 'food' | 'meds' | 'settings' | 'dev';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Today' },
+  { id: 'doctor', label: 'Doctor' },
   { id: 'food', label: 'Food' },
   { id: 'meds', label: 'Meds' },
   { id: 'settings', label: 'Settings' },
@@ -33,7 +35,7 @@ export default function App() {
           <span className="mark" aria-hidden="true" />
           <div>
             <h1>Mealo</h1>
-            <p className="muted small">Pharmacist · Nutritionist</p>
+            <p className="muted small">Doctor · Nutritionist · Pharmacist</p>
           </div>
         </div>
         <nav className="tabs">
@@ -56,6 +58,7 @@ export default function App() {
 
       <main className="main">
         {tab === 'today' && <Today onAdd={goAdd} />}
+        {tab === 'doctor' && <Doctor />}
         {tab === 'food' && <LogMeal />}
         {tab === 'meds' && <Medications startAdding={startAdding} />}
         {tab === 'settings' && <SettingsScreen />}
