@@ -33,7 +33,10 @@ export const PROVIDERS: Provider[] = [
     key: 'groq',
     label: 'Groq',
     baseUrl: 'https://api.groq.com/openai/v1',
-    defaultModel: 'llama-3.3-70b-versatile',
+    // Verified present in Groq's catalogue on 2026-09-12. Groq retires models
+    // with little notice, so treat every defaultModel here as a hint, not a
+    // promise — Test connection lists what the account can actually reach.
+    defaultModel: 'openai/gpt-oss-20b',
     trains: 'no',
     policy:
       'States that customer inputs and outputs are not used to train models, across all tiers. Logs retained around 30 days and can be disabled. Verify against the Groq Services Agreement and DPA before trusting it with medication data.',
