@@ -295,3 +295,51 @@ button.wide { width: 100%; padding: 14px; font-size: 15px; }
   .dose-actions { width: 100%; }
   .tap { flex: 1; }
 }
+
+/* ---------------------------------------------------------------- Macros */
+
+.macro-row {
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 14px 0;
+}
+.macro { flex: 1; background: var(--surface); padding: 9px 8px; text-align: center; min-width: 0; }
+.macro--big { padding: 13px 8px; }
+.macro-val {
+  display: block;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+.macro--big .macro-val { font-size: 19px; }
+.macro-val i { font-style: normal; font-size: 11px; color: var(--muted); margin-left: 1px; }
+.macro-lbl {
+  display: block;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.macro-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.macro-inputs label { display: block; }
+.macro-inputs span {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.macro-inputs input { padding: 7px 8px; font-family: var(--mono); font-size: 13px; }

@@ -1,0 +1,271 @@
+/**
+ * Food matching — the part that keeps the Nutritionist off the model.
+ *
+ * Phase 2's exit criterion is that 80% of meals resolve with zero model calls.
+ * That is not a performance optimisation: at 8,000 tokens/minute on the free
+ * tier, a model call per meal item is how you hit a rate limit at lunchtime.
+ *
+ * Order of attempts, cheapest first:
+ *   1. food_aliases  — something you confirmed before. Free, instant, exact.
+ *   2. exact name    — normalised string equality against the reference table.
+ *   3. fuzzy         — token overlap + trigram similarity, scored.
+ *   4. the model     — only when all of the above fail. Handled by the caller.
+ *
+ * Every confirmed match is written back to food_aliases, so your own
+ * vocabulary converges and step 1 catches more over time.
+ */
+
+import { scopedDb } from '../db/scope';
+
+const db = scopedDb('nutritionist');
+
+export type Food = {
+  id: string;
+  name: string;
+  source_db: string;
+  per_unit: string;
+  energy_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  fibre_g: number | null;
+};
+
+export type Match = {
+  food: Food;
+  score: number;
+  via: 'alias' | 'exact' | 'fuzzy';
+};
+
+/** Lowercase, strip punctuation and plurals, collapse whitespace. */
+export function normalise(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\b(\w+?)(?:es|s)\b/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function trigrams(s: string): Set<string> {
+  const padded = `  ${s} `;
+  const out = new Set<string>();
+  for (let i = 0; i < padded.length - 2; i++) out.add(padded.slice(i, i + 3));
+  return out;
+}
+
+/** Dice coefficient over trigrams — cheap, and forgiving of small typos. */
+export function similarity(a: string, b: string): number {
+  const A = trigrams(a);
+  const B = trigrams(b);
+  if (A.size === 0 || B.size === 0) return 0;
+  let shared = 0;
+  for (const g of A) if (B.has(g)) shared++;
+  return (2 * shared) / (A.size + B.size);
+}
+
+/** Fraction of the query's words that appear in the candidate name. */
+export function tokenCoverage(query: string, candidate: string): number {
+  const q = query.split(' ').filter(Boolean);
+  if (q.length === 0) return 0;
+  const c = new Set(candidate.split(' ').filter(Boolean));
+  return q.filter((t) => c.has(t)).length / q.length;
+}
+
+/**
+ * How well a written label matches a reference food name.
+ *
+ * Dice alone is unusable here because reference names are long and specific
+ * while people type short and general: "curd" against "Curd plain whole milk"
+ * scores 0.37 on trigrams and gets rejected, which is obviously wrong — the
+ * user said curd and that food is curd.
+ *
+ * So take the better of the two signals, and break ties toward the shorter
+ * name, since "Curd plain whole milk" is a likelier intent than
+ * "Curd plain whole milk with added fruit preparation".
+ */
+export function score(query: string, candidateName: string): number {
+  const dice = similarity(query, candidateName);
+  const coverage = tokenCoverage(query, candidateName);
+  const base = Math.max(dice, coverage);
+  const lengthPenalty = Math.min(candidateName.length / 400, 0.08);
+  return Math.max(0, base - lengthPenalty);
+}
+
+export type ParsedItem = {
+  /** What the user actually wrote for this item. */
+  label: string;
+  quantity: number | null;
+  unit: string | null;
+};
+
+const UNITS = [
+  'g', 'gram', 'kg', 'ml', 'l', 'litre', 'liter',
+  'cup', 'cups', 'bowl', 'bowls', 'glass', 'glasses',
+  'tbsp', 'tablespoon', 'tsp', 'teaspoon',
+  'piece', 'pieces', 'pc', 'slice', 'slices', 'scoop', 'scoops',
+  'plate', 'plates', 'katori', 'roti', 'chapati', 'paratha', 'idli', 'dosa',
+];
+
+/**
+ * Splits "2 roti, dal tadka, 1 cup curd" into items with quantities.
+ *
+ * Deliberately simple string work — no model call. Anything it can't parse is
+ * kept verbatim as the label, so nothing is ever silently dropped.
+ */
+export function parseMealText(text: string): ParsedItem[] {
+  return text
+    .split(/[,\n]|\band\b|\+/i)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      // "250g paneer" / "2 roti" / "1.5 cups dal"
+      const m = chunk.match(
+        new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(${UNITS.join('|')})?\\s*(.*)$`, 'i'),
+      );
+      if (m && m[1]) {
+        const rest = (m[3] || '').trim();
+        const unit = m[2]?.toLowerCase() ?? null;
+        // "2 roti" — the unit IS the food, so keep it in the label.
+        const label = rest || unit || chunk;
+        return {
+          label,
+          quantity: Number(m[1]),
+          unit: rest ? unit : null,
+        };
+      }
+      return { label: chunk, quantity: null, unit: null };
+    });
+}
+
+// ------------------------------------------------------------- lookups
+
+export async function countFoods(): Promise<number> {
+  const rows = await db.query<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM foods',
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+async function byAlias(needle: string): Promise<Food | null> {
+  const rows = await db.query<Food>(
+    `SELECT f.* FROM food_aliases a
+       JOIN foods f ON f.id = a.food_id
+      WHERE a.alias = ? AND a.deleted_at IS NULL
+      LIMIT 1`,
+    [needle],
+  );
+  return rows[0] ?? null;
+}
+
+async function byExactName(needle: string): Promise<Food | null> {
+  const rows = await db.query<Food>(
+    'SELECT * FROM foods WHERE LOWER(name) = ? LIMIT 1',
+    [needle],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Resolve one written item to a reference food.
+ *
+ * Returns null rather than a bad guess. A wrong food silently attached to a
+ * meal is worse than an unmatched one the user can fix.
+ */
+export async function matchFood(
+  label: string,
+  minScore = 0.45,
+): Promise<Match | null> {
+  const needle = normalise(label);
+  if (!needle) return null;
+
+  const alias = await byAlias(needle);
+  if (alias) return { food: alias, score: 1, via: 'alias' };
+
+  const exact = await byExactName(needle);
+  if (exact) return { food: exact, score: 1, via: 'exact' };
+
+  // Narrow with a LIKE on the longest token before scoring, so we are not
+  // trigram-matching the whole table on every keystroke.
+  const longest = needle
+    .split(' ')
+    .sort((a, b) => b.length - a.length)[0];
+  if (!longest || longest.length < 3) return null;
+
+  const candidates = await db.query<Food>(
+    'SELECT * FROM foods WHERE name LIKE ? LIMIT 400',
+    [`%${longest}%`],
+  );
+  if (candidates.length === 0) return null;
+
+  let best: Match | null = null;
+  for (const food of candidates) {
+    const s = score(needle, normalise(food.name));
+    if (!best || s > best.score) best = { food, score: s, via: 'fuzzy' };
+  }
+  return best && best.score >= minScore ? best : null;
+}
+
+/** Remember a confirmed match so it resolves for free next time. */
+export async function rememberAlias(
+  label: string,
+  foodId: string,
+): Promise<void> {
+  const alias = normalise(label);
+  if (!alias) return;
+  const existing = await db.query<{ id: string; hits: number }>(
+    'SELECT id, hits FROM food_aliases WHERE alias = ? LIMIT 1',
+    [alias],
+  );
+  if (existing[0]) {
+    await db.update('food_aliases', existing[0].id, {
+      food_id: foodId,
+      hits: existing[0].hits + 1,
+      deleted_at: null,
+    });
+  } else {
+    await db.insert('food_aliases', {
+      alias,
+      food_id: foodId,
+      hits: 1,
+      deleted_at: null,
+    });
+  }
+}
+
+export async function searchFoods(term: string, limit = 20): Promise<Food[]> {
+  const needle = normalise(term);
+  if (needle.length < 2) return [];
+  return db.query<Food>(
+    'SELECT * FROM foods WHERE name LIKE ? ORDER BY LENGTH(name) LIMIT ?',
+    [`%${needle}%`, limit],
+  );
+}
+
+/**
+ * Scale a reference food's per-100g values to a quantity.
+ * Returns nulls where the reference has none — never a computed guess.
+ */
+export function scaleMacros(
+  food: Food,
+  grams: number,
+): {
+  energy_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  fibre_g: number | null;
+} {
+  const f = grams / 100;
+  const r = (v: number | null) =>
+    v === null || v === undefined ? null : Math.round(v * f * 10) / 10;
+  return {
+    energy_kcal: r(food.energy_kcal),
+    protein_g: r(food.protein_g),
+    fat_g: r(food.fat_g),
+    carbs_g: r(food.carbs_g),
+    fibre_g: r(food.fibre_g),
+  };
+}

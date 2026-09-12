@@ -73,19 +73,32 @@ you've built until you've run the seven days on the real device.
 
 The phase with the most hidden work, almost none of it AI.
 
-- [ ] Import IFCT 2017 and a USDA subset as bundled reference tables
-- [ ] Fuzzy matcher: text to food id, with quantity parsing
-- [ ] Direct macro entry — protein, fat, carbs, fibre, energy — as a first-class
+- [x] Fuzzy matcher: text to food id, with quantity parsing
+- [x] Direct macro entry — protein, fat, carbs, fibre, energy — as a first-class
       path beside text, not a fallback
-- [ ] Model as fallback only, on match failure or novel phrasing
-- [ ] `food_aliases` caching so your own vocabulary converges
-- [ ] Per-meal and per-day macro views
+- [x] `food_aliases` caching so your own vocabulary converges
+- [x] Per-meal and per-day macro views
+- [ ] Load reference data — `scripts/import-foods.mjs` is written; run it against
+      a USDA FoodData Central CSV download
+- [ ] Decide whether the model fallback is worth building at all (see below)
 
 **Done when:** 80% of your last thirty meals matched locally with zero model calls.
 
 **Trap:** reaching for the model on every meal because it's easier than writing a
 matcher. It works, it's slower, and it burns the daily token budget on a problem
 a lookup table solves.
+
+*Open question — the model fallback.* The roadmap assumed the model would fill
+in items the matcher missed. Having built it, that looks wrong: for an unmatched
+food the user knows what they ate and the model is guessing. Typing four numbers
+is faster than a round trip and strictly more accurate. Currently an unmatched
+item opens empty macro fields instead of calling the model. Revisit only if that
+turns out to be annoying in practice.
+
+*Data licensing.* The `ifct2017` npm package is AGPL-3.0 and would relicense the
+whole app, so it is not used. USDA FoodData Central is US federal data and
+therefore public domain — that is the default source. Indian dishes remain the
+gap; resolve the IFCT licensing question separately.
 
 *Candidate:* voice logging via `whisper-large-v3-turbo` on Groq's free tier.
 Speaking a meal beats typing it, and P6 says logging friction is the product.
