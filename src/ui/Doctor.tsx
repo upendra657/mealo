@@ -24,6 +24,7 @@ import { chat } from '../llm/adapter';
 import { LlmError } from '../llm/types';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
 import { triage } from '../safety/redflags';
+import { filterDoses } from '../safety/dosefilter';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
 
@@ -121,7 +122,13 @@ export function Doctor() {
         temperature: 0.3,
         maxTokens: 700,
       });
-      const reply = result.text.trim() || '(empty response)';
+      // R2 on the way out. The domain layer cannot produce a dose; this covers
+      // the model, which can say anything.
+      const filtered = filterDoses(result.text.trim());
+      const reply = filtered.text || '(empty response)';
+      if (filtered.blocked) {
+        console.warn('[R2] stripped dosing sentences:', filtered.removed);
+      }
       await appendMessage('doctor', 'assistant', reply);
       setThread((t) => [...t, { role: 'assistant', content: reply }]);
       void maybeSummarise('doctor', settings).catch(() => {});

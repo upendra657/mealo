@@ -150,17 +150,47 @@ A model there would add cost, latency and the chance of inventing a medication.
 
 Turns a chatbot with a health theme into something you can responsibly rely on.
 
-- [ ] RxNorm resolution and openFDA label fetch, cached locally
-- [ ] Interaction surfacing from label section 7, with citations
+- [x] RxNorm resolution and openFDA label fetch, cached locally (30 days)
+- [x] Interaction surfacing from label section 7, with citations
 - [x] ~~Red-flag rule table and pre-model gate~~ → **done in Phase 3**
-- [ ] Dose-pattern output filter
-- [ ] Adapter-level de-identification, with the outbound log as the check
+- [x] Dose-pattern output filter
+- [~] De-identification — the slice is built clean in `domain/state.ts` and the
+      outbound log makes it checkable, but it is enforced where the slice is
+      composed rather than at the adapter. Good enough while the Doctor is the
+      only caller; move it into the adapter before a second one exists.
 
 **Done when:** all twelve red-flag phrases trigger with zero model calls logged,
 and every drug claim in your last twenty responses carries a working source link.
 
 **Trap:** putting a disclaimer in settings and calling it safety. R1–R6 are code
 with tests, or they are decoration.
+
+*Verified.* R1: 12/12 red-flag phrases fire with zero model calls, no false
+positives on ordinary questions. R2: 6/6 dosing instructions stripped, 5/5
+legitimate statements survive — including quoting the user's own record and
+quoting a cited label. On a mixed reply only the offending sentence is removed,
+because a useful answer containing one bad sentence should lose the sentence.
+
+*Why R2 is not simply "block numbers near mg".* Four cases have to be told
+apart: quoting the user's own record (allowed), quoting label text with a
+citation (allowed), instructing (blocked), recommending (blocked). The filter
+looks for a dose adjacent to instructional language, not for doses.
+
+*What the label check deliberately does not do.* It reports that a label names
+a substance, quotes the sentence and links the source. It does not judge
+severity or rank risk — an app assigning severity scores would be inventing a
+judgement no label gave it. And absence of a finding is not absence of an
+interaction: many products, supplements especially, have no FDA label at all,
+which the UI says rather than showing a reassuring empty state.
+
+*A subtlety worth keeping.* Searching openFDA for "metformin" can return a
+combination product such as ZITUVIMET. Its interactions are not necessarily
+metformin's, so the product the label actually describes is shown with every
+claim.
+
+*The NLM retired its drug-interaction endpoint in January 2024*, so interactions
+are read out of label text rather than a purpose-built API. More work, less
+tidy, but citable — which the old endpoint's output was not.
 
 ---
 

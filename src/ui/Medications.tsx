@@ -21,6 +21,7 @@ import {
   type MedicationDraft,
 } from '../domain/medications';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
+import { checkInteractions, type Finding, type LabelStatus } from '../domain/interactions';
 import { LlmError } from '../llm/types';
 
 const BLANK: MedicationDraft = {
@@ -44,6 +45,23 @@ export function Medications({ startAdding = false }: { startAdding?: boolean }) 
     null,
   );
   const [editing, setEditing] = useState<string | null>(null);
+  const [findings, setFindings] = useState<Finding[] | null>(null);
+  const [statuses, setStatuses] = useState<LabelStatus[]>([]);
+  const [checking, setChecking] = useState(false);
+
+  const runCheck = async (meds: Medication[]) => {
+    if (meds.length === 0) return;
+    setChecking(true);
+    try {
+      const r = await checkInteractions(meds);
+      setFindings(r.findings);
+      setStatuses(r.statuses);
+    } catch {
+      setFindings([]);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     const [a, s] = await Promise.all([listActive(), listStopped()]);
@@ -206,6 +224,56 @@ export function Medications({ startAdding = false }: { startAdding?: boolean }) 
               Back
             </button>
           </div>
+        </section>
+      )}
+
+      {active.length > 0 && (
+        <section className="card">
+          <div className="today-head">
+            <h2>Label check</h2>
+            <button
+              onClick={() => void runCheck(active)}
+              disabled={checking}
+            >
+              {checking ? 'Checking…' : findings ? 'Re-check' : 'Check labels'}
+            </button>
+          </div>
+          <p className="muted small">
+            Reads the FDA label for each item and reports whether it names
+            anything else you take. It does not judge severity — that is a
+            pharmacist's call. Cached for 30 days; no model involved.
+          </p>
+
+          {findings !== null && findings.length === 0 && (
+            <p className="small muted">
+              Nothing found. That is not the same as nothing existing — many
+              products, supplements especially, have no FDA label at all.
+            </p>
+          )}
+
+          {findings?.map((f, i) => (
+            <div key={i} className="policy policy--warn">
+              <strong>
+                {f.sourceMed}'s label mentions {f.mentions}
+              </strong>
+              <p>"{f.excerpt}"</p>
+              <p className="small muted">
+                From the label for <b>{f.productName}</b> ·{' '}
+                <a href={f.sourceUrl} target="_blank" rel="noreferrer">
+                  source
+                </a>{' '}
+                · retrieved{' '}
+                {new Date(f.retrievedAt).toLocaleDateString()}
+              </p>
+            </div>
+          ))}
+
+          {statuses.filter((s) => s.noLabel).length > 0 && (
+            <p className="small muted">
+              No FDA label found for:{' '}
+              {statuses.filter((s) => s.noLabel).map((s) => s.name).join(', ')}.
+            </p>
+          )}
         </section>
       )}
 
