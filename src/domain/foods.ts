@@ -29,7 +29,26 @@ export type Food = {
   fat_g: number | null;
   carbs_g: number | null;
   fibre_g: number | null;
+  /** 1 when the user defined this themselves. */
+  is_custom?: number;
 };
+
+/**
+ * Both food sources as one result set.
+ *
+ * `custom_foods` first and flagged, because something you defined by hand beats
+ * a generic reference row — you know what your dal actually contains and USDA
+ * does not have it at all.
+ */
+const UNION_FOODS = `
+  SELECT id, name, 'custom' AS source_db, per_unit,
+         energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+    FROM custom_foods WHERE deleted_at IS NULL AND name LIKE ?
+  UNION ALL
+  SELECT id, name, source_db, per_unit,
+         energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 0 AS is_custom
+    FROM foods WHERE name LIKE ?
+`;
 
 export type Match = {
   food: Food;
@@ -150,22 +169,76 @@ export async function countFoods(): Promise<number> {
 }
 
 async function byAlias(needle: string): Promise<Food | null> {
+  // Aliases can point at either table, so check both. A custom food is the
+  // more likely target once the user has started defining their own.
   const rows = await db.query<Food>(
-    `SELECT f.* FROM food_aliases a
+    `SELECT c.id, c.name, 'custom' AS source_db, c.per_unit,
+            c.energy_kcal, c.protein_g, c.fat_g, c.carbs_g, c.fibre_g,
+            1 AS is_custom
+       FROM food_aliases a
+       JOIN custom_foods c ON c.id = a.food_id
+      WHERE a.alias = ? AND a.deleted_at IS NULL AND c.deleted_at IS NULL
+     UNION ALL
+     SELECT f.id, f.name, f.source_db, f.per_unit,
+            f.energy_kcal, f.protein_g, f.fat_g, f.carbs_g, f.fibre_g,
+            0 AS is_custom
+       FROM food_aliases a
        JOIN foods f ON f.id = a.food_id
       WHERE a.alias = ? AND a.deleted_at IS NULL
-      LIMIT 1`,
-    [needle],
+     LIMIT 1`,
+    [needle, needle],
   );
   return rows[0] ?? null;
 }
 
 async function byExactName(needle: string): Promise<Food | null> {
   const rows = await db.query<Food>(
-    'SELECT * FROM foods WHERE LOWER(name) = ? LIMIT 1',
-    [needle],
+    `SELECT id, name, 'custom' AS source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+       FROM custom_foods WHERE deleted_at IS NULL AND LOWER(name) = ?
+     UNION ALL
+     SELECT id, name, source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 0 AS is_custom
+       FROM foods WHERE LOWER(name) = ?
+     LIMIT 1`,
+    [needle, needle],
   );
   return rows[0] ?? null;
+}
+
+/** Save a food the user defined. Matches for free from then on. */
+export async function saveCustomFood(food: {
+  name: string;
+  energy_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  fibre_g: number | null;
+  per_unit?: string;
+}): Promise<string> {
+  return db.insert('custom_foods', {
+    name: food.name.trim(),
+    per_unit: food.per_unit ?? '100g',
+    energy_kcal: food.energy_kcal,
+    protein_g: food.protein_g,
+    fat_g: food.fat_g,
+    carbs_g: food.carbs_g,
+    fibre_g: food.fibre_g,
+    notes: null,
+    deleted_at: null,
+  });
+}
+
+export async function listCustomFoods(): Promise<Food[]> {
+  return db.query<Food>(
+    `SELECT id, name, 'custom' AS source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+       FROM custom_foods WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE`,
+  );
+}
+
+export async function deleteCustomFood(id: string): Promise<void> {
+  await db.softDelete('custom_foods', id);
 }
 
 /**
@@ -194,16 +267,18 @@ export async function matchFood(
     .sort((a, b) => b.length - a.length)[0];
   if (!longest || longest.length < 3) return null;
 
-  const candidates = await db.query<Food>(
-    'SELECT * FROM foods WHERE name LIKE ? LIMIT 400',
-    [`%${longest}%`],
-  );
+  const like = `%${longest}%`;
+  const candidates = await db.query<Food>(`${UNION_FOODS} LIMIT 400`, [
+    like,
+    like,
+  ]);
   if (candidates.length === 0) return null;
 
   let best: Match | null = null;
   for (const food of candidates) {
-    const s = score(needle, normalise(food.name));
-    if (!best || s > best.score) best = { food, score: s, via: 'fuzzy' };
+    // Small thumb on the scale for your own definitions.
+    const s = score(needle, normalise(food.name)) + (food.is_custom ? 0.15 : 0);
+    if (!best || s > best.score) best = { food, score: Math.min(s, 1), via: 'fuzzy' };
   }
   return best && best.score >= minScore ? best : null;
 }
@@ -238,9 +313,10 @@ export async function rememberAlias(
 export async function searchFoods(term: string, limit = 20): Promise<Food[]> {
   const needle = normalise(term);
   if (needle.length < 2) return [];
+  const like = `%${needle}%`;
   return db.query<Food>(
-    'SELECT * FROM foods WHERE name LIKE ? ORDER BY LENGTH(name) LIMIT ?',
-    [`%${needle}%`, limit],
+    `${UNION_FOODS} ORDER BY is_custom DESC, LENGTH(name) LIMIT ?`,
+    [like, like, limit],
   );
 }
 

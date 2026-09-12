@@ -172,4 +172,37 @@ export const MIGRATIONS: Migration[] = [
   },
 ];
 
+MIGRATIONS.push({
+  version: 2,
+  name: 'custom foods',
+  sql: `
+    -- Foods the user defined themselves, kept separate from \`foods\` on
+    -- purpose.
+    --
+    -- \`foods\` is reference data: it ships with the app, no agent may write it,
+    -- and reseeding wipes and rewrites it wholesale. Putting user-defined foods
+    -- in the same table would mean a dataset upgrade silently deleting the
+    -- paneer someone entered by hand.
+    --
+    -- This table is the opposite of that in every respect: the Nutritionist
+    -- owns it, it carries the sync columns, and it is never regenerated. The
+    -- matcher searches both and prefers these, because something you defined
+    -- beats a generic reference row every time.
+    CREATE TABLE IF NOT EXISTS custom_foods (
+      id           TEXT PRIMARY KEY,
+      name         TEXT NOT NULL,
+      per_unit     TEXT NOT NULL DEFAULT '100g',
+      energy_kcal  REAL,
+      protein_g    REAL,
+      fat_g        REAL,
+      carbs_g      REAL,
+      fibre_g      REAL,
+      notes        TEXT,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_custom_foods_name ON custom_foods(name);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

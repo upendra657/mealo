@@ -29,6 +29,7 @@ const ALL_TABLES = [
   'meals',
   'meal_items',
   'foods',
+  'custom_foods',
   'food_aliases',
   'symptoms',
   'current_state',
@@ -71,6 +72,7 @@ export const SCOPES: Record<Agent, Scope> = {
       'meals',
       'meal_items',
       'foods',
+      'custom_foods',
       'food_aliases',
       'current_state',
       'citations',
@@ -80,6 +82,7 @@ export const SCOPES: Record<Agent, Scope> = {
     write: [
       'meals',
       'meal_items',
+      'custom_foods',
       'food_aliases',
       'citations',
       'messages',

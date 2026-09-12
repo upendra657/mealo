@@ -27,7 +27,13 @@ import {
   type MealItem,
   type MealType,
 } from '../domain/meals';
-import { countFoods, scaleMacros, searchFoods, type Food } from '../domain/foods';
+import {
+  countFoods,
+  saveCustomFood,
+  scaleMacros,
+  searchFoods,
+  type Food,
+} from '../domain/foods';
 import { seedFoods } from '../domain/seed';
 
 const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
@@ -323,6 +329,44 @@ function DraftRow({
 }) {
   const [options, setOptions] = useState<Food[]>([]);
   const [searching, setSearching] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Macros are stored for the portion; custom foods are stored per 100g.
+  const canSaveAsFood =
+    !item.food &&
+    item.label.trim().length > 1 &&
+    item.energy_kcal !== null &&
+    item.grams > 0;
+
+  const saveAsFood = async () => {
+    const per100 = (v: number | null) =>
+      v === null ? null : Math.round((v / item.grams) * 100 * 100) / 100;
+    const id = await saveCustomFood({
+      name: item.label.trim(),
+      energy_kcal: per100(item.energy_kcal),
+      protein_g: per100(item.protein_g),
+      fat_g: per100(item.fat_g),
+      carbs_g: per100(item.carbs_g),
+      fibre_g: per100(item.fibre_g),
+    });
+    onChange({
+      food: {
+        id,
+        name: item.label.trim(),
+        source_db: 'custom',
+        per_unit: '100g',
+        energy_kcal: per100(item.energy_kcal),
+        protein_g: per100(item.protein_g),
+        fat_g: per100(item.fat_g),
+        carbs_g: per100(item.carbs_g),
+        fibre_g: per100(item.fibre_g),
+        is_custom: 1,
+      },
+      source: 'matched',
+      matchScore: 1,
+    });
+    setSaved(true);
+  };
 
   const pick = (food: Food) => {
     onChange({
@@ -365,6 +409,9 @@ function DraftRow({
           ) : (
             'no match — enter macros below'
           )}
+          {item.food?.is_custom ? (
+            <span className="dose-amt" style={{ marginLeft: 6 }}>yours</span>
+          ) : null}
           <button
             className="link"
             style={{ marginLeft: 8 }}
@@ -387,6 +434,20 @@ function DraftRow({
               </li>
             ))}
           </ul>
+        )}
+
+        {canSaveAsFood && (
+          <p className="small" style={{ margin: '0 0 8px' }}>
+            <button className="link" onClick={() => void saveAsFood()}>
+              Save "{item.label.trim()}" as my food
+            </button>
+            <span className="muted"> — matches automatically next time</span>
+          </p>
+        )}
+        {saved && (
+          <p className="small muted" style={{ margin: '0 0 8px' }}>
+            Saved. It will match on its own from now on.
+          </p>
         )}
 
         <div className="macro-inputs">

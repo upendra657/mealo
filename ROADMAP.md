@@ -80,6 +80,7 @@ The phase with the most hidden work, almost none of it AI.
 - [x] Per-meal and per-day macro views
 - [ ] Load reference data — `scripts/import-foods.mjs` is written; run it against
       a USDA FoodData Central CSV download
+- [x] Custom foods — define a dish once, it matches forever after
 - [ ] Decide whether the model fallback is worth building at all (see below)
 
 **Done when:** 80% of your last thirty meals matched locally with zero model calls.
@@ -97,8 +98,15 @@ turns out to be annoying in practice.
 
 *Data licensing.* The `ifct2017` npm package is AGPL-3.0 and would relicense the
 whole app, so it is not used. USDA FoodData Central is US federal data and
-therefore public domain — that is the default source. Indian dishes remain the
-gap; resolve the IFCT licensing question separately.
+therefore public domain — that is the default source.
+
+There is no public HealthifyMe dataset and there will not be one: their Indian
+food database is the product's moat, and scraping it would put unlicensed data
+in a public repo. Custom foods are the answer instead — define a dish once with
+its macros and it matches for free from then on, which solves Indian dishes
+structurally without any licensing question. A personal HealthifyMe data export
+(your own records, requestable under the DPDP Act) is a legitimate source of
+*alias names*; keep its values local rather than committing them.
 
 *Candidate:* voice logging via `whisper-large-v3-turbo` on Groq's free tier.
 Speaking a meal beats typing it, and P6 says logging friction is the product.
