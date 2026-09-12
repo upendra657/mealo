@@ -144,22 +144,33 @@ for (const n of nutrients) {
   byFdcId.set(n.fdc_id, row);
 }
 
+// Lab values carry absurd precision - 602.510076 kcal per 100g implies a
+// certainty nobody has about a spoonful of almond butter. Round to something
+// honest, which also shrinks the bundle.
+const r1 = (v) => (v === undefined || v === null ? null : Math.round(v * 10) / 10);
+const r2 = (v) => (v === undefined || v === null ? null : Math.round(v * 100) / 100);
+
 const out = [];
+const seen = new Set();
 for (const f of foods) {
   const macros = byFdcId.get(f.fdc_id);
   if (!macros || macros.energy_kcal === undefined) continue;
   const name = (f.description || '').trim();
   if (!name) continue;
+  // USDA ships the same description under several ids; keep the first.
+  const key = name.toLowerCase();
+  if (seen.has(key)) continue;
+  seen.add(key);
   out.push({
     id: `usda-${f.fdc_id}`,
     name,
     source_db: 'USDA',
     per_unit: '100g',
-    energy_kcal: macros.energy_kcal ?? null,
-    protein_g: macros.protein_g ?? null,
-    fat_g: macros.fat_g ?? null,
-    carbs_g: macros.carbs_g ?? null,
-    fibre_g: macros.fibre_g ?? null,
+    energy_kcal: r1(macros.energy_kcal),
+    protein_g: r2(macros.protein_g),
+    fat_g: r2(macros.fat_g),
+    carbs_g: r2(macros.carbs_g),
+    fibre_g: r2(macros.fibre_g),
   });
 }
 
