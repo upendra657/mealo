@@ -204,3 +204,94 @@ button.link {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------------------------------------------------------------- Today */
+
+.today-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.today-head h2 { font-size: 18px; margin: 0 0 2px; }
+
+.streak {
+  flex: none;
+  text-align: center;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  line-height: 1.15;
+}
+.streak b { display: block; font-size: 19px; color: var(--accent); }
+.streak span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.dose-list, .med-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.dose {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: var(--radius);
+}
+.dose--done { border-left-color: var(--ok); }
+.dose-main { min-width: 0; flex: 1 1 180px; }
+.dose-name { font-size: 15.5px; font-weight: 500; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dose-amt {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.dose-main p { margin: 3px 0 0; }
+.logged { color: var(--muted); }
+.undo { margin-left: 5px; font-size: 11px; }
+
+.dose-actions { display: flex; gap: 8px; flex: none; }
+.tap {
+  min-width: 84px;
+  min-height: 44px;   /* thumb-sized: this is a phone screen first */
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.tap--take { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.tap--skip { background: var(--surface-2); }
+
+/* ---------------------------------------------------------------- Meds */
+
+.med {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.med:last-child { border-bottom: none; }
+.med--stopped .dose-name { color: var(--muted); }
+.med--editing { display: block; }
+.med p { margin: 3px 0 0; }
+.grow { width: 100%; }
+
+.empty { text-align: center; padding: 32px 20px; }
+.empty h2 { margin-bottom: 8px; }
+.empty p { max-width: 42ch; margin: 0 auto 18px; }
+
+button.wide { width: 100%; padding: 14px; font-size: 15px; }
+
+@media (max-width: 440px) {
+  .dose { align-items: stretch; }
+  .dose-actions { width: 100%; }
+  .tap { flex: 1; }
+}

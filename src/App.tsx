@@ -1,13 +1,28 @@
 import { useState } from 'react';
+import { Medications } from './ui/Medications';
 import { Playground } from './ui/Playground';
 import { SettingsScreen } from './ui/SettingsScreen';
 import { StatusBar } from './ui/StatusBar';
+import { Today } from './ui/Today';
 import './styles.css';
 
-type Tab = 'playground' | 'settings';
+type Tab = 'today' | 'meds' | 'settings' | 'dev';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: 'meds', label: 'Meds' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'dev', label: 'Dev' },
+];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('playground');
+  const [tab, setTab] = useState<Tab>('today');
+  const [startAdding, setStartAdding] = useState(false);
+
+  const goAdd = () => {
+    setStartAdding(true);
+    setTab('meds');
+  };
 
   return (
     <div className="app">
@@ -16,33 +31,32 @@ export default function App() {
           <span className="mark" aria-hidden="true" />
           <div>
             <h1>Mealo</h1>
-            <p className="muted small">Phase 0 — skeleton, adapter, storage</p>
+            <p className="muted small">Pharmacist</p>
           </div>
         </div>
         <nav className="tabs">
-          <button
-            className={tab === 'playground' ? 'tab active' : 'tab'}
-            onClick={() => setTab('playground')}
-          >
-            Playground
-          </button>
-          <button
-            className={tab === 'settings' ? 'tab active' : 'tab'}
-            onClick={() => setTab('settings')}
-          >
-            Settings
-          </button>
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={tab === t.id ? 'tab active' : 'tab'}
+              onClick={() => {
+                if (t.id !== 'meds') setStartAdding(false);
+                setTab(t.id);
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
         </nav>
       </header>
 
       <StatusBar />
 
       <main className="main">
-        {tab === 'playground' ? (
-          <Playground />
-        ) : (
-          <SettingsScreen onSaved={() => setTab('playground')} />
-        )}
+        {tab === 'today' && <Today onAdd={goAdd} />}
+        {tab === 'meds' && <Medications startAdding={startAdding} />}
+        {tab === 'settings' && <SettingsScreen />}
+        {tab === 'dev' && <Playground />}
       </main>
 
       <footer className="footer">
