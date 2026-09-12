@@ -1,0 +1,24 @@
+{
+  // Deploys Mealo as a Worker serving static assets.
+  //
+  // Why not Cloudflare Pages: the dashboard's current "Create an app" flow
+  // builds a Workers project and injects an API token scoped to Workers, so a
+  // `wrangler pages deploy` step inside it fails with an authentication error.
+  // Rather than provision a second token with Pages permissions, deploy as what
+  // the pipeline already expects.
+  //
+  // The COOP/COEP headers still arrive: Workers static assets read a `_headers`
+  // file from the assets directory, and Vite copies public/_headers to dist/.
+  // That matters more than which product serves the files — without those two
+  // headers SQLite silently falls back to an in-memory database and nothing
+  // logged on a phone survives a reload. Check the app's status bar after
+  // deploying; it reports which mode is live.
+  "name": "mealo",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    // Single page app: no router, but an unknown path should render the app
+    // rather than a 404. Real files (the wasm, the service worker) still win.
+    "not_found_handling": "single-page-application"
+  }
+}
