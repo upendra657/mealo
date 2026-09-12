@@ -7,6 +7,8 @@ import {
   type PersistState,
 } from '../lib/persist';
 
+declare const __BUILD_STAMP__: string;
+
 export function StatusBar() {
   const [db, setDb] = useState<DbInfo | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
@@ -56,6 +58,9 @@ export function StatusBar() {
           {formatBytes(storage.usage)} / {formatBytes(storage.quota)}
         </span>
       )}
+      <span className="muted" title="Which build is running. PWAs cache hard.">
+        <b>Build</b> {__BUILD_STAMP__}
+      </span>
     </div>
   );
 }

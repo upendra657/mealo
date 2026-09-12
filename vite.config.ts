@@ -17,7 +17,13 @@ const crossOriginIsolation = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
+// Stamped into the bundle so the running build is identifiable from the UI.
+// PWAs cache aggressively and iOS is especially sticky about service workers;
+// without this, "is the fix deployed" and "is the fix working" look identical.
+const BUILD_STAMP = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
 export default defineConfig({
+  define: { __BUILD_STAMP__: JSON.stringify(BUILD_STAMP) },
   plugins: [
     react(),
     VitePWA({
