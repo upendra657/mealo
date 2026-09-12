@@ -15,7 +15,7 @@
  * Writes src/data/foods.json, which the app seeds into SQLite on first run.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,14 +66,60 @@ if (!dir) {
   process.exit(1);
 }
 
-const foodCsv = join(dir, 'food.csv');
-const nutrientCsv = join(dir, 'food_nutrient.csv');
-for (const f of [foodCsv, nutrientCsv]) {
-  if (!existsSync(f)) {
-    console.error(`Missing ${f}. Point this at the unzipped CSV directory.`);
-    process.exit(1);
+/**
+ * Find a CSV anywhere under the given path, up to three levels deep.
+ *
+ * USDA's archives are inconsistent: sometimes the CSVs sit at the root of the
+ * extracted folder, sometimes one directory further in. Searching is cheaper
+ * than making anyone work out which.
+ */
+async function locate(root, filename, depth = 3) {
+  const direct = join(root, filename);
+  if (existsSync(direct)) return direct;
+  if (depth === 0) return null;
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return null;
   }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const found = await locate(join(root, e.name), filename, depth - 1);
+    if (found) return found;
+  }
+  return null;
 }
+
+if (!existsSync(dir)) {
+  console.error(
+    `${dir} does not exist.\n` +
+      'Download a CSV dataset from https://fdc.nal.usda.gov/download-datasets ' +
+      'and unzip it first.',
+  );
+  process.exit(1);
+}
+
+const foodCsv = await locate(dir, 'food.csv');
+const nutrientCsv = await locate(dir, 'food_nutrient.csv');
+
+if (!foodCsv || !nutrientCsv) {
+  console.error(
+    `Could not find food.csv and food_nutrient.csv under ${dir}.\n\n` +
+      'Check that you downloaded a **CSV** dataset rather than the JSON or\n' +
+      'Access versions, and that it is unzipped. What is actually in there:\n',
+  );
+  try {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      console.error(`  ${e.isDirectory() ? 'dir ' : 'file'}  ${e.name}`);
+    }
+  } catch {
+    console.error('  (could not read the directory)');
+  }
+  process.exit(1);
+}
+
+console.log(`[foods] using ${foodCsv}`);
 
 console.log('[foods] reading food.csv …');
 const foods = parseCsv(await readFile(foodCsv, 'utf8'));
