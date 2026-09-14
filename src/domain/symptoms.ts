@@ -8,6 +8,7 @@
  */
 
 import { scopedDb } from '../db/scope';
+import { activeProfile } from '../lib/active-profile';
 
 const db = scopedDb('doctor');
 
@@ -40,17 +41,18 @@ export async function logSymptom(
 export async function openSymptoms(): Promise<Symptom[]> {
   return db.query<Symptom>(
     `SELECT * FROM symptoms
-      WHERE deleted_at IS NULL AND resolved_at IS NULL
+      WHERE profile_id = ? AND deleted_at IS NULL AND resolved_at IS NULL
       ORDER BY noted_at DESC`,
+    [activeProfile()],
   );
 }
 
 export async function recentSymptoms(days = 14): Promise<Symptom[]> {
   return db.query<Symptom>(
     `SELECT * FROM symptoms
-      WHERE deleted_at IS NULL AND noted_at >= ?
+      WHERE profile_id = ? AND deleted_at IS NULL AND noted_at >= ?
       ORDER BY noted_at DESC`,
-    [Date.now() - days * 86_400_000],
+    [activeProfile(), Date.now() - days * 86_400_000],
   );
 }
 

@@ -78,9 +78,11 @@ The phase with the most hidden work, almost none of it AI.
       path beside text, not a fallback
 - [x] `food_aliases` caching so your own vocabulary converges
 - [x] Per-meal and per-day macro views
-- [ ] Load reference data — `scripts/import-foods.mjs` is written; run it against
-      a USDA FoodData Central CSV download
+- [x] Load reference data — 329 USDA Foundation Foods entries committed
 - [x] Custom foods — define a dish once, it matches forever after
+- [x] **Elastic portions** — quantity × measure → net weight → macros, derived
+      from the dish's own anchors rather than fixed per-unit constants
+- [x] Personal food-table import: your CSV, re-runnable, in-app, never uploaded
 - [ ] Decide whether the model fallback is worth building at all (see below)
 
 **Done when:** 80% of your last thirty meals matched locally with zero model calls.
@@ -95,6 +97,38 @@ food the user knows what they ate and the model is guessing. Typing four numbers
 is faster than a round trip and strictly more accurate. Currently an unmatched
 item opens empty macro fields instead of calling the model. Revisit only if that
 turns out to be annoying in practice.
+
+*Portions are anchors, not serving sizes.* The first version had a
+`defaultGrams()` with per-unit constants — a katori is 150g, a bowl is 250g,
+anything else is 100g. That is wrong for nearly every dish, because a katori of
+dal and a katori of rice and a katori of curd weigh three different things, and
+it was wrong in a way that compounds: `"2 roti"` came out as 200g rather than
+80g, so a normal breakfast logged 2.5× the calories it contained.
+
+A dish now carries `food_portions` rows — "1 katori = 150g" — and everything
+else is derived from them:
+
+| Asked for | Derived from | How |
+| --- | --- | --- |
+| 1.5 katori | the katori anchor | linear, 225g |
+| 1 bowl | the katori anchor | density, 150g/150ml = 1.0 g/ml → 250g |
+| 100 ml of oil | a tbsp anchor of 14g | 0.93 g/ml → 93g, not 100g |
+| "2 roti" | roti's default portion | 2 × 40g |
+| 1 slice | the only per-piece anchor | 40g |
+
+Two rules keep it honest. A weight the app assumed from a household table is
+tagged `estimated` in the UI and is never written back as if it were measured —
+only a weight the user actually typed becomes an anchor. And a count measure
+never yields a density: knowing a slice of bread weighs 30g says nothing about
+what a bowl of it weighs, so that falls back and says so.
+
+The macro columns of the sheet are normalised to per-100g on import, and the
+row's net weight is kept as the anchor. That separation is what makes the data
+elastic rather than a lookup table of fixed rows.
+
+*Tested.* `npm test` — 74 assertions on the arithmetic in node, and 44 against
+real OPFS SQLite in a headless browser (`scripts/e2e/`), covering migrations,
+import idempotence, the scope layer and profile isolation.
 
 *Data licensing.* The `ifct2017` npm package is AGPL-3.0 and would relicense the
 whole app, so it is not used. USDA FoodData Central is US federal data and
@@ -191,6 +225,42 @@ claim.
 *The NLM retired its drug-interaction endpoint in January 2024*, so interactions
 are read out of label text rather than a purpose-built API. More work, less
 tidy, but citable — which the old endpoint's output was not.
+
+---
+
+## Phase 4.5 — Two people · done
+
+Not in the original plan. The app is for two of us, and that is a schema
+decision, not a UI one — retrofitting it after months of logged data would have
+meant rewriting every query against real records.
+
+- [x] `profiles` table; `profile_id` on medications, intake_events, meals,
+      meal_items, symptoms, messages
+- [x] `current_state` is one row per profile; conversation summaries keyed
+      `<profile>:<agent>`
+- [x] One-tap switcher in the header; switching remounts the app
+- [x] A guard in `db/scope.ts` that throws on any read of a per-person table
+      without a `profile_id` filter
+
+**What is shared and what is not.** The food library — `foods`, `custom_foods`,
+`food_portions`, `food_aliases` — is shared, because a household has one
+kitchen and one katori, and a dish either of us records should be available to
+both immediately. Everything that is a record of a body is separate.
+
+**Why the guard exists.** A missing `profile_id` in a WHERE clause does not
+crash, does not look wrong in review, and cannot be caught by testing with one
+profile. It surfaces as one person's meals in the other's day and as the Doctor
+reasoning about the wrong person's symptoms. There is no safe default to fall
+back to, so the query throws instead. Inserts are stamped automatically, since
+a row written with no profile belongs to nobody and is invisible to everyone.
+
+**Not security.** Anything on the page can read the whole database. This is
+about a shared device and correct attribution, the same as the agent scope
+layer — making the wrong thing hard to write by accident.
+
+**Trap avoided:** a separate database file per person. Tempting, and it gives
+real isolation, but it splits the food table too, which is the one thing that
+should be shared and the one thing that takes real effort to build.
 
 ---
 

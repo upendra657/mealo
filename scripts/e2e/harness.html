@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  End-to-end harness for the storage layer.
+
+  scripts/test-portions.ts covers the arithmetic, but it runs in node against
+  pure functions and therefore proves nothing about migrations, OPFS, the
+  worker, or the scope layer. This page loads the real modules in a real
+  browser with the real database behind them, and scripts/e2e/run.mjs drives
+  it headless.
+
+  Served by `vite dev`, so it gets the COOP/COEP headers that OPFS needs.
+  Open it by hand at /scripts/e2e/harness.html if a failure needs poking at.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mealo · storage e2e</title>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module" src="./harness.ts"></script>
+  </body>
+</html>

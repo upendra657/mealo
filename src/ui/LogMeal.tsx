@@ -19,9 +19,11 @@ import {
   itemsFor,
   localHitRate,
   mealsOn,
+  repriceItem,
   round,
   saveMeal,
   totalMacros,
+  withManualGrams,
   type DraftItem,
   type Meal,
   type MealItem,
@@ -30,21 +32,26 @@ import {
 import {
   countFoods,
   saveCustomFood,
-  scaleMacros,
   searchFoods,
   type Food,
 } from '../domain/foods';
+import { toMeasure } from '../domain/measures';
+import { upsertPortion } from '../domain/portions';
 import { seedFoods } from '../domain/seed';
+import { MeasureSelect } from './FoodLibrary';
 
 const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
 function blankItem(label = ''): DraftItem {
   return {
     label,
-    quantity: null,
+    quantity: 1,
     unit: null,
     food: null,
     grams: 100,
+    basis: 'unknown',
+    portionNote: 'no portion recorded — assuming 100g, edit if wrong',
+    portionMeasured: false,
     matchScore: 0,
     source: 'direct',
     energy_kcal: null,
@@ -104,6 +111,16 @@ export function LogMeal() {
 
   const patch = (idx: number, p: Partial<DraftItem>) =>
     setDraft((d) => d && d.map((it, i) => (i === idx ? { ...it, ...p } : it)));
+
+  const replace = (idx: number, next: DraftItem) =>
+    setDraft((d) => d && d.map((it, i) => (i === idx ? next : it)));
+
+  /** Quantity, measure or dish changed — recompute weight and macros together. */
+  const reprice = async (
+    idx: number,
+    item: DraftItem,
+    change: Parameters<typeof repriceItem>[1],
+  ) => replace(idx, await repriceItem(item, change));
 
   const dayTotals = totalMacros(items);
   const dayGaps = hasGaps(items);
@@ -182,6 +199,8 @@ export function LogMeal() {
                 key={i}
                 item={it}
                 onChange={(p) => patch(i, p)}
+                onReplace={(next) => replace(i, next)}
+                onReprice={(change) => void reprice(i, it, change)}
                 onRemove={() =>
                   setDraft((d) => d && d.filter((_, j) => j !== i))
                 }
@@ -318,18 +337,47 @@ function Macro({
   );
 }
 
+/** How confident the app is about this weight, said in one word. */
+function BasisTag({ item }: { item: DraftItem }) {
+  if (!item.portionMeasured) {
+    return <span className="tag tag--guess" title={item.portionNote}>estimated</span>;
+  }
+  if (item.basis === 'household' || item.basis === 'unknown') return null;
+  const words: Record<string, string> = {
+    weight: 'weighed',
+    anchor: 'your portion',
+    density: 'from your portion',
+    sibling: 'from your portion',
+    default: 'your portion',
+  };
+  return (
+    <span className="tag tag--known" title={item.portionNote}>
+      {words[item.basis] ?? 'derived'}
+    </span>
+  );
+}
+
 function DraftRow({
   item,
   onChange,
+  onReplace,
+  onReprice,
   onRemove,
 }: {
   item: DraftItem;
   onChange: (p: Partial<DraftItem>) => void;
+  onReplace: (next: DraftItem) => void;
+  onReprice: (change: {
+    quantity?: number | null;
+    unit?: string | null;
+    food?: Food | null;
+  }) => void;
   onRemove: () => void;
 }) {
   const [options, setOptions] = useState<Food[]>([]);
   const [searching, setSearching] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [portionSaved, setPortionSaved] = useState(false);
 
   // Macros are stored for the portion; custom foods are stored per 100g.
   const canSaveAsFood =
@@ -338,28 +386,48 @@ function DraftRow({
     item.energy_kcal !== null &&
     item.grams > 0;
 
+  // Offer to remember the weight only when it is worth remembering: a real
+  // measure, a dish to attach it to, and a number the app didn't supply.
+  const measure = item.unit ? toMeasure(item.unit) : null;
+  const canSavePortion =
+    !!item.food &&
+    !!measure &&
+    measure.kind !== 'weight' &&
+    item.grams > 0 &&
+    !portionSaved &&
+    (item.basis === 'weight' || !item.portionMeasured);
+
   const saveAsFood = async () => {
     const per100 = (v: number | null) =>
       v === null ? null : Math.round((v / item.grams) * 100 * 100) / 100;
-    const id = await saveCustomFood({
-      name: item.label.trim(),
+    const macros = {
       energy_kcal: per100(item.energy_kcal),
       protein_g: per100(item.protein_g),
       fat_g: per100(item.fat_g),
       carbs_g: per100(item.carbs_g),
       fibre_g: per100(item.fibre_g),
-    });
+    };
+    const id = await saveCustomFood({ name: item.label.trim(), ...macros });
+    // Whatever the user just told us this portion weighs is the dish's first
+    // anchor — the single most valuable thing to keep, because every future
+    // quantity of it is derived from this one number.
+    if (measure && measure.kind !== 'weight') {
+      await upsertPortion({
+        foodId: id,
+        measure: measure.id,
+        quantity: item.quantity && item.quantity > 0 ? item.quantity : 1,
+        netWeightG: item.grams,
+        isDefault: true,
+        source: 'user',
+      });
+    }
     onChange({
       food: {
         id,
         name: item.label.trim(),
         source_db: 'custom',
         per_unit: '100g',
-        energy_kcal: per100(item.energy_kcal),
-        protein_g: per100(item.protein_g),
-        fat_g: per100(item.fat_g),
-        carbs_g: per100(item.carbs_g),
-        fibre_g: per100(item.fibre_g),
+        ...macros,
         is_custom: 1,
       },
       source: 'matched',
@@ -368,20 +436,16 @@ function DraftRow({
     setSaved(true);
   };
 
-  const pick = (food: Food) => {
-    onChange({
-      food,
-      source: 'matched',
-      matchScore: 1,
-      ...scaleMacros(food, item.grams),
+  const savePortion = async () => {
+    if (!item.food || !measure) return;
+    await upsertPortion({
+      foodId: item.food.id,
+      measure: measure.id,
+      quantity: item.quantity && item.quantity > 0 ? item.quantity : 1,
+      netWeightG: item.grams,
+      source: 'user',
     });
-    setOptions([]);
-    setSearching(false);
-  };
-
-  const setGrams = (grams: number) => {
-    if (item.food) onChange({ grams, ...scaleMacros(item.food, grams) });
-    else onChange({ grams });
+    setPortionSaved(true);
   };
 
   return (
@@ -428,13 +492,67 @@ function DraftRow({
           <ul className="models">
             {options.map((f) => (
               <li key={f.id}>
-                <button className="link" onClick={() => pick(f)}>
+                <button
+                  className="link"
+                  onClick={() => {
+                    onReprice({ food: f });
+                    setOptions([]);
+                    setSearching(false);
+                  }}
+                >
                   {f.name} — {f.energy_kcal ?? '?'} kcal/100g
                 </button>
               </li>
             ))}
           </ul>
         )}
+
+        {/* How much — the part that used to be a raw grams box. Quantity and
+            measure are what a person actually knows; the weight is derived
+            and stays editable for the times you weighed it. */}
+        <div className="portion-row">
+          <label>
+            <span>how much</span>
+            <input
+              type="number"
+              step="0.25"
+              min="0"
+              value={item.quantity ?? ''}
+              onChange={(e) =>
+                onReprice({
+                  quantity: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+            />
+          </label>
+          <label>
+            <span>measure</span>
+            <MeasureSelect
+              value={item.unit}
+              onChange={(unit) => onReprice({ unit })}
+            />
+          </label>
+          <label>
+            <span>= grams</span>
+            <input
+              type="number"
+              value={item.grams}
+              onChange={(e) =>
+                onReplace(withManualGrams(item, Number(e.target.value) || 0))
+              }
+            />
+          </label>
+        </div>
+
+        <p className="small muted portion-note">
+          <BasisTag item={item} /> {item.portionNote}
+          {canSavePortion && (
+            <button className="link" style={{ marginLeft: 6 }} onClick={() => void savePortion()}>
+              remember this
+            </button>
+          )}
+          {portionSaved && <span> · saved</span>}
+        </p>
 
         {canSaveAsFood && (
           <p className="small" style={{ margin: '0 0 8px' }}>
@@ -451,14 +569,6 @@ function DraftRow({
         )}
 
         <div className="macro-inputs">
-          <label>
-            <span>grams</span>
-            <input
-              type="number"
-              value={item.grams}
-              onChange={(e) => setGrams(Number(e.target.value) || 0)}
-            />
-          </label>
           {(
             [
               ['energy_kcal', 'kcal'],

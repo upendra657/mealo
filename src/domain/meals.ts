@@ -16,6 +16,7 @@
  */
 
 import { scopedDb } from '../db/scope';
+import { activeProfile } from '../lib/active-profile';
 import {
   matchFood,
   parseMealText,
@@ -23,6 +24,13 @@ import {
   scaleMacros,
   type Food,
 } from './foods';
+import { toMeasure } from './measures';
+import {
+  resolveFor,
+  upsertPortion,
+  type Basis,
+  type Resolution,
+} from './portions';
 
 const db = scopedDb('nutritionist');
 
@@ -45,6 +53,7 @@ export type MealItem = {
   food_id: string | null;
   quantity: number | null;
   unit: string | null;
+  net_weight_g: number | null;
   energy_kcal: number | null;
   protein_g: number | null;
   fat_g: number | null;
@@ -75,10 +84,16 @@ export const ZERO: Macros = {
 export type DraftItem = {
   label: string;
   quantity: number | null;
+  /** Canonical measure id — see domain/measures.ts. */
   unit: string | null;
   food: Food | null;
-  /** Assumed grams when the reference is per-100g and no weight was given. */
+  /** Net weight this portion works out to. */
   grams: number;
+  /** How that weight was arrived at, so the UI can be honest about it. */
+  basis: Basis;
+  portionNote: string;
+  /** False when the grams came from a generic table rather than this dish. */
+  portionMeasured: boolean;
   matchScore: number;
   source: ItemSource;
   energy_kcal: number | null;
@@ -102,50 +117,24 @@ export function guessMealType(d = new Date()): MealType {
   return 'snack';
 }
 
-/**
- * Default portion in grams.
- *
- * Honest about what it is: a starting number the user can correct, not a
- * measurement. Shown in the UI as an editable field for exactly that reason.
- */
-function defaultGrams(unit: string | null, quantity: number | null): number {
-  const q = quantity ?? 1;
-  switch (unit) {
-    case 'g':
-    case 'gram':
-      return q;
-    case 'kg':
-      return q * 1000;
-    case 'ml':
-      return q;
-    case 'l':
-    case 'litre':
-    case 'liter':
-      return q * 1000;
-    case 'cup':
-    case 'cups':
-    case 'glass':
-    case 'glasses':
-      return q * 200;
-    case 'bowl':
-    case 'bowls':
-    case 'katori':
-      return q * 150;
-    case 'tbsp':
-    case 'tablespoon':
-      return q * 15;
-    case 'tsp':
-    case 'teaspoon':
-      return q * 5;
-    case 'scoop':
-    case 'scoops':
-      return q * 30;
-    default:
-      return q * 100;
-  }
-}
-
 // ------------------------------------------------------------- drafting
+
+function withPortion(
+  base: Omit<
+    DraftItem,
+    'grams' | 'basis' | 'portionNote' | 'portionMeasured' | 'unit'
+  >,
+  res: Resolution,
+): DraftItem {
+  return {
+    ...base,
+    unit: res.measure,
+    grams: res.grams,
+    basis: res.basis,
+    portionNote: res.note,
+    portionMeasured: res.measured,
+  };
+}
 
 /** Turn typed text into draft items, using local matching only. */
 export async function draftFromText(text: string): Promise<DraftItem[]> {
@@ -154,38 +143,94 @@ export async function draftFromText(text: string): Promise<DraftItem[]> {
 
   for (const p of parsed) {
     const match = await matchFood(p.label);
-    const grams = defaultGrams(p.unit, p.quantity);
+    // The weight comes from the dish's own recorded portions when it has any,
+    // and only falls back to a household size when it has none. This is the
+    // difference between "2 roti" meaning 80g and meaning 200g.
+    const res = await resolveFor(match?.food.id ?? null, p.quantity, p.unit);
 
     if (match) {
-      const macros = scaleMacros(match.food, grams);
-      out.push({
-        label: p.label,
-        quantity: p.quantity,
-        unit: p.unit,
-        food: match.food,
-        grams,
-        matchScore: match.score,
-        source: 'matched',
-        ...macros,
-      });
+      out.push(
+        withPortion(
+          {
+            label: p.label,
+            quantity: p.quantity,
+            food: match.food,
+            matchScore: match.score,
+            source: 'matched',
+            ...scaleMacros(match.food, res.grams),
+          },
+          res,
+        ),
+      );
     } else {
-      out.push({
-        label: p.label,
-        quantity: p.quantity,
-        unit: p.unit,
-        food: null,
-        grams,
-        matchScore: 0,
-        source: 'direct',
-        energy_kcal: null,
-        protein_g: null,
-        fat_g: null,
-        carbs_g: null,
-        fibre_g: null,
-      });
+      out.push(
+        withPortion(
+          {
+            label: p.label,
+            quantity: p.quantity,
+            food: null,
+            matchScore: 0,
+            source: 'direct',
+            energy_kcal: null,
+            protein_g: null,
+            fat_g: null,
+            carbs_g: null,
+            fibre_g: null,
+          },
+          res,
+        ),
+      );
     }
   }
   return out;
+}
+
+/**
+ * Recompute one draft row after the user changed its quantity, measure or
+ * matched dish. The single place that keeps grams and macros consistent.
+ */
+export async function repriceItem(
+  item: DraftItem,
+  change: { quantity?: number | null; unit?: string | null; food?: Food | null },
+): Promise<DraftItem> {
+  const food = change.food !== undefined ? change.food : item.food;
+  const quantity = change.quantity !== undefined ? change.quantity : item.quantity;
+  const unit = change.unit !== undefined ? change.unit : item.unit;
+
+  const res = await resolveFor(food?.id ?? null, quantity, unit);
+  const macros = food
+    ? scaleMacros(food, res.grams)
+    : {
+        energy_kcal: item.energy_kcal,
+        protein_g: item.protein_g,
+        fat_g: item.fat_g,
+        carbs_g: item.carbs_g,
+        fibre_g: item.fibre_g,
+      };
+
+  return withPortion(
+    {
+      label: item.label,
+      quantity,
+      food,
+      matchScore: food ? (change.food !== undefined ? 1 : item.matchScore) : 0,
+      source: food ? 'matched' : item.source,
+      ...macros,
+    },
+    res,
+  );
+}
+
+/** Grams edited by hand — keep the number, drop the claim about where it came from. */
+export function withManualGrams(item: DraftItem, grams: number): DraftItem {
+  return {
+    ...item,
+    grams,
+    basis: 'weight',
+    portionNote: `${grams}g, set by hand`,
+    portionMeasured: true,
+    ...(item.food ? scaleMacros(item.food, grams) : {}),
+  };
 }
 
 /** How many items in a draft resolved locally — the Phase 2 exit metric. */
@@ -214,6 +259,7 @@ export async function saveMeal(
       food_id: it.food?.id ?? null,
       quantity: it.quantity,
       unit: it.unit,
+      net_weight_g: it.grams,
       energy_kcal: it.energy_kcal,
       protein_g: it.protein_g,
       fat_g: it.fat_g,
@@ -226,6 +272,31 @@ export async function saveMeal(
     if (it.food && it.source === 'matched') {
       await rememberAlias(it.label, it.food.id);
     }
+    // Learn the portion, but only from a weight the user actually set. A
+    // household guess the app made must never come back as "your katori" —
+    // that would launder an assumption into a measurement. `basis === 'weight'`
+    // means the grams were typed, not derived.
+    //
+    // Saved as 'derived', which upsertPortion will not let overwrite anything
+    // measured, so a real figure always wins and never the other way round.
+    const measure = it.unit ? toMeasure(it.unit) : null;
+    if (
+      it.food &&
+      measure &&
+      measure.kind !== 'weight' &&
+      it.basis === 'weight' &&
+      it.grams > 0 &&
+      it.quantity &&
+      it.quantity > 0
+    ) {
+      await upsertPortion({
+        foodId: it.food.id,
+        measure: measure.id,
+        quantity: it.quantity,
+        netWeightG: it.grams,
+        source: 'derived',
+      });
+    }
   }
   return mealId;
 }
@@ -233,8 +304,9 @@ export async function saveMeal(
 export async function deleteMeal(id: string): Promise<void> {
   await db.softDelete('meals', id);
   const items = await db.query<{ id: string }>(
-    'SELECT id FROM meal_items WHERE meal_id = ? AND deleted_at IS NULL',
-    [id],
+    `SELECT id FROM meal_items
+      WHERE meal_id = ? AND profile_id = ? AND deleted_at IS NULL`,
+    [id, activeProfile()],
   );
   for (const i of items) await db.softDelete('meal_items', i.id);
 }
@@ -244,9 +316,10 @@ export async function deleteMeal(id: string): Promise<void> {
 export async function mealsOn(dayStart = startOfToday()): Promise<Meal[]> {
   return db.query<Meal>(
     `SELECT * FROM meals
-      WHERE deleted_at IS NULL AND eaten_at >= ? AND eaten_at < ?
+      WHERE profile_id = ? AND deleted_at IS NULL
+        AND eaten_at >= ? AND eaten_at < ?
       ORDER BY eaten_at DESC`,
-    [dayStart, dayStart + 86_400_000],
+    [activeProfile(), dayStart, dayStart + 86_400_000],
   );
 }
 
@@ -255,8 +328,8 @@ export async function itemsFor(mealIds: string[]): Promise<MealItem[]> {
   const holes = mealIds.map(() => '?').join(',');
   return db.query<MealItem>(
     `SELECT * FROM meal_items
-      WHERE deleted_at IS NULL AND meal_id IN (${holes})`,
-    mealIds,
+      WHERE profile_id = ? AND deleted_at IS NULL AND meal_id IN (${holes})`,
+    [activeProfile(), ...mealIds],
   );
 }
 

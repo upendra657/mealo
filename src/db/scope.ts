@@ -17,6 +17,7 @@
  * happens.
  */
 
+import { activeProfile } from '../lib/active-profile';
 import { insert, query, run, softDelete, update } from './client';
 
 export type Agent = 'doctor' | 'nutritionist' | 'pharmacist';
@@ -30,12 +31,35 @@ const ALL_TABLES = [
   'meal_items',
   'foods',
   'custom_foods',
+  'food_portions',
   'food_aliases',
   'symptoms',
   'current_state',
   'citations',
   'messages',
   'conversation_summaries',
+  'profiles',
+] as const;
+
+/**
+ * Tables that belong to one person rather than to the household.
+ *
+ * The food library is shared — same kitchen, same katori — but a record of a
+ * body is not. Every row in these tables carries `profile_id`, and the handle
+ * below refuses to read them without mentioning it. See the note on
+ * ProfileScopeError for why that is a thrown error and not a silent default.
+ *
+ * `current_state` and `conversation_summaries` are absent because they encode
+ * the profile in their primary key instead: one row per profile, and
+ * "<profile>:<agent>" respectively.
+ */
+const PROFILE_SCOPED = [
+  'medications',
+  'intake_events',
+  'meals',
+  'meal_items',
+  'symptoms',
+  'messages',
 ] as const;
 
 export const SCOPES: Record<Agent, Scope> = {
@@ -73,6 +97,7 @@ export const SCOPES: Record<Agent, Scope> = {
       'meal_items',
       'foods',
       'custom_foods',
+      'food_portions',
       'food_aliases',
       'current_state',
       'citations',
@@ -83,6 +108,7 @@ export const SCOPES: Record<Agent, Scope> = {
       'meals',
       'meal_items',
       'custom_foods',
+      'food_portions',
       'food_aliases',
       'citations',
       'messages',
@@ -90,6 +116,28 @@ export const SCOPES: Record<Agent, Scope> = {
     ],
   },
 };
+
+/**
+ * Thrown when a query reads a per-person table without filtering by profile.
+ *
+ * This is loud on purpose, and it is the one guard in the codebase that exists
+ * because of what the failure would look like rather than how likely it is: a
+ * missing `profile_id` in a WHERE clause does not crash, does not look wrong in
+ * review, and does not show up in testing with one profile. It shows up as one
+ * person's meals appearing in the other's day, and as the Doctor advising him
+ * about her symptoms. There is no safe default to fall back on, so the query
+ * fails instead.
+ */
+export class ProfileScopeError extends Error {
+  constructor(table: string, sql: string) {
+    super(
+      `Query reads "${table}" without a profile filter. Every read of a ` +
+        `per-person table must constrain profile_id — see db/scope.ts. SQL: ` +
+        sql.replace(/\s+/g, ' ').trim().slice(0, 160),
+    );
+    this.name = 'ProfileScopeError';
+  }
+}
 
 export class ScopeError extends Error {
   constructor(agent: Agent, table: string, mode: 'read' | 'write') {
@@ -125,10 +173,34 @@ export function tablesIn(sql: string): string[] {
   return [...found];
 }
 
+export function isProfileScoped(table: string): boolean {
+  return (PROFILE_SCOPED as readonly string[]).includes(table);
+}
+
+/** Has this SQL constrained profile_id at all? Crude, and meant to be. */
+function mentionsProfile(sql: string): boolean {
+  return /\bprofile_id\b/i.test(sql);
+}
+
+function assertProfileFiltered(sql: string) {
+  if (mentionsProfile(sql)) return;
+  for (const t of tablesIn(sql)) {
+    if (isProfileScoped(t)) throw new ProfileScopeError(t, sql);
+  }
+}
+
 export type ScopedDb = ReturnType<typeof scopedDb>;
 
-/** Database handle that can only touch what this agent is allowed to touch. */
-export function scopedDb(agent: Agent) {
+/**
+ * Database handle that can only touch what this agent is allowed to touch,
+ * for the person currently selected.
+ *
+ * `profileId` is resolved lazily through a getter rather than captured, so a
+ * handle created at module load — which is how every domain file does it —
+ * follows the active profile instead of pinning whichever one was selected
+ * when the module first ran.
+ */
+export function scopedDb(agent: Agent, profileId: () => string = activeProfile) {
   return {
     agent,
 
@@ -138,12 +210,14 @@ export function scopedDb(agent: Agent) {
       bind?: unknown[],
     ): Promise<T[]> {
       for (const t of tablesIn(sql)) assertAllowed(agent, t, 'read');
+      assertProfileFiltered(sql);
       return query<T>(sql, bind);
     },
 
     /** Write raw SQL. Same check, against the write scope. */
     async run(sql: string, bind?: unknown[]): Promise<void> {
       for (const t of tablesIn(sql)) assertAllowed(agent, t, 'write');
+      assertProfileFiltered(sql);
       return run(sql, bind);
     },
 
@@ -152,7 +226,14 @@ export function scopedDb(agent: Agent) {
       values: Record<string, unknown>,
     ): Promise<string> {
       assertAllowed(agent, table, 'write');
-      return insert(table, values);
+      // Stamped here rather than by each caller. A row written without a
+      // profile belongs to nobody and is invisible to everyone, which is a
+      // far worse bug than a query that throws.
+      const row =
+        isProfileScoped(table) && values.profile_id === undefined
+          ? { ...values, profile_id: profileId() }
+          : values;
+      return insert(table, row);
     },
 
     async update(

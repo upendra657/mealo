@@ -205,4 +205,115 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 3,
+  name: 'food portions',
+  sql: `
+    -- What a household measure weighs, for one specific dish.
+    --
+    -- The reason this is a table and not a column: a dish has more than one
+    -- honest answer. Dal is 150g in a katori and 250g in a bowl, and neither
+    -- is more correct. A single "serving size" column forces a choice that
+    -- then has to be undone by hand at every meal that used the other one.
+    --
+    -- Each row is an anchor: "\`quantity\` \`measure\` of this dish weighs
+    -- \`net_weight_g\`". Everything else is derived from the anchors —
+    -- arbitrary quantities scale linearly, and other volume measures come
+    -- through the density the anchor implies. That derivation lives in
+    -- domain/portions.ts; this table only stores what was actually measured.
+    --
+    -- Shared across profiles on purpose: two people in one kitchen use the
+    -- same katori. Only the logs are per-person.
+    CREATE TABLE IF NOT EXISTS food_portions (
+      id            TEXT PRIMARY KEY,
+      food_id       TEXT NOT NULL,     -- custom_foods.id or foods.id
+      measure       TEXT NOT NULL,     -- canonical id from domain/measures.ts
+      quantity      REAL NOT NULL DEFAULT 1,
+      net_weight_g  REAL NOT NULL,
+      -- The one offered first when this dish is logged with no measure given.
+      is_default    INTEGER NOT NULL DEFAULT 0,
+      -- 'user'     typed or imported — a real measurement
+      -- 'derived'  written by the app from another anchor; may be replaced
+      source        TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user','derived')),
+      updated_at    INTEGER NOT NULL,
+      deleted_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_portions_food ON food_portions(food_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_portions_unique
+      ON food_portions(food_id, measure);
+
+    -- The weight a logged item actually worked out to. quantity+unit alone
+    -- ("1 katori") stops meaning a fixed amount the moment the portion behind
+    -- it is corrected, so the number used at the time is recorded with it.
+    ALTER TABLE meal_items ADD COLUMN net_weight_g REAL;
+  `,
+});
+
+MIGRATIONS.push({
+  version: 4,
+  name: 'profiles',
+  sql: `
+    -- Two people, one app.
+    --
+    -- The split is deliberate and it is not "everything is per person". A
+    -- household shares a kitchen: the same katori, the same dal, the same
+    -- weights. So the food library — foods, custom_foods, food_portions,
+    -- food_aliases — stays shared, and every dish either of you records is
+    -- immediately available to the other.
+    --
+    -- What is emphatically not shared is the record of a body: meals eaten,
+    -- medications, doses, symptoms, and the agent conversations that read
+    -- them. Those carry profile_id and are filtered on it, and db/scope.ts
+    -- refuses any query against these tables that forgets to.
+    CREATE TABLE IF NOT EXISTS profiles (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      colour      TEXT,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      deleted_at  INTEGER
+    );
+
+    -- 'primary' is a fixed id rather than a device-scoped one, so that the
+    -- same person's profile carries the same id on the Mac and the phone and
+    -- the two halves reconcile when sync arrives in Phase 5.
+    INSERT OR IGNORE INTO profiles (id, name, created_at, updated_at)
+      VALUES ('primary', 'Me',
+              CAST(strftime('%s','now') AS INTEGER) * 1000,
+              CAST(strftime('%s','now') AS INTEGER) * 1000);
+
+    ALTER TABLE medications   ADD COLUMN profile_id TEXT;
+    ALTER TABLE intake_events ADD COLUMN profile_id TEXT;
+    ALTER TABLE meals         ADD COLUMN profile_id TEXT;
+    ALTER TABLE meal_items    ADD COLUMN profile_id TEXT;
+    ALTER TABLE symptoms      ADD COLUMN profile_id TEXT;
+    ALTER TABLE messages      ADD COLUMN profile_id TEXT;
+
+    -- Everything logged before this migration belongs to whoever was using
+    -- the app, which is the primary profile by definition.
+    UPDATE medications   SET profile_id = 'primary' WHERE profile_id IS NULL;
+    UPDATE intake_events SET profile_id = 'primary' WHERE profile_id IS NULL;
+    UPDATE meals         SET profile_id = 'primary' WHERE profile_id IS NULL;
+    UPDATE meal_items    SET profile_id = 'primary' WHERE profile_id IS NULL;
+    UPDATE symptoms      SET profile_id = 'primary' WHERE profile_id IS NULL;
+    UPDATE messages      SET profile_id = 'primary' WHERE profile_id IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_meals_profile   ON meals(profile_id, eaten_at);
+    CREATE INDEX IF NOT EXISTS idx_items_profile   ON meal_items(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_meds_profile    ON medications(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_profile  ON intake_events(profile_id, taken_at);
+    CREATE INDEX IF NOT EXISTS idx_sympt_profile   ON symptoms(profile_id, noted_at);
+    CREATE INDEX IF NOT EXISTS idx_msg_profile     ON messages(profile_id, agent, created_at);
+
+    -- current_state is one row per profile, keyed by the profile id, so the
+    -- old singleton becomes the primary profile's state.
+    UPDATE current_state SET id = 'primary' WHERE id = 'singleton';
+
+    -- Conversation summaries are keyed "<profile>:<agent>" from here on.
+    UPDATE conversation_summaries
+       SET id = 'primary:' || id
+     WHERE id IN ('doctor','nutritionist','pharmacist');
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

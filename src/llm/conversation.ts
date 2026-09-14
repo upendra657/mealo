@@ -13,8 +13,21 @@
  */
 
 import { scopedDb, type Agent } from '../db/scope';
+import { activeProfile } from '../lib/active-profile';
 import { chat } from './adapter';
 import type { ChatMessage, ProviderConfig } from './types';
+
+/**
+ * Threads are per person as well as per agent.
+ *
+ * Two people share this install, and a conversation is the most personal
+ * record in it — the Doctor's thread carries symptoms verbatim. The summary
+ * key encodes both, "<profile>:<agent>", rather than adding a column to a
+ * table whose primary key already identifies exactly one row.
+ */
+function summaryKey(agent: Agent): string {
+  return `${activeProfile()}:${agent}`;
+}
 
 /** Turns kept verbatim before summarisation kicks in. */
 const VERBATIM_TURNS = 6;
@@ -36,9 +49,9 @@ export async function loadThread(
   const db = scopedDb(agent);
   const rows = await db.query<StoredMessage>(
     `SELECT * FROM messages
-      WHERE agent = ? AND deleted_at IS NULL
+      WHERE profile_id = ? AND agent = ? AND deleted_at IS NULL
       ORDER BY created_at DESC LIMIT ?`,
-    [agent, limit],
+    [activeProfile(), agent, limit],
   );
   return rows.reverse();
 }
@@ -61,11 +74,14 @@ export async function appendMessage(
 export async function clearThread(agent: Agent): Promise<void> {
   const db = scopedDb(agent);
   const rows = await db.query<{ id: string }>(
-    'SELECT id FROM messages WHERE agent = ? AND deleted_at IS NULL',
-    [agent],
+    `SELECT id FROM messages
+      WHERE profile_id = ? AND agent = ? AND deleted_at IS NULL`,
+    [activeProfile(), agent],
   );
   for (const r of rows) await db.softDelete('messages', r.id);
-  await db.run('DELETE FROM conversation_summaries WHERE id = ?', [agent]);
+  await db.run('DELETE FROM conversation_summaries WHERE id = ?', [
+    summaryKey(agent),
+  ]);
 }
 
 async function getSummary(
@@ -74,7 +90,7 @@ async function getSummary(
   const db = scopedDb(agent);
   const rows = await db.query<{ summary: string; upto_msg_id: string | null }>(
     'SELECT summary, upto_msg_id FROM conversation_summaries WHERE id = ?',
-    [agent],
+    [summaryKey(agent)],
   );
   const row = rows[0];
   return row ? { summary: row.summary, uptoMsgId: row.upto_msg_id } : null;
@@ -88,13 +104,13 @@ async function putSummary(
   const db = scopedDb(agent);
   const existing = await getSummary(agent);
   if (existing) {
-    await db.update('conversation_summaries', agent, {
+    await db.update('conversation_summaries', summaryKey(agent), {
       summary,
       upto_msg_id: uptoMsgId,
     });
   } else {
     await db.insert('conversation_summaries', {
-      id: agent,
+      id: summaryKey(agent),
       summary,
       upto_msg_id: uptoMsgId,
     });

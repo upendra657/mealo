@@ -11,6 +11,7 @@
  */
 
 import { scopedDb } from '../db/scope';
+import { activeProfile } from '../lib/active-profile';
 import { extractJson } from '../llm/extract';
 import type { ProviderConfig } from '../llm/types';
 
@@ -65,16 +66,18 @@ export function todayIso(d = new Date()): string {
 export async function listActive(): Promise<Medication[]> {
   return db.query<Medication>(
     `SELECT * FROM medications
-      WHERE deleted_at IS NULL AND ended_on IS NULL
+      WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NULL
       ORDER BY name COLLATE NOCASE`,
+    [activeProfile()],
   );
 }
 
 export async function listStopped(): Promise<Medication[]> {
   return db.query<Medication>(
     `SELECT * FROM medications
-      WHERE deleted_at IS NULL AND ended_on IS NOT NULL
+      WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NOT NULL
       ORDER BY ended_on DESC`,
+    [activeProfile()],
   );
 }
 
@@ -82,9 +85,9 @@ export async function listStopped(): Promise<Medication[]> {
 export async function intakeToday(): Promise<IntakeEvent[]> {
   return db.query<IntakeEvent>(
     `SELECT * FROM intake_events
-      WHERE deleted_at IS NULL AND taken_at >= ?
+      WHERE profile_id = ? AND deleted_at IS NULL AND taken_at >= ?
       ORDER BY taken_at DESC`,
-    [startOfToday()],
+    [activeProfile(), startOfToday()],
   );
 }
 
@@ -93,8 +96,8 @@ export async function loggingStreak(days = 14): Promise<number> {
   const since = startOfToday() - (days - 1) * 86_400_000;
   const rows = await db.query<{ taken_at: number }>(
     `SELECT taken_at FROM intake_events
-      WHERE deleted_at IS NULL AND taken_at >= ?`,
-    [since],
+      WHERE profile_id = ? AND deleted_at IS NULL AND taken_at >= ?`,
+    [activeProfile(), since],
   );
   const daysWithLogs = new Set(
     rows.map((r) => new Date(r.taken_at).setHours(0, 0, 0, 0)),

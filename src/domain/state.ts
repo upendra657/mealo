@@ -19,10 +19,9 @@
  */
 
 import { scopedDb } from '../db/scope';
+import { activeProfile } from '../lib/active-profile';
 
 const db = scopedDb('doctor');
-
-const SINGLETON = 'singleton';
 
 export type CurrentState = {
   id: string;
@@ -66,6 +65,7 @@ function daysAgo(ts: number): number {
 
 /** Gathers the facts. Reads widely — this is the one agent allowed to. */
 export async function collectFacts(): Promise<StateFacts> {
+  const me = activeProfile();
   const weekAgo = Date.now() - 7 * 86_400_000;
 
   const meds = await db.query<{
@@ -74,15 +74,16 @@ export async function collectFacts(): Promise<StateFacts> {
     schedule: string | null;
   }>(
     `SELECT name, dose_text, schedule FROM medications
-      WHERE deleted_at IS NULL AND ended_on IS NULL
+      WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NULL
       ORDER BY name COLLATE NOCASE`,
+    [me],
   );
 
   const intake = await db.query<{ status: string; n: number }>(
     `SELECT status, COUNT(*) AS n FROM intake_events
-      WHERE deleted_at IS NULL AND taken_at >= ?
+      WHERE profile_id = ? AND deleted_at IS NULL AND taken_at >= ?
       GROUP BY status`,
-    [weekAgo],
+    [me, weekAgo],
   );
 
   const symptoms = await db.query<{
@@ -92,8 +93,9 @@ export async function collectFacts(): Promise<StateFacts> {
     severity: number | null;
   }>(
     `SELECT label, raw_text, noted_at, severity FROM symptoms
-      WHERE deleted_at IS NULL AND resolved_at IS NULL
+      WHERE profile_id = ? AND deleted_at IS NULL AND resolved_at IS NULL
       ORDER BY noted_at DESC LIMIT 10`,
+    [me],
   );
 
   const dayStart = new Date();
@@ -108,9 +110,9 @@ export async function collectFacts(): Promise<StateFacts> {
     `SELECT m.name, e.status, e.taken_at
        FROM intake_events e
        JOIN medications m ON m.id = e.medication_id
-      WHERE e.deleted_at IS NULL AND e.taken_at >= ?
+      WHERE e.profile_id = ? AND e.deleted_at IS NULL AND e.taken_at >= ?
       ORDER BY e.taken_at`,
-    [todayMs],
+    [me, todayMs],
   );
 
   const mealRows = await db.query<{
@@ -119,25 +121,30 @@ export async function collectFacts(): Promise<StateFacts> {
     eaten_at: number;
   }>(
     `SELECT id, meal_type, eaten_at FROM meals
-      WHERE deleted_at IS NULL AND eaten_at >= ?
+      WHERE profile_id = ? AND deleted_at IS NULL AND eaten_at >= ?
       ORDER BY eaten_at`,
-    [todayMs],
+    [me, todayMs],
   );
 
   const itemRows = mealRows.length
     ? await db.query<{
         meal_id: string;
         label: string;
+        quantity: number | null;
+        unit: string | null;
+        net_weight_g: number | null;
         energy_kcal: number | null;
         protein_g: number | null;
         fat_g: number | null;
         carbs_g: number | null;
         fibre_g: number | null;
       }>(
-        `SELECT meal_id, label, energy_kcal, protein_g, fat_g, carbs_g, fibre_g
+        `SELECT meal_id, label, quantity, unit, net_weight_g,
+                energy_kcal, protein_g, fat_g, carbs_g, fibre_g
            FROM meal_items
-          WHERE deleted_at IS NULL AND meal_id IN (${mealRows.map(() => '?').join(',')})`,
-        mealRows.map((m) => m.id),
+          WHERE profile_id = ? AND deleted_at IS NULL
+            AND meal_id IN (${mealRows.map(() => '?').join(',')})`,
+        [me, ...mealRows.map((m) => m.id)],
       )
     : [];
 
@@ -152,7 +159,14 @@ export async function collectFacts(): Promise<StateFacts> {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      items: mine.map((i) => i.label),
+      // Portion first, then the weight it worked out to. "1 katori dal (150g)"
+      // lets the model reason about the amount; "dal" does not.
+      items: mine.map((i) => {
+        const amount =
+          i.quantity && i.unit ? `${i.quantity} ${i.unit} ` : '';
+        const weight = i.net_weight_g ? ` (${Math.round(i.net_weight_g)}g)` : '';
+        return `${amount}${i.label}${weight}`;
+      }),
       energy: sum('energy_kcal'),
       protein: sum('protein_g'),
       fat: sum('fat_g'),
@@ -184,8 +198,9 @@ export async function collectFacts(): Promise<StateFacts> {
             SUM(i.fibre_g)     AS f
        FROM meals m
        JOIN meal_items i ON i.meal_id = m.id
-      WHERE m.deleted_at IS NULL AND i.deleted_at IS NULL AND m.eaten_at >= ?`,
-    [weekAgo],
+      WHERE m.profile_id = ? AND m.deleted_at IS NULL
+        AND i.deleted_at IS NULL AND m.eaten_at >= ?`,
+    [me, weekAgo],
   );
 
   const n = nutrition[0];
@@ -325,29 +340,31 @@ export function deriveFlags(facts: StateFacts): string[] {
   return flags;
 }
 
-/** Recompute and store. Only the Doctor may call this — scope enforces it. */
+/**
+ * Recompute and store. Only the Doctor may call this — scope enforces it.
+ *
+ * One row per profile, keyed by the profile id. `current_state` is the only
+ * thing the other two agents can read about the person's condition, so mixing
+ * two people into one row would put her symptoms in front of his Nutritionist.
+ */
 export async function refreshCurrentState(): Promise<CurrentState> {
+  const me = activeProfile();
   const facts = await collectFacts();
   const summary = renderSlice(facts);
   const flags = JSON.stringify(deriveFlags(facts));
 
   const existing = await db.query<CurrentState>(
     'SELECT * FROM current_state WHERE id = ?',
-    [SINGLETON],
+    [me],
   );
 
   if (existing[0]) {
-    await db.update('current_state', SINGLETON, { summary, flags });
+    await db.update('current_state', me, { summary, flags });
   } else {
-    await db.insert('current_state', { id: SINGLETON, summary, flags });
+    await db.insert('current_state', { id: me, summary, flags });
   }
 
-  return {
-    id: SINGLETON,
-    summary,
-    flags,
-    updated_at: Date.now(),
-  };
+  return { id: me, summary, flags, updated_at: Date.now() };
 }
 
 /**
@@ -364,7 +381,7 @@ export async function readCurrentState(
   const handle = scopedDb(agent);
   const rows = await handle.query<CurrentState>(
     'SELECT * FROM current_state WHERE id = ?',
-    [SINGLETON],
+    [activeProfile()],
   );
   return rows[0] ?? null;
 }
