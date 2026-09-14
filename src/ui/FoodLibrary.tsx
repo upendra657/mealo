@@ -27,6 +27,7 @@ import {
   TEMPLATE_CSV,
   type ImportReport,
 } from '../domain/import';
+import { checkRowsFor, checkSheetCsv, type CheckRow } from '../domain/checksheet';
 import { measureGroups, toMeasure } from '../domain/measures';
 import {
   deletePortion,
@@ -171,7 +172,38 @@ export function FoodLibrary() {
           <button onClick={() => setAdding((v) => !v)}>
             {adding ? 'Close' : 'Add a dish'}
           </button>
+          <button
+            disabled={foods.length === 0}
+            title="Every quantity and measure the app thinks it knows, for you to correct"
+            onClick={() => {
+              const rows = foods.flatMap((f) =>
+                checkRowsFor(
+                  f,
+                  (portions.get(f.id) ?? []).map((p) => ({
+                    measure: p.measure,
+                    quantity: p.quantity,
+                    net_weight_g: p.net_weight_g,
+                    is_default: p.is_default,
+                  })),
+                ),
+              );
+              download(
+                `mealo-check-${new Date().toISOString().slice(0, 10)}.csv`,
+                checkSheetCsv(rows),
+              );
+            }}
+          >
+            Check sheet
+          </button>
         </div>
+
+        <p className="small muted">
+          <b>Check sheet</b> writes out every quantity and measure the app
+          believes it can work out, in these same columns. Fix any weight that's
+          wrong, delete the rows you don't care about, and import it back — a
+          corrected row becomes the dish's portion and everything else re-derives
+          from it. Far less typing than entering every combination by hand.
+        </p>
 
         <details style={{ marginTop: 10 }}>
           <summary className="small muted">
@@ -445,6 +477,7 @@ function DishRow({
   onChanged: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [measure, setMeasure] = useState<string | null>('katori');
   const [weight, setWeight] = useState('');
 
@@ -495,6 +528,18 @@ function DishRow({
         <button className="link" onClick={() => setOpen((v) => !v)}>
           {open ? 'done' : 'portions'}
         </button>
+        <button
+          className="link"
+          style={{ marginLeft: 10 }}
+          onClick={() => setChecking((v) => !v)}
+          title="See what the app works out for other quantities, and correct it"
+        >
+          {checking ? 'hide check' : 'check'}
+        </button>
+
+        {checking && (
+          <PortionCheck food={food} anchors={anchors} onChanged={onChanged} />
+        )}
 
         {open && (
           <div className="portions-edit">
@@ -599,5 +644,131 @@ function DishRow({
         Delete
       </button>
     </li>
+  );
+}
+
+/**
+ * What the app currently believes about a dish, laid out for correction.
+ *
+ * This is the cheap half of the bargain the portion model offers: you record
+ * one real portion, and instead of typing the other twenty you read them and
+ * fix the ones that are wrong. Each correction is an anchor, so fixing one row
+ * usually fixes several — correcting the bowl reprices the cup and the glass
+ * through density, without either being touched.
+ *
+ * The confidence column is not decoration. A weight the app assumed from a
+ * generic household table and a weight you measured are different kinds of
+ * claim, and the assumed rows are the ones that need your eye.
+ */
+function PortionCheck({
+  food,
+  anchors,
+  onChanged,
+}: {
+  food: Food;
+  anchors: {
+    measure: string;
+    quantity: number;
+    net_weight_g: number;
+    is_default: number;
+  }[];
+  onChanged: () => void | Promise<void>;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [value, setValue] = useState('');
+  const rows = checkRowsFor(food, anchors);
+  const keyOf = (r: CheckRow) => `${r.measure}:${r.quantity}`;
+
+  const correct = async (r: CheckRow) => {
+    const grams = Number(value);
+    if (!(grams > 0)) return;
+    await upsertPortion({
+      foodId: food.id,
+      measure: r.measure,
+      quantity: r.quantity,
+      netWeightG: grams,
+      source: 'user',
+    });
+    setEditing(null);
+    setValue('');
+    await onChanged();
+  };
+
+  const assumed = rows.filter((r) => r.confidence === 'assumed').length;
+
+  return (
+    <div className="portions-edit">
+      {food.energy_kcal === null && (
+        <p className="small bad">
+          This dish has no calories recorded, so only the weights below mean
+          anything. Add its macros first.
+        </p>
+      )}
+      <p className="small muted" style={{ marginTop: 0 }}>
+        {assumed === 0
+          ? 'Every row below traces back to something you measured.'
+          : `${assumed} of ${rows.length} rows are generic guesses — those are the ones worth checking.`}
+      </p>
+
+      <ul className="check-rows">
+        {rows.map((r) => {
+          const k = keyOf(r);
+          return (
+            <li key={k} className="check-row">
+              <div className="check-head">
+                <span className="check-amount">
+                  {r.quantity === 1 ? '' : `${r.quantity} `}
+                  {r.measureLabel}
+                </span>
+                <span
+                  className={r.confidence === 'assumed' ? 'tag tag--guess' : 'tag tag--known'}
+                  title={r.note}
+                >
+                  {r.confidence}
+                </span>
+                <b>{r.grams}g</b>
+                {r.energy !== null && <span>· {r.energy} kcal</span>}
+                <button
+                  className="link"
+                  onClick={() => {
+                    setEditing(editing === k ? null : k);
+                    setValue(String(r.grams));
+                  }}
+                >
+                  {editing === k ? 'cancel' : 'wrong?'}
+                </button>
+              </div>
+
+              {r.energy !== null && (
+                <p className="small muted check-macros">
+                  P {r.protein ?? '—'} · F {r.fat ?? '—'} · C {r.carbs ?? '—'} · Fib{' '}
+                  {r.fibre ?? '—'}
+                </p>
+              )}
+
+              {editing === k && (
+                <div className="portion-row">
+                  <label>
+                    <span>really weighs</span>
+                    <input
+                      type="number"
+                      autoFocus
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void correct(r);
+                      }}
+                    />
+                  </label>
+                  <button className="primary" onClick={() => void correct(r)}>
+                    Save
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

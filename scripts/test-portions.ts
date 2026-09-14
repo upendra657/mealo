@@ -26,6 +26,7 @@ import {
   per100Of,
   weightOf,
 } from '../src/domain/import';
+import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
 
 let passed = 0;
 let failed = 0;
@@ -330,6 +331,107 @@ check('per100 keeps nulls null', per100Of({
   line: 2, name: 'x', quantity: 1, measure: 'g',
   netWeightG: 50, energy: 100, protein: null, fat: null, carbs: null, fibre: null,
 }, 50).protein_g, null);
+
+// ----------------------------------------------------------- check sheet
+
+section('Check sheet — what the app claims, for correction');
+{
+  // One anchor only, the realistic starting point: you recorded a katori and
+  // nothing else. Everything the sheet offers beyond that is derived, and the
+  // sheet has to say which is which.
+  const dalFood = {
+    id: 'f1',
+    name: 'Dal tadka',
+    source_db: 'custom',
+    per_unit: '100g',
+    energy_kcal: 117.3,
+    protein_g: 5.6,
+    fat_g: 4.1,
+    carbs_g: 14.3,
+    fibre_g: 3.4,
+    is_custom: 1,
+  };
+  const rows = checkRowsFor(dalFood, dal);
+
+  const own = rows.filter((r) => r.measure === 'katori');
+  check('the recorded measure gets every quantity', own.length, 4);
+  check('and is marked as yours', own.every((r) => r.confidence === 'yours'), true);
+  near('1 katori round-trips', own.find((r) => r.quantity === 1)?.grams ?? 0, 150);
+  near(
+    'and carries its macros',
+    own.find((r) => r.quantity === 1)?.energy ?? 0,
+    176,
+    1.5,
+  );
+  near('1.5 katori is offered too', own.find((r) => r.quantity === 1.5)?.energy ?? 0, 264, 2);
+
+  const bowl = rows.find((r) => r.measure === 'bowl' && r.quantity === 1);
+  check('an unrecorded bowl is offered', !!bowl, true);
+  check('marked derived, not yours', bowl?.confidence, 'derived');
+  near('at the density the katori implies', bowl?.grams ?? 0, 250);
+
+  const grams = rows.filter((r) => r.measure === 'g');
+  check('a 100g control row exists', grams.length, 1);
+  near('and is exact', grams[0].grams, 100);
+  near('with the per-100g macros', grams[0].energy ?? 0, 117.3, 0.2);
+
+  check(
+    'nothing volumetric is offered for a dish counted in pieces',
+    checkRowsFor(dalFood, roti).some((r) => r.measure === 'bowl'),
+    false,
+  );
+  check(
+    'but other piece measures are',
+    checkRowsFor(dalFood, roti).some((r) => r.measure === 'piece'),
+    true,
+  );
+
+  // A dish with nothing recorded must not present guesses as facts.
+  const bare = checkRowsFor(dalFood, []);
+  check(
+    'an unmeasured dish is all guesswork',
+    bare.filter((r) => r.measure !== 'g').every((r) => r.confidence === 'assumed'),
+    true,
+  );
+}
+
+section('Check sheet round-trips through the importer');
+{
+  const dalFood = {
+    id: 'f1', name: 'Dal tadka', source_db: 'custom', per_unit: '100g',
+    energy_kcal: 117.3, protein_g: 5.6, fat_g: 4.1, carbs_g: 14.3, fibre_g: 3.4,
+    is_custom: 1,
+  };
+  const csv = checkSheetCsv(checkRowsFor(dalFood, dal));
+  const { rows: back, issues, unmatched } = readRows(csv);
+  check('the sheet reads back cleanly', issues.length, 0);
+  check('its two extra columns are ignored, not misread', unmatched, ['From', 'How']);
+  check('every row survives', back.length > 8, true);
+
+  // Correct one row the way he would in a spreadsheet: the bowl is really 210g.
+  const corrected = csv
+    .split('\n')
+    .map((line) =>
+      line.startsWith('Dal tadka,1,bowl,')
+        ? 'Dal tadka,1,bowl,210,246,11.8,8.6,30,7.1'
+        : line,
+    )
+    .join('\n');
+
+  const { dishes } = planDishes(readRows(corrected).rows);
+  const plan = dishes[0];
+  const bowlAnchor = plan.portions.find((p) => p.measure === 'bowl');
+  near('the correction becomes an anchor', bowlAnchor?.netWeightG ?? 0, 210);
+
+  const anchors: Anchor[] = plan.portions.map((p) => ({
+    measure: p.measure,
+    quantity: p.quantity,
+    net_weight_g: p.netWeightG,
+  }));
+  near('1 bowl now', resolvePortion(1, 'bowl', anchors).grams, 210);
+  near('2 bowls follow', resolvePortion(2, 'bowl', anchors).grams, 420);
+  near('and the katori is untouched', resolvePortion(1, 'katori', anchors).grams, 150);
+}
 
 // ------------------------------------------------------------------ done
 
