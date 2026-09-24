@@ -12,6 +12,7 @@
 
 import {
   itemsFor,
+  mealRange,
   mealsOn,
   startOfToday,
   type Meal,
@@ -160,6 +161,37 @@ export function energySplit(m: Macros): [number, number, number] | null {
   const total = parts[0] + parts[1] + parts[2];
   if (total <= 0) return null;
   return [parts[0] / total, parts[1] / total, parts[2] / total];
+}
+
+/**
+ * A day as "YYYY-MM-DD" in local time.
+ *
+ * Deliberately not toISOString().slice(0,10), which is UTC: at +05:30 a meal
+ * eaten at half past midnight is the previous day in UTC, so the calendar
+ * would put the dot under the wrong square.
+ */
+export function localDayKey(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Which days in a range have anything logged.
+ *
+ * The bucketing happens here rather than in SQL for the same reason as above:
+ * SQLite's DATE(ts/1000,'unixepoch') is UTC and has no idea what timezone the
+ * person eats in. A month of timestamps is a handful of rows, so reading them
+ * and grouping in local time costs nothing and is right everywhere.
+ */
+export async function loggedDays(
+  fromMs: number,
+  toMs: number,
+): Promise<Set<string>> {
+  const rows = await mealRange(fromMs, toMs);
+  const out = new Set<string>();
+  for (const r of rows) out.add(localDayKey(r.eaten_at));
+  return out;
 }
 
 /** Local midnight for a day offset from today. Negative is the past. */

@@ -36,6 +36,12 @@
   --bad-bg: rgba(240, 113, 103, 0.14);
   --empty: #2a342f;
 
+  /* Blue belongs to the calendar and nothing else: today's bubble and the
+     dot under a day with entries. Keeping it off the rest of the app is what
+     makes it read as "where you are" rather than as another status colour. */
+  --blue: #5aa6f0;
+  --blue-ink: #06213c;
+
   /* Macro identities, used only where several appear together. */
   --m-protein: #7fb2e8;
   --m-fat: #e8b44a;
@@ -64,7 +70,7 @@ body {
   background: var(--ink);
   color: var(--ink-text);
   font-family: var(--ui);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
@@ -97,7 +103,7 @@ textarea {
   color: var(--muted);
 }
 .small {
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 .grow {
   flex: 1;
@@ -141,7 +147,7 @@ textarea {
   min-height: 62px;
 }
 .top h1 {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 500;
   margin: 0;
   letter-spacing: -0.01em;
@@ -150,7 +156,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
 }
 .back:hover {
@@ -185,7 +191,7 @@ textarea {
   background: var(--surface-2);
   display: grid;
   place-items: center;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--accent);
 }
@@ -213,7 +219,7 @@ textarea {
   }
 }
 .menu .grp {
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
@@ -226,7 +232,7 @@ textarea {
   gap: 9px;
   padding: 10px 11px;
   border-radius: 9px;
-  font-size: 14px;
+  font-size: 15px;
   text-align: left;
 }
 .menu button:hover {
@@ -253,7 +259,7 @@ textarea {
   place-items: center;
   background: var(--surface);
   border: 1px solid var(--line);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
   flex: none;
 }
@@ -266,19 +272,24 @@ textarea {
   inset: 0;
   z-index: 25;
 }
+/* Used where the thing on top is a panel rather than a menu hanging off its
+   own button — without it the calendar and the day behind it read as one. */
+.scrim--dim {
+  background: rgba(4, 6, 5, 0.55);
+}
 
 /* ---- home ------------------------------------------------------------ */
 .hero {
   padding-block: 6px 22px;
 }
 .kicker {
-  font-size: 11.5px;
+  font-size: 12.5px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
 }
 .hero .line {
-  font-size: 15px;
+  font-size: 16px;
   color: var(--muted);
   margin-top: 6px;
 }
@@ -312,12 +323,12 @@ textarea {
   background: var(--surface-2);
 }
 .tile .name {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 500;
   color: var(--ink-text);
 }
 .tile .note {
-  font-size: 11.5px;
+  font-size: 12.5px;
   margin-top: 3px;
 }
 .tile--primary {
@@ -398,18 +409,18 @@ textarea {
   gap: 9px;
 }
 .kcal .big {
-  font-size: 34px;
+  font-size: 35px;
   font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1;
 }
 .kcal .of {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
 }
 .kcal .pct {
   margin-left: auto;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 500;
 }
 
@@ -423,7 +434,7 @@ textarea {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 2px 10px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .macro .lbl {
   color: var(--muted);
@@ -442,7 +453,7 @@ textarea {
   align-items: center;
   gap: 8px;
   margin: 22px 0 8px;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
@@ -464,15 +475,15 @@ textarea {
   margin-bottom: 7px;
 }
 .row .nm {
-  font-size: 14px;
+  font-size: 15px;
 }
 .row .amt {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
   margin-top: 1px;
 }
 .row .kc {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
   flex: none;
 }
@@ -498,12 +509,12 @@ textarea {
   background: var(--bad-bg);
 }
 .empty-note {
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
   padding: 2px 2px 6px;
 }
 .note {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
   line-height: 1.5;
   border-left: 2px solid var(--line);
@@ -512,7 +523,7 @@ textarea {
 }
 .foot {
   padding-block: 26px 34px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   text-align: center;
   line-height: 1.6;
@@ -520,7 +531,7 @@ textarea {
 
 /* ---- forms ----------------------------------------------------------- */
 .field-lbl {
-  font-size: 11.5px;
+  font-size: 12.5px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
@@ -557,7 +568,7 @@ textarea {
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface);
-  font-size: 13.5px;
+  font-size: 14.5px;
   color: var(--muted);
   transition: 0.15s;
 }
@@ -579,10 +590,10 @@ textarea {
   border-bottom: 0;
 }
 .field label {
-  font-size: 13.5px;
+  font-size: 14.5px;
 }
 .field .u {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-left: 5px;
 }
@@ -593,7 +604,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 9px 10px;
-  font-size: 14px;
+  font-size: 15px;
   outline: none;
 }
 .field input {
@@ -617,7 +628,7 @@ textarea {
   border-radius: 13px;
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 500;
 }
 .cta:disabled {
@@ -636,7 +647,7 @@ textarea {
   display: inline-block;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.04em;
 }
 .tag--known {
@@ -664,7 +675,7 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
   margin: 8px 0 0;
 }
@@ -673,7 +684,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   padding-block: 4px 10px;
 }
@@ -697,7 +708,7 @@ textarea {
   border: 1px solid var(--line);
   padding: 11px 17px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 14px;
   opacity: 0;
   pointer-events: none;
   transition:
@@ -751,22 +762,19 @@ textarea {
 
 /* ---- date bar -------------------------------------------------------- */
 .datebar {
+  position: relative; /* the calendar hangs off this */
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
   padding-block: 2px 14px;
 }
-.datebar > div {
-  min-width: 142px;
-  text-align: center;
-}
 .datebar .d {
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 500;
 }
 .datebar .today {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent);
   min-height: 16px;
 }
@@ -799,12 +807,12 @@ textarea {
   padding-top: 34px;
 }
 .sel-title .t {
-  font-size: 27px;
+  font-size: 28px;
   font-weight: 300;
   letter-spacing: -0.02em;
 }
 .sel-title .h {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   margin-top: 5px;
 }
@@ -813,7 +821,7 @@ textarea {
   inset-inline: 0;
   bottom: 332px;
   text-align: center;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
   margin: 0;
 }
@@ -885,19 +893,19 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
 }
 
 /* ---- dish screen ----------------------------------------------------- */
 .dish-name {
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 500;
   letter-spacing: -0.02em;
   margin: 6px 0 2px;
 }
 .dish-sub {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   line-height: 1.5;
 }
@@ -905,7 +913,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -926,7 +934,7 @@ textarea {
   display: block;
 }
 .afield .k {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   display: block;
 }
@@ -935,7 +943,7 @@ textarea {
   align-items: center;
   gap: 6px;
   margin-top: 3px;
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 500;
 }
 .afield .v svg {
@@ -963,18 +971,18 @@ textarea {
   padding: 16px 16px 13px;
 }
 .readout .cal {
-  font-size: 32px;
+  font-size: 33px;
   font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1;
 }
 .readout .cu {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 .readout .wt {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
   background: var(--surface-2);
   border-radius: 8px;
   padding: 5px 9px;
@@ -986,7 +994,7 @@ textarea {
   display: flex;
   align-items: center;
   padding: 11px 16px;
-  font-size: 13.5px;
+  font-size: 14.5px;
 }
 .mrow + .mrow {
   border-top: 1px solid var(--line);
@@ -1004,7 +1012,7 @@ textarea {
   gap: 7px;
   padding: 11px 16px;
   border-top: 1px solid var(--line);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 
@@ -1046,7 +1054,7 @@ textarea {
   margin: 6px auto 4px;
 }
 .sheet h3 {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   color: var(--muted);
   text-align: center;
@@ -1059,7 +1067,7 @@ textarea {
   border-radius: 12px;
   background: var(--ink-text);
   color: var(--ink);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 500;
 }
 .sheet .typed {
@@ -1073,7 +1081,7 @@ textarea {
   background: var(--surface);
 }
 .sheet .typed span {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 .sheet .typed input {
@@ -1083,24 +1091,24 @@ textarea {
   border: 0;
   outline: none;
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 17px;
   padding: 11px 0;
   text-align: right;
 }
 .guard-title {
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 500;
   letter-spacing: -0.02em;
   margin: 10px 0 8px;
 }
 .guard-line {
   margin: 0 0 6px;
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.5;
 }
 .guard-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
 }
 
@@ -1128,7 +1136,7 @@ textarea {
   scroll-snap-align: center;
   display: grid;
   place-items: center;
-  font-size: 19px;
+  font-size: 20px;
   color: var(--muted);
   opacity: 0.45;
   transition:
@@ -1162,7 +1170,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 8px 10px;
-  font-size: 13.5px;
+  font-size: 14.5px;
   outline: none;
 }
 .menu-manage input:focus,
@@ -1172,7 +1180,7 @@ textarea {
 .menu-manage .cta {
   margin-top: 6px;
   padding: 9px;
-  font-size: 13.5px;
+  font-size: 14.5px;
 }
 .menu-person {
   display: flex;
@@ -1183,7 +1191,7 @@ textarea {
 .menu-person .bin {
   width: 28px;
   height: 28px;
-  font-size: 16px;
+  font-size: 17px;
 }
 .menu-person .bin:disabled {
   opacity: 0.3;
@@ -1195,7 +1203,7 @@ textarea {
   padding: 6px 0 4px;
 }
 .ins-status {
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1206,13 +1214,13 @@ textarea {
   margin-top: 4px;
 }
 .ins-cal .num {
-  font-size: 42px;
+  font-size: 43px;
   font-weight: 500;
   letter-spacing: -0.03em;
   line-height: 1;
 }
 .ins-of {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
 }
 .ins-head .bar {
@@ -1230,10 +1238,10 @@ textarea {
   border-top: 1px solid var(--line);
 }
 .ins-macro .nm {
-  font-size: 14px;
+  font-size: 15px;
 }
 .ins-macro .fig {
-  font-size: 13px;
+  font-size: 14px;
 }
 .ins-macro .bar {
   grid-column: 1 / -1;
@@ -1253,18 +1261,18 @@ textarea {
   gap: 8px;
 }
 .ins-meal .hd .nm {
-  font-size: 14px;
+  font-size: 15px;
 }
 .ins-meal .hd .kc {
   margin-left: auto;
-  font-size: 14px;
+  font-size: 15px;
 }
 .ins-meal .hd .sh {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .ins-meal .dishes {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   margin: 5px 0 9px;
 }
@@ -1284,7 +1292,7 @@ textarea {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .ins-meal .key b {
@@ -1309,13 +1317,13 @@ textarea {
   border-top: 1px solid var(--line);
 }
 .top-row .nm {
-  font-size: 13.5px;
+  font-size: 14.5px;
 }
 .top-row .amt {
-  font-size: 13px;
+  font-size: 14px;
 }
 .top-row .sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .top-row .bar {
@@ -1329,4 +1337,157 @@ textarea {
     grid-template-columns: 1fr 1.1fr;
     gap: 8px;
   }
+}
+
+
+/* ---- the calendar ---------------------------------------------------- */
+.date-open {
+  min-width: 152px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+.date-open:hover {
+  background: var(--surface);
+}
+.date-open .d {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.date-open .d svg {
+  color: var(--muted);
+}
+.date-open .today {
+  display: block;
+}
+
+.calendar {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% - 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(320px, calc(100vw - 32px));
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 12px 10px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.62);
+  animation: cal-in 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+  transform-origin: top center;
+}
+@keyframes cal-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.95) translateY(-6px);
+  }
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cal-month {
+  flex: 1;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-dow {
+  margin-bottom: 2px;
+}
+.cal-dow span {
+  text-align: center;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+
+/* Each day is a square cell holding a smaller round target, so the bubble
+   sits inside the cell rather than filling it and the dot has room below. */
+.cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink-text);
+}
+.cal-day .n {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  line-height: 1;
+  border-radius: 50%;
+  margin-bottom: 5px; /* leaves the dot its own band */
+}
+.cal-day:hover:not(:disabled) .n {
+  background: rgba(230, 237, 232, 0.07);
+}
+.cal-day:disabled {
+  color: var(--line);
+  cursor: default;
+}
+
+/* today: a blue bubble */
+.cal-day[data-today] .n {
+  background: var(--blue);
+  color: var(--blue-ink);
+  font-weight: 500;
+}
+.cal-day[data-today]:hover .n {
+  background: var(--blue);
+}
+
+/* the day you are looking at, when it is not today */
+.cal-day[data-on]:not([data-today]) .n {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--accent);
+}
+
+/* a day with entries: one dot underneath, and nothing at all without */
+.cal-day .mark {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+.cal-day[data-logged] .mark {
+  background: var(--blue);
+}
+
+.cal-foot {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.cal-key-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--blue);
+  margin-right: 5px;
+  vertical-align: 2px;
 }

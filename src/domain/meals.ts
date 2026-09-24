@@ -372,6 +372,19 @@ export async function mealsOn(dayStart = startOfToday()): Promise<Meal[]> {
   );
 }
 
+/** Just the timestamps of meals in a window — for the calendar's dots. */
+export async function mealRange(
+  fromMs: number,
+  toMs: number,
+): Promise<{ eaten_at: number }[]> {
+  return db.query<{ eaten_at: number }>(
+    `SELECT eaten_at FROM meals
+      WHERE profile_id = ? AND deleted_at IS NULL
+        AND eaten_at >= ? AND eaten_at < ?`,
+    [activeProfile(), fromMs, toMs],
+  );
+}
+
 export async function itemsFor(mealIds: string[]): Promise<MealItem[]> {
   if (mealIds.length === 0) return [];
   const holes = mealIds.map(() => '?').join(',');

@@ -20,6 +20,7 @@ import {
   type Targets,
 } from '../domain/targets';
 import { Bin, Chevron, Plus, useToast } from './bits';
+import { DatePicker } from './DatePicker';
 import type { Screen } from '../App';
 import { setDraft } from './LogFlow';
 
@@ -40,6 +41,7 @@ export function Day({
   const start = dayStart ?? startOfToday();
   const [view, setView] = useState<DayView | null>(null);
   const [targets, setTargets] = useState<Targets | null>(null);
+  const [calendar, setCalendar] = useState(false);
   const toast = useToast();
 
   const refresh = useCallback(async () => {
@@ -117,16 +119,24 @@ export function Day({
         <button className="arrow" onClick={() => shift(-1)} aria-label="Previous day">
           <Chevron size={16} />
         </button>
-        <div>
-          <div className="d">
+        {/* The date is the way into the calendar. Stepping a day at a time
+            is fine for yesterday and hopeless for last month. */}
+        <button
+          className="date-open"
+          onClick={() => setCalendar((v) => !v)}
+          aria-expanded={calendar}
+          aria-haspopup="dialog"
+        >
+          <span className="d">
             {date.toLocaleDateString(undefined, {
               weekday: 'short',
               day: 'numeric',
               month: 'short',
             })}
-          </div>
-          <div className="today">{isToday ? 'Today' : ' '}</div>
-        </div>
+            <Chevron size={13} dir="down" />
+          </span>
+          <span className="today">{isToday ? 'Today' : '\u00a0'}</span>
+        </button>
         <button
           className="arrow"
           onClick={() => shift(1)}
@@ -135,6 +145,14 @@ export function Day({
         >
           <Chevron size={16} dir="right" />
         </button>
+
+        {calendar && (
+          <DatePicker
+            selected={start}
+            onPick={setDayStart}
+            onClose={() => setCalendar(false)}
+          />
+        )}
       </div>
 
       <button
