@@ -33,6 +33,12 @@ export type Measure = {
   ml?: number;
   /** Household fallback weight for one of these, when the dish has no anchor. */
   grams: number;
+  /**
+   * True when the size is specific to the place it came from and nothing can
+   * be transferred in or out — a restaurant "serve". The resolver refuses to
+   * derive these and refuses to derive anything from them.
+   */
+  needsOwn?: boolean;
   aliases: readonly string[];
   /** Grouping for the dropdown. */
   group: 'Weight & volume' | 'Bowls & spoons' | 'Pieces';
@@ -59,11 +65,19 @@ export const MEASURES: readonly Measure[] = [
   { id: 'ladle',   label: 'ladle',     kind: 'volume', ml: 60,  grams: 60,  group: 'Bowls & spoons',
     aliases: ['ladles', 'karchi', 'karchhi'] },
   { id: 'katori',  label: 'katori',    kind: 'volume', ml: 150, grams: 150, group: 'Bowls & spoons',
-    aliases: ['katoris', 'katori small', 'small bowl'] },
+    aliases: ['katoris'] },
+  // Same 150 ml as a katori, kept as its own entry on purpose: some people
+  // reach for "small bowl" and shouldn't have to learn that it means katori.
+  { id: 'smallbowl', label: 'small bowl', kind: 'volume', ml: 150, grams: 150, group: 'Bowls & spoons',
+    aliases: ['small bowls', 'katori small'] },
+  { id: 'teacup',  label: 'teacup',    kind: 'volume', ml: 180, grams: 180, group: 'Bowls & spoons',
+    aliases: ['teacups', 'tea cup', 'chai cup'] },
   { id: 'cup',     label: 'cup',       kind: 'volume', ml: 240, grams: 240, group: 'Bowls & spoons',
     aliases: ['cups'] },
-  { id: 'bowl',    label: 'bowl',      kind: 'volume', ml: 250, grams: 250, group: 'Bowls & spoons',
-    aliases: ['bowls'] },
+  // 350 ml, not 250. Measured: dal tadka is 150g in a katori and 350g in a
+  // bowl, which is exactly 150 ml and 350 ml at 1.0 g/ml.
+  { id: 'bowl',    label: 'bowl',      kind: 'volume', ml: 350, grams: 350, group: 'Bowls & spoons',
+    aliases: ['bowls', 'big bowl', 'large bowl'] },
   { id: 'glass',   label: 'glass',     kind: 'volume', ml: 250, grams: 250, group: 'Bowls & spoons',
     aliases: ['glasses', 'tumbler'] },
   { id: 'plate',   label: 'plate',     kind: 'volume', ml: 350, grams: 350, group: 'Bowls & spoons',
@@ -76,8 +90,21 @@ export const MEASURES: readonly Measure[] = [
   // own portion instead; that is what the Save-portion path is for.
   { id: 'piece',   label: 'piece',   kind: 'count', grams: 50,  group: 'Pieces',
     aliases: ['pieces', 'pc', 'pcs', 'no', 'nos', 'number'] },
-  { id: 'serving', label: 'serving', kind: 'count', grams: 150, group: 'Pieces',
-    aliases: ['servings', 'portion', 'portions', 'helping'] },
+  // A serve is whatever that restaurant plates — 112g of fries or 750g of
+  // penne. `needsOwn` stops the resolver inventing one and stops it lending
+  // its size to any other measure.
+  { id: 'serve',   label: 'serve',   kind: 'count', grams: 300, needsOwn: true, group: 'Pieces',
+    aliases: ['serves', 'serving', 'servings', 'portion', 'portions', 'helping', 'plateful'] },
+  { id: 'large',   label: 'large',   kind: 'count', grams: 200, needsOwn: true, group: 'Pieces',
+    aliases: ['big'] },
+  { id: 'regular', label: 'regular', kind: 'count', grams: 100, needsOwn: true, group: 'Pieces',
+    aliases: ['standard', 'medium'] },
+  { id: 'burger',  label: 'burger',  kind: 'count', grams: 200, needsOwn: true, group: 'Pieces',
+    aliases: ['burgers', 'sandwich', 'wrap', 'roll'] },
+  { id: 'bar',     label: 'bar',     kind: 'count', grams: 50, group: 'Pieces',
+    aliases: ['bars'] },
+  { id: 'nugget',  label: 'nugget',  kind: 'count', grams: 35, group: 'Pieces',
+    aliases: ['nuggets'] },
   { id: 'slice',   label: 'slice',   kind: 'count', grams: 30,  group: 'Pieces',
     aliases: ['slices'] },
   { id: 'egg',     label: 'egg',     kind: 'count', grams: 50,  group: 'Pieces',

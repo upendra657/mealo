@@ -63,6 +63,8 @@ export type Basis =
   | 'default'
   /** Nothing dish-specific — a generic household size. */
   | 'household'
+  /** A restaurant portion with no recorded weight. Nothing to derive from. */
+  | 'restaurant'
   /** Nothing at all to go on. */
   | 'unknown';
 
@@ -93,7 +95,8 @@ function perUnit(a: Anchor): number {
 export function densityFrom(anchors: Anchor[]): { density: number; from: Measure } | null {
   const vols = anchors
     .map((a) => ({ a, m: toMeasure(a.measure) }))
-    .filter((x): x is { a: Anchor; m: Measure } => !!x.m && x.m.kind === 'volume' && !!x.m.ml);
+    .filter((x): x is { a: Anchor; m: Measure } =>
+      !!x.m && x.m.kind === 'volume' && !!x.m.ml && !x.m.needsOwn);
   if (vols.length === 0) return null;
   vols.sort((x, y) => {
     const d = (y.a.is_default ?? 0) - (x.a.is_default ?? 0);
@@ -205,8 +208,30 @@ export function resolvePortion(
   }
 
   // --- this dish, its only other per-piece portion ------------------------
+  // --- a restaurant portion, unrecorded -----------------------------------
+  if (m.needsOwn) {
+    // "Serve" means whatever that place puts on the plate: 112g of fries,
+    // 750g of penne. Averaging those would be fiction, so the app starts from
+    // this dish's largest recorded portion and says plainly that the number
+    // is a placeholder until it is measured.
+    const biggest = [...anchors].sort((a, b) => perUnit(b) - perUnit(a))[0];
+    const start = biggest ? perUnit(biggest) : m.grams;
+    return {
+      grams: round1(q * start),
+      basis: 'restaurant',
+      measure: m.id,
+      quantity: q,
+      measured: false,
+      note: `a ${m.label} is whatever that place serves — record what yours weighed`,
+    };
+  }
+
   if (m.kind === 'count') {
-    const counts = anchors.filter((a) => toMeasure(a.measure)?.kind === 'count');
+    // A restaurant portion never lends its size to a plain piece either.
+    const counts = anchors.filter((a) => {
+      const am = toMeasure(a.measure);
+      return am?.kind === 'count' && !am.needsOwn;
+    });
     if (counts.length === 1) {
       const unit = perUnit(counts[0]);
       const label = toMeasure(counts[0].measure)?.label ?? counts[0].measure;

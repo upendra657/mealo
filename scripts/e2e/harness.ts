@@ -36,12 +36,15 @@ function near(name: string, actual: number, expected: number, tol = 0.6) {
   check(name, Math.abs(actual - expected) <= tol, `${actual} vs ${expected}`);
 }
 
+/* Real rows from the user's own sheet, header and all. Using his numbers
+   rather than invented ones means this test fails if the app ever stops
+   reproducing figures he has independently measured. */
 const SHEET = [
-  'Meal/Ingredient,Quantity (Numeric eg: 1.0),Measure (String),Net weight (g),Calories (Kcal),Protein (g),Fats (g),Carbs (g),Fiber (g)',
-  'Dal tadka,1,katori,150,176,8.4,6.2,21.5,5.1',
-  'Dal tadka,1,bowl,250,293,14,10.3,35.8,8.5',
-  'Roti,1,piece,40,104,3.1,0.4,20.6,3.2',
-  '"Curd, plain",1,katori,150,90,5.1,4.9,6.3,0',
+  'Meal/Ingredient,Quantity (Numeric eg: 1.0),Measure (String),Net weight (g/ml),Calories (Kcal),Protein (g),Fats (g),Carbs (g),Fiber (g)',
+  'Dal Tadka,1,Katori,150,128,6.1,4.1,16.6,2.9',
+  'Dal Tadka,1,Bowl,350,298,14.2,9.6,38.8,6.8',
+  'Roti,1,Piece,35,85,3,0.4,17.3,2.7',
+  'Set Curd,1,Cup,245,152,8.1,7.8,12.3,0',
 ].join('\n');
 
 async function main() {
@@ -70,7 +73,7 @@ async function main() {
 
   const dal = await matchFood('dal tadka');
   check('dal matches after import', !!dal, dal?.food.name);
-  near('dal stored per-100g', dal?.food.energy_kcal ?? 0, 117, 1);
+  near('dal stored per-100g', dal?.food.energy_kcal ?? 0, 85.1, 0.5);
 
   const anchors = dal ? await portionsFor(dal.food.id) : [];
   check('dal has both anchors', anchors.length === 2, String(anchors.length));
@@ -80,25 +83,25 @@ async function main() {
   const id = dal!.food.id;
   near('1 katori', (await resolveFor(id, 1, 'katori')).grams, 150);
   near('1.5 katori', (await resolveFor(id, 1.5, 'katori')).grams, 225);
-  near('1 bowl', (await resolveFor(id, 1, 'bowl')).grams, 250);
+  near('1 bowl — his own measured row', (await resolveFor(id, 1, 'bowl')).grams, 350);
   const cup = await resolveFor(id, 1, 'cup');
   near('1 cup, never in the sheet', cup.grams, 240);
   check('cup came from density', cup.basis === 'density', cup.basis);
 
   // ---- drafting from text ----------------------------------------------
   step('draft');
-  const draft = await draftFromText('1.5 katori dal tadka, 2 roti, 1 katori curd');
+  const draft = await draftFromText('1.5 katori dal tadka, 2 roti, 1 cup set curd');
   check('three items parsed', draft.length === 3, String(draft.length));
   check('all matched locally', draft.every((d) => d.food !== null));
 
   const d0 = draft[0];
   near('dal portion', d0.grams, 225);
-  near('dal kcal scales with it', d0.energy_kcal ?? 0, 264, 3);
+  near('dal kcal scales with it', d0.energy_kcal ?? 0, 191.5, 2);
   check('and says where it came from', d0.portionMeasured && d0.basis === 'anchor', d0.basis);
 
   const d1 = draft[1];
-  near('"2 roti" is 80g, not 200g', d1.grams, 80);
-  near('roti kcal', d1.energy_kcal ?? 0, 208, 3);
+  near('"2 roti" is 70g, not 200g', d1.grams, 70);
+  near('roti kcal', d1.energy_kcal ?? 0, 170, 2);
   check('roti used its default portion', d1.basis === 'default', d1.basis);
 
   // ---- saving and reading back ------------------------------------------
@@ -116,7 +119,7 @@ async function main() {
   // ---- what the Doctor sees ---------------------------------------------
   step('slice');
   const slice = renderSlice(await collectFacts());
-  check('slice names the dish', slice.includes('Dal tadka') || slice.includes('dal tadka'), slice);
+  check('slice names the dish', slice.toLowerCase().includes('dal tadka'), slice);
   check('slice carries the weight', /\(\d+g\)/.test(slice), slice);
 
   // ---- the boundary still holds -----------------------------------------
@@ -141,6 +144,12 @@ async function main() {
   check('re-import creates nothing new', again.dishesCreated === 0, String(again.dishesCreated));
   const rows = await query<{ n: number }>('SELECT COUNT(*) AS n FROM food_portions WHERE deleted_at IS NULL');
   check('and does not duplicate portions', Number(rows[0].n) === 4, String(rows[0].n));
+
+  // ---- a restaurant portion stays put -----------------------------------
+  const rotiFood = await matchFood('roti');
+  const asServe = await resolveFor(rotiFood!.food.id, 1, 'serve');
+  check('an unrecorded serve is not derived', asServe.basis === 'restaurant', asServe.basis);
+  check('and is flagged as unmeasured', !asServe.measured);
 
   // ---- two people --------------------------------------------------------
   // The separation that matters: her meals are not his, but the dish she
@@ -168,7 +177,7 @@ async function main() {
   const herPortion = await resolveFor(herDal!.food.id, 1, 'katori');
   check('including its portions', herPortion.basis === 'anchor', herPortion.basis);
 
-  await saveMeal(await draftFromText('1 katori curd'), { mealType: 'snack' });
+  await saveMeal(await draftFromText('1 cup set curd'), { mealType: 'snack' });
   check('partner can log', (await mealsOn()).length === 1);
 
   // Rows are stamped without any caller having to remember to.

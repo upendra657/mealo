@@ -91,10 +91,15 @@ near('0.5 katori scales', resolvePortion(0.5, 'katori', dal).grams, 75);
 
 {
   // The whole point: a measure never recorded for this dish, derived from the
-  // density the katori implies. 150g in 150ml is 1.0 g/ml, so a 250ml bowl.
+  // density the katori implies. 150g in 150ml is 1.0 g/ml, so a 350ml bowl.
+  //
+  // This exact case is the one the real data confirmed: his sheet has dal
+  // tadka at 150g per katori AND 350g per bowl, measured independently. The
+  // derivation lands on 350 to the gram, which is what fixed `bowl` from the
+  // 250ml it was guessed at to the 350ml it actually is.
   const r = resolvePortion(1, 'bowl', dal);
   check('bowl comes from density', r.basis, 'density');
-  near('1 bowl of dal', r.grams, 250);
+  near('1 bowl of dal', r.grams, 350);
 }
 near('1 cup of dal (240ml)', resolvePortion(1, 'cup', dal).grams, 240);
 near('2 tbsp of dal', resolvePortion(2, 'tbsp', dal).grams, 30);
@@ -149,7 +154,7 @@ near('1 katori of oil', resolvePortion(1, 'katori', oil).grams, 140, 1);
 section('Density prefers the larger vessel');
 const mixed: Anchor[] = [
   { measure: 'tsp', quantity: 1, net_weight_g: 6 },
-  { measure: 'bowl', quantity: 1, net_weight_g: 225 },
+  { measure: 'bowl', quantity: 1, net_weight_g: 315 },
 ];
 {
   const d = densityFrom(mixed);
@@ -332,6 +337,51 @@ check('per100 keeps nulls null', per100Of({
   netWeightG: 50, energy: 100, protein: null, fat: null, carbs: null, fibre: null,
 }, 50).protein_g, null);
 
+section('Vessel volumes, as measured rather than assumed');
+{
+  // Every one of these came out of the real sheet: two independently weighed
+  // rows of the same dish pin the ratio between two vessels.
+  const wet: Anchor[] = [{ measure: 'katori', quantity: 1, net_weight_g: 150 }];
+  near('katori 150ml → bowl 350ml', resolvePortion(1, 'bowl', wet).grams, 350);
+  near('katori 150ml → cup 240ml', resolvePortion(1, 'cup', wet).grams, 240);
+  near('katori 150ml → teacup 180ml', resolvePortion(1, 'teacup', wet).grams, 180);
+  near('a small bowl is a katori', resolvePortion(1, 'smallbowl', wet).grams, 150);
+  check('…but stays its own option', canonicalMeasure('small bowl'), 'smallbowl');
+
+  // White rice: cup 206g measured, bowl 289g measured. 206/240 = 0.858 g/ml,
+  // so the bowl should come out near 300. It lands 4% high, which is the
+  // honest accuracy of packing a grain into a different vessel.
+  const rice: Anchor[] = [{ measure: 'cup', quantity: 1, net_weight_g: 206 }];
+  near('rice cup → bowl, within 4%', resolvePortion(1, 'bowl', rice).grams, 300, 2);
+
+  // Ghee, teaspoon to tablespoon: the sheet has 3.4g and 10.2g.
+  const ghee: Anchor[] = [{ measure: 'tsp', quantity: 1, net_weight_g: 3.4 }];
+  near('tsp → tbsp is exactly 3x', resolvePortion(1, 'tbsp', ghee).grams, 10.2, 0.1);
+}
+
+section('A restaurant serve is nobody else\'s serve');
+{
+  const jalfrezi: Anchor[] = [{ measure: 'katori', quantity: 1, net_weight_g: 100 }];
+  const r = resolvePortion(1, 'serve', jalfrezi);
+  check('a serve is never derived', r.basis, 'restaurant');
+  check('and never claims to be measured', r.measured, false);
+  check('it says what to do about it', r.note.includes('record what yours weighed'), true);
+
+  // Recorded, it behaves like any other anchor.
+  const fries: Anchor[] = [{ measure: 'serve', quantity: 1, net_weight_g: 191 }];
+  const s2 = resolvePortion(1, 'serve', fries);
+  check('a recorded serve is exact', s2.basis, 'anchor');
+  near('1 serve of fries', s2.grams, 191);
+  near('2 serves', resolvePortion(2, 'serve', fries).grams, 382);
+
+  // And it lends nothing to anything else.
+  const p = resolvePortion(1, 'piece', fries);
+  check('a serve never becomes a piece', p.basis, 'household');
+  const b = resolvePortion(1, 'bowl', fries);
+  check('nor a bowl', b.basis, 'household');
+  check('both flagged as guesses', !p.measured && !b.measured, true);
+}
+
 // ----------------------------------------------------------- check sheet
 
 section('Check sheet — what the app claims, for correction');
@@ -368,7 +418,7 @@ section('Check sheet — what the app claims, for correction');
   const bowl = rows.find((r) => r.measure === 'bowl' && r.quantity === 1);
   check('an unrecorded bowl is offered', !!bowl, true);
   check('marked derived, not yours', bowl?.confidence, 'derived');
-  near('at the density the katori implies', bowl?.grams ?? 0, 250);
+  near('at the density the katori implies', bowl?.grams ?? 0, 350);
 
   const grams = rows.filter((r) => r.measure === 'g');
   check('a 100g control row exists', grams.length, 1);

@@ -81,6 +81,7 @@ export function measuresToCheck(anchors: Anchor[]): Measure[] {
 function confidenceOf(basis: Basis): CheckRow['confidence'] {
   if (basis === 'anchor' || basis === 'default' || basis === 'weight') return 'yours';
   if (basis === 'density' || basis === 'sibling') return 'derived';
+  // 'restaurant' and 'household' both fall through to 'assumed' below.
   return 'assumed';
 }
 
