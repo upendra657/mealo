@@ -14,6 +14,8 @@
  * to local SQLite; there is no upload, no parsing service, no model call.
  */
 
+import { Chevron } from './bits';
+import type { Screen } from '../App';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteCustomFood,
@@ -81,7 +83,7 @@ export function MeasureSelect({
   );
 }
 
-export function FoodLibrary() {
+export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
   const [foods, setFoods] = useState<Food[]>([]);
   const [portions, setPortions] = useState<Map<string, Portion[]>>(new Map());
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -123,7 +125,9 @@ export function FoodLibrary() {
     : foods;
 
   return (
-    <div className="stack">
+    <>
+      <BackHome go={go} label="Food table" />
+      <div className="stack">
       <section className="card">
         <div className="today-head">
           <h2>My food table</h2>
@@ -276,6 +280,7 @@ export function FoodLibrary() {
         )}
       </section>
     </div>
+    </>
   );
 }
 
@@ -769,6 +774,20 @@ function PortionCheck({
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+/** Header for a screen reached from the home grid. */
+function BackHome({ go, label }: { go: (s: Screen) => void; label: string }) {
+  return (
+    <div className="top">
+      <button className="back" onClick={() => go('home')}>
+        <Chevron />
+        Home
+      </button>
+      <div className="grow" />
+      <span className="small muted">{label}</span>
     </div>
   );
 }

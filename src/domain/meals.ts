@@ -25,6 +25,7 @@ import {
   type Food,
 } from './foods';
 import { toMeasure } from './measures';
+import { guessSlot, type SlotId } from './slots';
 import {
   resolveFor,
   upsertPortion,
@@ -34,7 +35,8 @@ import {
 
 const db = scopedDb('nutritionist');
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+/** The day has six slots now; see domain/slots.ts. */
+export type MealType = SlotId;
 export type ItemSource = 'direct' | 'matched' | 'model';
 
 export type Meal = {
@@ -109,13 +111,7 @@ export function startOfToday(d = new Date()): number {
   return x.getTime();
 }
 
-export function guessMealType(d = new Date()): MealType {
-  const h = d.getHours();
-  if (h < 11) return 'breakfast';
-  if (h < 16) return 'lunch';
-  if (h < 21) return 'dinner';
-  return 'snack';
-}
+export const guessMealType = guessSlot;
 
 // ------------------------------------------------------------- drafting
 
@@ -255,7 +251,10 @@ export async function saveMeal(
   for (const it of items) {
     await db.insert('meal_items', {
       meal_id: mealId,
-      label: it.label,
+      // The dish's own name when one matched: the typed words are already
+      // kept on the meal as raw_text, and a row reading "teacup filter
+      // coffee" is the parser's working, not what you ate.
+      label: it.food?.name ?? it.label,
       food_id: it.food?.id ?? null,
       quantity: it.quantity,
       unit: it.unit,
@@ -299,6 +298,56 @@ export async function saveMeal(
     }
   }
   return mealId;
+}
+
+/**
+ * Remove one item. The meal it belonged to is removed too if that empties it,
+ * so the day never shows a heading with nothing under it.
+ */
+export async function deleteMealItem(itemId: string): Promise<void> {
+  const rows = await db.query<{ meal_id: string }>(
+    `SELECT meal_id FROM meal_items
+      WHERE id = ? AND profile_id = ? AND deleted_at IS NULL`,
+    [itemId, activeProfile()],
+  );
+  await db.softDelete('meal_items', itemId);
+  const mealId = rows[0]?.meal_id;
+  if (!mealId) return;
+  const left = await db.query<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM meal_items
+      WHERE meal_id = ? AND profile_id = ? AND deleted_at IS NULL`,
+    [mealId, activeProfile()],
+  );
+  if (Number(left[0]?.n ?? 0) === 0) await db.softDelete('meals', mealId);
+}
+
+/** Correct an item in place — the amount changed, not what was eaten. */
+export async function updateMealItem(
+  itemId: string,
+  item: DraftItem,
+): Promise<void> {
+  await db.update('meal_items', itemId, {
+    label: item.label,
+    food_id: item.food?.id ?? null,
+    quantity: item.quantity,
+    unit: item.unit,
+    net_weight_g: item.grams,
+    energy_kcal: item.energy_kcal,
+    protein_g: item.protein_g,
+    fat_g: item.fat_g,
+    carbs_g: item.carbs_g,
+    fibre_g: item.fibre_g,
+    source: item.source,
+    deleted_at: null,
+  });
+}
+
+/** Move an item's meal into a different slot. */
+export async function setMealSlot(
+  mealId: string,
+  mealType: MealType,
+): Promise<void> {
+  await db.update('meals', mealId, { meal_type: mealType });
 }
 
 export async function deleteMeal(id: string): Promise<void> {

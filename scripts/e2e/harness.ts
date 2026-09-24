@@ -17,10 +17,14 @@ import {
 } from '../../src/profiles/store';
 import { activeProfile } from '../../src/lib/active-profile';
 import { importPersonalFoods } from '../../src/domain/import';
-import { matchFood } from '../../src/domain/foods';
+import { matchFood, searchFoods } from '../../src/domain/foods';
 import { draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor } from '../../src/domain/portions';
 import { collectFacts, renderSlice } from '../../src/domain/state';
+import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
+import { readDay, contributors } from '../../src/domain/day';
+import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
+import { recentItems } from '../../src/domain/recents';
 
 type Result = { name: string; ok: boolean; detail?: string };
 const results: Result[] = [];
@@ -144,6 +148,48 @@ async function main() {
   check('re-import creates nothing new', again.dishesCreated === 0, String(again.dishesCreated));
   const rows = await query<{ n: number }>('SELECT COUNT(*) AS n FROM food_portions WHERE deleted_at IS NULL');
   check('and does not duplicate portions', Number(rows[0].n) === 4, String(rows[0].n));
+
+  // ---- targets, and what an unset one means -----------------------------
+  const blank = await loadTargets();
+  check('targets start unset, not zero', blank.energy_kcal === null, JSON.stringify(blank));
+  check('an unset target has no percentage', standing(1200, null, true).pct === null);
+  check('and is reported as unset', standing(1200, null, true).standing === 'unset');
+
+  await saveTargets({ energy_kcal: 1700, protein_g: 85, fat_g: 57, carbs_g: 213, fibre_g: 30 });
+  const t2 = await loadTargets();
+  check('targets round-trip', t2.energy_kcal === 1700 && t2.fibre_g === 30, JSON.stringify(t2));
+  check('under 75% reads low', standing(1100, 1700, true).standing === 'low');
+  check('76-100% reads good', standing(1500, 1700, true).standing === 'good');
+  check('over is bad for calories', standing(1900, 1700, true).standing === 'over');
+  check('but not for fibre', standing(61, 30, false).standing === 'good');
+
+  // ---- six slots ---------------------------------------------------------
+  check('six slots', SLOTS.length === 6, String(SLOTS.length));
+  check('old "snack" rows still read', normaliseSlot('snack') === 'esnack');
+  check('unknown slots fall to other', normaliseSlot('brunch') === 'other');
+  check('the clock suggests one', SLOTS.some((s) => s.id === guessSlot()));
+
+  const dayNow = await readDay();
+  check('the day groups by slot', dayNow.groups.length > 0, String(dayNow.groups.length));
+  check(
+    'and only slots with food in them',
+    dayNow.groups.every((g) => g.items.length > 0),
+  );
+  const top = contributors(dayNow, 0);
+  check('contributors are ranked', top.length > 0 && top[0].value >= (top[1]?.value ?? 0));
+  check('and their shares sum to about 100', Math.abs(top.reduce((a, r) => a + r.share, 0) - 100) <= 2,
+    String(top.reduce((a, r) => a + r.share, 0)));
+
+  const rec = await recentItems('lunch', 5);
+  check('recents come back', rec.length > 0, String(rec.length));
+  check('with the amount you used', rec.every((r) => r.quantity > 0));
+
+  // ---- search actually runs ---------------------------------------------
+  // SQLite refuses an expression in the ORDER BY of a compound SELECT, and it
+  // refuses it at query time. Search was throwing and nothing caught it.
+  const found = await searchFoods('dal', 10);
+  check('search returns matches', found.length > 0, String(found.length));
+  check('and prefers your own dishes', found[0].is_custom === 1, JSON.stringify(found[0]));
 
   // ---- a restaurant portion stays put -----------------------------------
   const rotiFood = await matchFood('roti');

@@ -11,6 +11,8 @@
  *      rolling summary rather than the full history.
  */
 
+import { Chevron } from './bits';
+import type { Screen } from '../App';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   appendMessage,
@@ -54,7 +56,7 @@ const SYSTEM_PROMPT = [
 
 type Bubble = { role: 'user' | 'assistant' | 'triage'; content: string };
 
-export function Doctor() {
+export function Doctor({ go }: { go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [thread, setThread] = useState<Bubble[]>([]);
   const [input, setInput] = useState('');
@@ -161,7 +163,9 @@ export function Doctor() {
   };
 
   return (
-    <div className="stack">
+    <>
+      <BackHome go={go} label="Doctor" />
+      <div className="stack">
       {symptoms.length > 0 && (
         <section className="card">
           <h2>Open symptoms</h2>
@@ -278,6 +282,21 @@ export function Doctor() {
           </p>
         )}
       </section>
+    </div>
+    </>
+  );
+}
+
+/** Header for a screen reached from the home grid. */
+function BackHome({ go, label }: { go: (s: Screen) => void; label: string }) {
+  return (
+    <div className="top">
+      <button className="back" onClick={() => go('home')}>
+        <Chevron />
+        Home
+      </button>
+      <div className="grow" />
+      <span className="small muted">{label}</span>
     </div>
   );
 }

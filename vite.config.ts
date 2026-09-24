@@ -53,7 +53,7 @@ export default defineConfig({
       workbox: {
         // The sqlite wasm binary is large; keep it cached for offline use.
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,png,wasm}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,wasm,woff2}'],
       },
       devOptions: { enabled: false },
     }),

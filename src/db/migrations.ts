@@ -316,4 +316,29 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 5,
+  name: 'daily targets',
+  sql: `
+    -- What each person is aiming at, per day.
+    --
+    -- Per profile, because two people in one house do not share a calorie
+    -- budget. Every column is nullable on purpose: a target nobody has set is
+    -- null, not zero, and the UI shows a grey bar rather than measuring you
+    -- against a number the app invented. Nothing here is computed from height
+    -- or weight — that would be the app making a health recommendation, which
+    -- it does not do.
+    CREATE TABLE IF NOT EXISTS targets (
+      id           TEXT PRIMARY KEY,   -- the profile id
+      energy_kcal  REAL,
+      protein_g    REAL,
+      fat_g        REAL,
+      carbs_g      REAL,
+      fibre_g      REAL,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

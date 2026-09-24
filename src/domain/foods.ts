@@ -16,6 +16,7 @@
  */
 
 import { scopedDb } from '../db/scope';
+import { canonicalMeasure, MEASURES } from './measures';
 
 const db = scopedDb('nutritionist');
 
@@ -40,13 +41,22 @@ export type Food = {
  * a generic reference row — you know what your dal actually contains and USDA
  * does not have it at all.
  */
+/**
+ * `name_len` is carried as a real column, not computed in ORDER BY.
+ *
+ * SQLite refuses an expression in the ORDER BY of a compound SELECT — it only
+ * accepts names that appear in the result set — and the failure is a thrown
+ * error at query time, not at build time. Search was dead because of it.
+ */
 const UNION_FOODS = `
   SELECT id, name, 'custom' AS source_db, per_unit,
-         energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+         energy_kcal, protein_g, fat_g, carbs_g, fibre_g,
+         1 AS is_custom, LENGTH(name) AS name_len
     FROM custom_foods WHERE deleted_at IS NULL AND name LIKE ?
   UNION ALL
   SELECT id, name, source_db, per_unit,
-         energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 0 AS is_custom
+         energy_kcal, protein_g, fat_g, carbs_g, fibre_g,
+         0 AS is_custom, LENGTH(name) AS name_len
     FROM foods WHERE name LIKE ?
 `;
 
@@ -120,13 +130,24 @@ export type ParsedItem = {
   unit: string | null;
 };
 
-const UNITS = [
-  'g', 'gram', 'kg', 'ml', 'l', 'litre', 'liter',
-  'cup', 'cups', 'bowl', 'bowls', 'glass', 'glasses',
-  'tbsp', 'tablespoon', 'tsp', 'teaspoon',
-  'piece', 'pieces', 'pc', 'slice', 'slices', 'scoop', 'scoops',
-  'plate', 'plates', 'katori', 'roti', 'chapati', 'paratha', 'idli', 'dosa',
-];
+/**
+ * Every word that could be a measure, longest first.
+ *
+ * Built from the measure vocabulary rather than kept as its own list. The two
+ * drifted apart once already and it showed up as "1 teacup filter coffee"
+ * logging a 100g nothing, and "3 regular idli" matching Regular Naan — the
+ * parser had never heard of "teacup" or "regular", so both words stayed in
+ * the dish name and poisoned the match.
+ *
+ * Longest first matters: "small bowl" has to be tried before "bowl", or the
+ * word "small" is left stranded at the front of the dish name.
+ */
+const UNITS = [...new Set(
+  MEASURES.flatMap((m) => [m.id, m.label, ...m.aliases]),
+)]
+  .map((u) => u.toLowerCase())
+  .sort((a, b) => b.length - a.length)
+  .map((u) => u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
 /**
  * Splits "2 roti, dal tadka, 1 cup curd" into items with quantities.
@@ -142,13 +163,14 @@ export function parseMealText(text: string): ParsedItem[] {
     .map((chunk) => {
       // "250g paneer" / "2 roti" / "1.5 cups dal"
       const m = chunk.match(
-        new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(${UNITS.join('|')})?\\s*(.*)$`, 'i'),
+        new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(?:(${UNITS.join('|')})\\b)?\\s*(.*)$`, 'i'),
       );
       if (m && m[1]) {
         const rest = (m[3] || '').trim();
-        const unit = m[2]?.toLowerCase() ?? null;
-        // "2 roti" — the unit IS the food, so keep it in the label.
-        const label = rest || unit || chunk;
+        const unit = canonicalMeasure(m[2] ?? null);
+        // "2 roti" — the word is both the measure and the dish, so it has to
+        // stay in the label and stop being the measure.
+        const label = rest || m[2] || chunk;
         return {
           label,
           quantity: Number(m[1]),
@@ -315,7 +337,7 @@ export async function searchFoods(term: string, limit = 20): Promise<Food[]> {
   if (needle.length < 2) return [];
   const like = `%${needle}%`;
   return db.query<Food>(
-    `${UNION_FOODS} ORDER BY is_custom DESC, LENGTH(name) LIMIT ?`,
+    `${UNION_FOODS} ORDER BY is_custom DESC, name_len LIMIT ?`,
     [like, like, limit],
   );
 }

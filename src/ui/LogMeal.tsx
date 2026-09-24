@@ -36,11 +36,12 @@ import {
   type Food,
 } from '../domain/foods';
 import { toMeasure } from '../domain/measures';
+import { SLOTS, slot as slotOf } from '../domain/slots';
 import { upsertPortion } from '../domain/portions';
 import { seedFoods } from '../domain/seed';
 import { MeasureSelect } from './FoodLibrary';
 
-const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+const MEAL_TYPES: MealType[] = SLOTS.map((s) => s.id);
 
 function blankItem(label = ''): DraftItem {
   return {
@@ -188,7 +189,7 @@ export function LogMeal() {
                 className={mealType === t ? 'tab active' : 'tab'}
                 onClick={() => setMealType(t)}
               >
-                {t}
+                {slotOf(t).label}
               </button>
             ))}
           </div>

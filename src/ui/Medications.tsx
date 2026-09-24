@@ -7,6 +7,8 @@
  * list is precisely the error this app must never make.
  */
 
+import { Chevron } from './bits';
+import type { Screen } from '../App';
 import { useCallback, useEffect, useState } from 'react';
 import {
   addMedicationFromText,
@@ -31,7 +33,13 @@ const BLANK: MedicationDraft = {
   notes: null,
 };
 
-export function Medications({ startAdding = false }: { startAdding?: boolean }) {
+export function Medications({
+  go,
+  startAdding = false,
+}: {
+  go: (s: Screen) => void;
+  startAdding?: boolean;
+}) {
   const [active, setActive] = useState<Medication[]>([]);
   const [stopped, setStopped] = useState<Medication[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -106,7 +114,9 @@ export function Medications({ startAdding = false }: { startAdding?: boolean }) 
     setDraft((d) => (d ? { ...d, ...p } : d));
 
   return (
-    <div className="stack">
+    <>
+      <BackHome go={go} label="Medications" />
+      <div className="stack">
       {!adding && (
         <button className="primary wide" onClick={() => setAdding(true)}>
           Add a medication or supplement
@@ -339,6 +349,7 @@ export function Medications({ startAdding = false }: { startAdding?: boolean }) 
         </section>
       )}
     </div>
+    </>
   );
 }
 
@@ -418,5 +429,19 @@ function MedRow({
         </div>
       </div>
     </li>
+  );
+}
+
+/** Header for a screen reached from the home grid. */
+function BackHome({ go, label }: { go: (s: Screen) => void; label: string }) {
+  return (
+    <div className="top">
+      <button className="back" onClick={() => go('home')}>
+        <Chevron />
+        Home
+      </button>
+      <div className="grow" />
+      <span className="small muted">{label}</span>
+    </div>
   );
 }

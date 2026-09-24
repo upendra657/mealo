@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Chevron } from './bits';
+import { StatusBar } from './StatusBar';
+import type { Screen } from '../App';
 import {
   loadSettings,
   saveSettings,
@@ -17,8 +20,10 @@ type TestState =
   | { kind: 'fail'; title: string; detail?: string; status?: number };
 
 export function SettingsScreen({
+  go,
   onSaved,
 }: {
+  go: (s: Screen) => void;
   onSaved?: (s: Settings) => void;
 }) {
   const [s, setS] = useState<Settings | null>(null);
@@ -68,6 +73,25 @@ export function SettingsScreen({
   };
 
   return (
+    <>
+      <div className="top">
+        <button className="back" onClick={() => go('home')}>
+          <Chevron />
+          Home
+        </button>
+        <div className="grow" />
+        <span className="small muted">Dev</span>
+      </div>
+      <StatusBar />
+      <button className="row" style={{ width: '100%' }} onClick={() => go('library')}>
+        <span className="grow" style={{ textAlign: 'left' }}>
+          <span className="nm" style={{ display: 'block' }}>My food table</span>
+          <span className="amt" style={{ display: 'block' }}>
+            Import your sheet, add a dish, check what the app derived
+          </span>
+        </span>
+        <Chevron dir="right" />
+      </button>
     <div className="stack">
       <section className="card">
         <h2>Model provider</h2>
@@ -230,5 +254,6 @@ export function SettingsScreen({
         </div>
       </section>
     </div>
+    </>
   );
 }

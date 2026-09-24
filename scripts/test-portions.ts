@@ -26,6 +26,7 @@ import {
   per100Of,
   weightOf,
 } from '../src/domain/import';
+import { parseMealText } from '../src/domain/foods';
 import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
 
 let passed = 0;
@@ -483,7 +484,38 @@ section('Check sheet round-trips through the importer');
   near('and the katori is untouched', resolvePortion(1, 'katori', anchors).grams, 150);
 }
 
+// --------------------------------------------------- text parsing
+section('Parsing what you type');
+{
+  const one = (text: string) => parseMealText(text)[0];
+
+  check('quantity and a bowl', one('1 bowl sambar'), { label: 'sambar', quantity: 1, unit: 'bowl' });
+  check('a teacup is a measure, not part of the dish',
+    one('1 teacup filter coffee'), { label: 'filter coffee', quantity: 1, unit: 'teacup' });
+  check('so is "regular"',
+    one('3 regular idli'), { label: 'idli', quantity: 3, unit: 'regular' });
+  check('two words beat one',
+    one('1 small bowl kali dal'), { label: 'kali dal', quantity: 1, unit: 'smallbowl' });
+  check('measures canonicalise on the way in',
+    one('2 Katoris rajma'), { label: 'rajma', quantity: 2, unit: 'katori' });
+  check('a serve is a measure too',
+    one('1 serve penne'), { label: 'penne', quantity: 1, unit: 'serve' });
+
+  // The dish that is its own unit has to keep its name and lose the measure,
+  // or "2 roti" logs two pieces of nothing.
+  check('"2 roti" keeps the word', one('2 roti'), { label: 'roti', quantity: 2, unit: null });
+  check('"3 eggs" likewise', one('3 eggs'), { label: 'eggs', quantity: 3, unit: null });
+
+  check('no number at all', one('dal tadka'), { label: 'dal tadka', quantity: null, unit: null });
+  check('grams pass through', one('250g paneer'), { label: 'paneer', quantity: 250, unit: 'g' });
+
+  check('a whole line splits', parseMealText('2 roti, 1 katori dal, 1 cup curd').length, 3);
+  check('and on "and"', parseMealText('1 bowl rice and 1 katori dal').length, 2);
+}
+
 // ------------------------------------------------------------------ done
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
+
+// --------------------------------------------------- text parsing
