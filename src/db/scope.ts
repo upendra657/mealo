@@ -36,6 +36,7 @@ const ALL_TABLES = [
   'symptoms',
   'current_state',
   'targets',
+  'weights',
   'citations',
   'messages',
   'conversation_summaries',
@@ -60,6 +61,7 @@ const PROFILE_SCOPED = [
   'meals',
   'meal_items',
   'symptoms',
+  'weights',
   'messages',
 ] as const;
 
@@ -102,6 +104,10 @@ export const SCOPES: Record<Agent, Scope> = {
       'food_portions',
       'food_aliases',
       'current_state',
+      // Read, never written. Weight is a body measurement, so the Doctor owns
+      // it; the Nutritionist sees it because the home banner speaks in its
+      // voice and a trend is part of how a day reads.
+      'weights',
       'citations',
       'messages',
       'conversation_summaries',

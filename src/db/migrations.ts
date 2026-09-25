@@ -380,4 +380,34 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 7,
+  name: 'weights',
+  sql: `
+    -- Weight, entered by hand.
+    --
+    -- Per person and never anything else: this is the most personal number in
+    -- the app and the one that would be most wrong to show in the other
+    -- person's day. The food library is shared; a body is not.
+    --
+    -- Stored in kilograms because storing a unit alongside a number invites
+    -- two rows that disagree about what 70 means. Display can convert.
+    --
+    -- No goal column. Nothing here computes what you should weigh, the same
+    -- reason targets.ts derives nothing from height or activity — that would
+    -- be the app making a health recommendation, which it does not do.
+    CREATE TABLE IF NOT EXISTS weights (
+      id           TEXT PRIMARY KEY,
+      profile_id   TEXT,
+      measured_at  INTEGER NOT NULL,   -- ms since epoch, local day bucketed in JS
+      kg           REAL NOT NULL,
+      note         TEXT,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_weights_when
+      ON weights(profile_id, measured_at);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

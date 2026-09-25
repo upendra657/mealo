@@ -20,6 +20,16 @@ import {
 import { canonicalMeasure, toMeasure } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import {
+  banner,
+  bandOf,
+  focusDay,
+  shortfalls,
+  situationOf,
+  weightTrend,
+  type BannerCtx,
+} from '../src/domain/banner';
+import type { Macros } from '../src/domain/day';
+import {
   parseCsv,
   mapHeaders,
   readRows,
@@ -540,6 +550,101 @@ section('Slugs: one dish, two devices');
   // backfill leaves those alone rather than giving them all the same slug.
   check('empty stays empty', slugFor('!!!'), '');
   check('and so does blank', slugFor('   '), '');
+}
+
+// ------------------------------------------------------- the home banner
+
+section('Banner: which day it is talking about');
+{
+  const at = (h: number, m = 0) => new Date(2026, 8, 25, h, m).getTime();
+  check('4am is the morning', bandOf(at(4)), 'morning');
+  check('3:59am is still last night', bandOf(at(3, 59)), 'small-hours');
+  check('11pm is night', bandOf(at(23)), 'night');
+
+  // The handover he asked for: 23:45 and 00:05 say the same thing about the
+  // same day, because a day ends when you go to bed.
+  check('23:45 means today', focusDay(at(23, 45), 3).lookingBack, false);
+  check('00:05 still means yesterday', focusDay(at(0, 5), 0).lookingBack, true);
+  check('03:50 still means yesterday', focusDay(at(3, 50), 0).lookingBack, true);
+  check('04:10 has moved on', focusDay(at(4, 10), 0).lookingBack, false);
+  // Unless you ate. A 1am plate starts a new day whatever the clock says.
+  check('but eating starts the new day', focusDay(at(1, 30), 1).lookingBack, false);
+  check('and the day it names is the one before', 
+    focusDay(at(0, 5), 0).dayStart, new Date(2026, 8, 24).getTime());
+}
+
+section('Banner: what it decides to say');
+{
+  const T = { energy_kcal: 1700, protein_g: 85, fat_g: 57, carbs_g: 213, fibre_g: 30 };
+  const at = (h: number) => new Date(2026, 8, 25, h).getTime();
+  const ctx = (o: Partial<BannerCtx>): BannerCtx =>
+    ({ now: at(16), totals: [0, 0, 0, 0, 0], itemCount: 0, targets: T, lookingBack: false, ...o }) as BannerCtx;
+
+  check('no targets, nothing to measure against',
+    situationOf(ctx({ targets: { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null }, itemCount: 3 })),
+    'no-targets');
+  check('nothing logged', situationOf(ctx({ itemCount: 0 })), 'empty');
+  check('short mid-day', situationOf(ctx({ itemCount: 4, totals: [1100, 42, 30, 140, 22] })), 'short');
+  check('short once the day is done',
+    situationOf(ctx({ now: at(23), itemCount: 4, totals: [1100, 42, 30, 140, 22] })), 'short-past');
+
+  // Hitting protein and fibre while 750 over is not "everything landed".
+  check('over does not get congratulated',
+    situationOf(ctx({ itemCount: 8, totals: [2450, 95, 90, 280, 33] })), 'high');
+  check('everything met', situationOf(ctx({ itemCount: 7, totals: [1650, 92, 50, 200, 33] })), 'all-hit');
+
+  // The biggest relative gap wins, not the biggest absolute one.
+  const gaps = shortfalls(ctx({ itemCount: 4, totals: [1200, 68, 40, 150, 22] }));
+  check('fibre is further behind than protein', gaps[0].name, 'fibre');
+  check('and it reports what is left', gaps[0].left, 8);
+
+  // Additive only: it never asks you to eat less of anything.
+  for (const h of [7, 12, 16, 19, 23, 1]) {
+    const line = banner(ctx({ now: new Date(2026, 8, 25, h).getTime(), itemCount: 8,
+      totals: [2450, 95, 90, 280, 33], lookingBack: h < 4 })).text.toLowerCase();
+    const scolds = ['too much', 'cut ', 'stop ', 'should not', 'overate', 'slow down'];
+    check(`${h}:00 does not scold`, scolds.some((w) => line.includes(w)), false, line);
+  }
+}
+
+section('Banner: steady on re-render, awake over time');
+{
+  const T = { energy_kcal: 1700, protein_g: 85, fat_g: 57, carbs_g: 213, fibre_g: 30 };
+  const base = { totals: [1100, 42, 30, 140, 22] as Macros, itemCount: 4, targets: T, lookingBack: false };
+  const at = (h: number, m = 0) => new Date(2026, 8, 25, h, m).getTime();
+
+  // Re-rendering a minute later must not reword the sentence.
+  check('same minute, same line', banner({ ...base, now: at(16) }).text, banner({ ...base, now: at(16) }).text);
+  check('a minute later, same line', banner({ ...base, now: at(16) }).text, banner({ ...base, now: at(16, 1) }).text);
+  // But the day moving on changes it.
+  check('morning and evening differ', banner({ ...base, now: at(7) }).text !== banner({ ...base, now: at(19) }).text, true);
+  // And so does eating something.
+  check('logging changes it',
+    banner({ ...base, now: at(16) }).text !== banner({ ...base, now: at(16), totals: [1400, 62, 35, 160, 26] }).text, true);
+
+  // Every situation must produce a line for every part of the day.
+  const hours = [1, 7, 12, 16, 19, 23];
+  const cases: Macros[] = [[0,0,0,0,0], [1100,42,30,140,22], [2450,95,90,280,33], [1650,92,50,200,33], [1400,86,45,180,31]];
+  let blank = 0;
+  for (const h of hours) for (const totals of cases) {
+    const p = banner({ now: at(h), totals, itemCount: totals[0] === 0 ? 0 : 5, targets: T, lookingBack: h < 4 });
+    if (!p.text || p.text.includes('undefined') || p.text.includes('NaN')) blank++;
+  }
+  check('no situation is speechless', blank, 0);
+}
+
+section('Banner: weight trend');
+{
+  const day = 86_400_000; const t0 = new Date(2026, 8, 25).getTime();
+  check('one reading is not a trend', weightTrend([{ kg: 71, measured_at: t0 }]), null);
+  check('two readings a day apart is not a trend',
+    weightTrend([{ kg: 71, measured_at: t0 }, { kg: 71.9, measured_at: t0 - day }]), null);
+  check('100g of noise is not a trend',
+    weightTrend([{ kg: 71.9, measured_at: t0 }, { kg: 72.0, measured_at: t0 - 14 * day }]), null);
+  const down = weightTrend([{ kg: 71.2, measured_at: t0 }, { kg: 72.0, measured_at: t0 - 14 * day }]);
+  check('down over a fortnight', down, { delta: -0.8, days: 14 });
+  const up = weightTrend([{ kg: 72.6, measured_at: t0 }, { kg: 72.0, measured_at: t0 - 21 * day }]);
+  check('and up', up, { delta: 0.6, days: 21 });
 }
 
 // ------------------------------------------------------------------ done
