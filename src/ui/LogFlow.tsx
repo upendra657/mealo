@@ -41,7 +41,20 @@ import type { Screen } from '../App';
 /** Over this in one item, the app asks before writing it. */
 const BIG_MEAL = 1000;
 
-const QTYS = [0.25, 0.33, 0.5, 0.66, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10];
+/**
+ * The quantities the wheel offers.
+ *
+ * Fine where the difference matters and coarse where it does not: a third of a
+ * katori and a half are different meals, twenty-nine rotis and thirty are not.
+ * Fractions below one, quarters up to two, then every whole number to fifty —
+ * which is where a plate stops and a shopping list starts. The typed box is
+ * there for anything outside this.
+ */
+const QTYS = [
+  0.25, 0.33, 0.5, 0.66, 0.75,
+  1, 1.25, 1.5, 1.75, 2, 2.5, 3,
+  ...Array.from({ length: 47 }, (_, i) => i + 4), // 4 … 50
+];
 
 const fmtQty = (q: number) => (Number.isInteger(q) ? q.toFixed(1) : String(q));
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -481,6 +494,17 @@ function DishStep({
   onSave: () => void;
 }) {
   const [picker, setPicker] = useState<'qty' | 'meas' | 'slot' | null>(null);
+  /** What the typed quantity box is showing, mid-edit. See the input below. */
+  const [qtyDraft, setQtyDraft] = useState(String(item.quantity ?? 1));
+
+  // The wheel and the box are two views of one number, so a turn of the wheel
+  // has to show up in the box. Skipped when the box already reads the same
+  // value, which is what stops it rewriting what you are still typing.
+  useEffect(() => {
+    const q = String(item.quantity ?? 1);
+    if (Number(qtyDraft) !== Number(q)) setQtyDraft(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.quantity]);
   const [guard, setGuard] = useState(false);
   const [savedPortion, setSavedPortion] = useState(false);
 
@@ -613,6 +637,13 @@ function DishStep({
           render={(v) => fmtQty(v as number)}
           onChange={(v) => void reprice({ quantity: v as number })}
         />
+        {/* The box is bound to a draft string, not to the number. Bound
+            straight to item.quantity it could not be cleared: backspacing "8"
+            empties the field, Number('') is 0, the guard rejects it, nothing
+            reprices, and the re-render puts the 8 straight back — you were
+            locked into whatever you typed first. The draft holds the
+            half-finished states every number passes through ('', '.', '1.')
+            and only the ones that parse to a real positive number reprice. */}
         <label className="typed">
           <span>or type it</span>
           <input
@@ -621,11 +652,16 @@ function DishStep({
             step="0.05"
             min="0"
             inputMode="decimal"
-            value={item.quantity ?? 1}
+            value={qtyDraft}
             onChange={(e) => {
-              const v = Number(e.target.value);
-              if (v > 0) void reprice({ quantity: v });
+              const text = e.target.value;
+              setQtyDraft(text);
+              const v = Number(text);
+              if (text.trim() !== '' && Number.isFinite(v) && v > 0) {
+                void reprice({ quantity: v });
+              }
             }}
+            onBlur={() => setQtyDraft(String(item.quantity ?? 1))}
           />
         </label>
         <button className="done" onClick={() => setPicker(null)}>
@@ -709,13 +745,19 @@ function Wheel({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const timer = useRef<number | undefined>(undefined);
+  /** The last value this wheel itself reported, so it does not chase its own tail. */
+  const mine = useRef<string | number | null>(null);
   const ROW = 40;
 
+  // Follow the value when something else changes it — typing 37 in the box
+  // should move the wheel to 37. A change this wheel produced is ignored:
+  // scrolling to where the finger already is fights the scroll in progress.
   useEffect(() => {
+    if (mine.current === value) return;
     const i = Math.max(0, values.indexOf(value));
     if (ref.current) ref.current.scrollTop = i * ROW;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [value]);
 
   const onScroll = () => {
     const el = ref.current;
@@ -723,7 +765,10 @@ function Wheel({
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       const i = Math.max(0, Math.min(values.length - 1, Math.round(el.scrollTop / ROW)));
-      if (values[i] !== value) onChange(values[i]);
+      if (values[i] !== value) {
+        mine.current = values[i];
+        onChange(values[i]);
+      }
     }, 90);
   };
 
