@@ -21,3 +21,8 @@ public/sqlite-wasm
 
 # Raw USDA download - source data, not a build input worth versioning
 FoodData_Central_*
+
+# Your own dish table. It is a record of what the two of you actually eat, and
+# this repo is public. Import it through the Library screen; it lives on disk,
+# not in here.
+my-meal-table.csv
