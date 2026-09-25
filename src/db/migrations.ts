@@ -341,4 +341,43 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 6,
+  name: 'library slugs and sharing',
+  sql: `
+    -- Two columns that only make sense once there is more than one device.
+    --
+    -- \`slug\` is the merge key. Row ids are device-scoped and random (see
+    -- lib/device.ts), which is exactly right for a meal — two people cannot
+    -- log the same dinner — and exactly wrong for a dish. If one phone adds
+    -- "Dal Tadka" and the other adds "Dal Tadka", those are two unrelated ids
+    -- holding one dish, and last-write-wins has nothing to resolve: it settles
+    -- edits to the same row, not independent creation of the same thing. A
+    -- sync that merged on id would quietly double the library.
+    --
+    -- So a dish carries a second identity derived from its name, computed by
+    -- domain/foods.ts \`slugFor\` — the same normaliser the matcher already
+    -- uses, deliberately not a second copy of it. Both phones generate the
+    -- same slug for the same dish without coordinating, which is the whole
+    -- trick.
+    --
+    -- Not UNIQUE, and not backfilled here. Normalisation strips accents and
+    -- plurals, which SQLite cannot do, so the backfill is JS and runs on init
+    -- (\`initFoodLibrary\`). A unique index would also mean a migration that
+    -- can fail on real data at startup, inside a worker, with the app already
+    -- on screen. Uniqueness is enforced at the write path instead, which is
+    -- where the question "does this dish already exist" was already being
+    -- asked.
+    ALTER TABLE custom_foods ADD COLUMN slug TEXT;
+
+    -- \`share\` is per-dish consent to leave the household, for the public
+    -- pool in Phase 6. Default 0 — off. Publishing is a decision about one
+    -- dish at a time, not a setting flipped once for a library that is also a
+    -- record of what two specific people eat.
+    ALTER TABLE custom_foods ADD COLUMN share INTEGER NOT NULL DEFAULT 0;
+
+    CREATE INDEX IF NOT EXISTS idx_custom_foods_slug ON custom_foods(slug);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

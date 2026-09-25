@@ -24,7 +24,7 @@
  */
 
 import { scopedDb } from '../db/scope';
-import { normalise, rememberAlias } from './foods';
+import { normalise, rememberAlias, slugFor } from './foods';
 import { canonicalMeasure, toMeasure } from './measures';
 import { upsertPortion } from './portions';
 
@@ -386,9 +386,23 @@ export async function writeDishes(dishes: DishPlan[]): Promise<WriteCounts> {
   let lastFoodId: string | null = null;
 
   for (const d of dishes) {
+    // Match on the slug first, then fall back to the exact name.
+    //
+    // The slug is what a second device will merge on, so the same dish has to
+    // resolve to one row here too — otherwise an import creates locally the
+    // duplicate that sync was designed to avoid. It matches a little more
+    // loosely than the old name check did: "Boiled Egg" and "Boiled Eggs"
+    // normalise alike and are now one dish, which is the intended behaviour
+    // and the reason this is a merge key rather than a display name.
+    //
+    // The name fallback covers rows written before v6 that init has not
+    // backfilled yet.
+    const slug = slugFor(d.name);
     const existing = await db.query<{ id: string }>(
-      'SELECT id FROM custom_foods WHERE LOWER(name) = ? AND deleted_at IS NULL LIMIT 1',
-      [d.name.trim().toLowerCase()],
+      `SELECT id FROM custom_foods
+        WHERE deleted_at IS NULL AND (slug = ? OR LOWER(name) = ?)
+        LIMIT 1`,
+      [slug, d.name.trim().toLowerCase()],
     );
 
     let foodId: string;
@@ -398,12 +412,14 @@ export async function writeDishes(dishes: DishPlan[]): Promise<WriteCounts> {
       await db.update('custom_foods', foodId, {
         per_unit: '100g',
         ...d.per100,
+        slug,
         deleted_at: null,
       });
       updated++;
     } else {
       foodId = await db.insert('custom_foods', {
         name: d.name.trim(),
+        slug,
         per_unit: '100g',
         ...d.per100,
         notes: 'imported',

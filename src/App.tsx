@@ -19,6 +19,7 @@ import {
   type Profile,
 } from './profiles/store';
 import { AvatarMenu } from './ui/AvatarMenu';
+import { initFoodLibrary } from './domain/foods';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
 import { FoodLibrary } from './ui/FoodLibrary';
@@ -58,6 +59,10 @@ export default function App() {
         const { profiles: list, active: id } = await initProfiles();
         setProfiles(list);
         setActive(id);
+        // Slugs for any dish that predates v6. Not awaited before the app
+        // renders: it touches only a column nothing reads yet, and blocking
+        // the first paint on a library backfill would be a poor trade.
+        void initFoodLibrary();
       } catch (e) {
         setFailed(e instanceof Error ? e.message : String(e));
       }

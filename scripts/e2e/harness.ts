@@ -16,8 +16,14 @@ import {
   PRIMARY_PROFILE,
 } from '../../src/profiles/store';
 import { activeProfile } from '../../src/lib/active-profile';
-import { importPersonalFoods } from '../../src/domain/import';
-import { matchFood, searchFoods } from '../../src/domain/foods';
+import { importPersonalFoods, saveDishFromPortion } from '../../src/domain/import';
+import {
+  customFoodIdBySlug,
+  initFoodLibrary,
+  matchFood,
+  searchFoods,
+  slugFor,
+} from '../../src/domain/foods';
 import { draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor } from '../../src/domain/portions';
 import { collectFacts, renderSlice } from '../../src/domain/state';
@@ -148,6 +154,73 @@ async function main() {
   check('re-import creates nothing new', again.dishesCreated === 0, String(again.dishesCreated));
   const rows = await query<{ n: number }>('SELECT COUNT(*) AS n FROM food_portions WHERE deleted_at IS NULL');
   check('and does not duplicate portions', Number(rows[0].n) === 4, String(rows[0].n));
+
+  // ---- v6: the library merge key ----------------------------------------
+  //
+  // This is what makes two phones share one library rather than two. Every
+  // check here is the failure a sync would otherwise produce.
+  step('slugs');
+  {
+    const nut = scopedDb('nutritionist');
+
+    const imported = await nut.query<{ id: string; slug: string | null; share: number }>(
+      `SELECT id, slug, share FROM custom_foods
+        WHERE LOWER(name) = 'dal tadka' AND deleted_at IS NULL LIMIT 1`,
+    );
+    check('an imported dish gets a slug', imported[0]?.slug === 'dal tadka', String(imported[0]?.slug));
+    check('and is not shared by default', Number(imported[0]?.share) === 0, String(imported[0]?.share));
+
+    // A row as it would look coming from a pre-v6 database: no slug at all.
+    await sql(
+      `INSERT INTO custom_foods (id, name, per_unit, energy_kcal, updated_at, deleted_at)
+       VALUES ('legacy-1', 'Aloo Gobi', '100g', 120, 111, NULL)`,
+    );
+    const back = await initFoodLibrary();
+    check('backfill filled the old row', back.filled >= 1, String(back.filled));
+
+    const legacy = await nut.query<{ slug: string; updated_at: number }>(
+      "SELECT slug, updated_at FROM custom_foods WHERE id = 'legacy-1'",
+    );
+    check('with the right slug', legacy[0]?.slug === 'aloo gobi', String(legacy[0]?.slug));
+    // The slug is the app catching up with itself, not an edit to the dish.
+    // Bumping updated_at here would tell the first sync that every dish
+    // changed at once and let a stale row win.
+    check('without touching updated_at', Number(legacy[0]?.updated_at) === 111, String(legacy[0]?.updated_at));
+
+    check('and it is findable by slug', (await customFoodIdBySlug('aloo gobi')) === 'legacy-1');
+
+    // Two names that normalise alike are one dish. The slug did not create
+    // that duplicate; it revealed it, and says so rather than silently
+    // overwriting one with the other.
+    await sql(
+      `INSERT INTO custom_foods (id, name, per_unit, energy_kcal, updated_at, deleted_at)
+       VALUES ('legacy-2', 'Aloo Gobis', '100g', 120, 222, NULL)`,
+    );
+    const second = await initFoodLibrary();
+    check('a clash is reported', second.clashes.includes('Aloo Gobis'), second.clashes.join(','));
+    const dup = await nut.query<{ slug: string }>(
+      "SELECT slug FROM custom_foods WHERE id = 'legacy-2'",
+    );
+    check('and suffixed, not collided', dup[0]?.slug === 'aloo gobi ~2', String(dup[0]?.slug));
+
+    // The whole point, end to end: the same dish entered two ways lands on
+    // one row. This is the live path the "add a new dish" screen uses.
+    const a = await saveDishFromPortion({
+      name: 'Palak Paneer', quantity: 1, measure: 'katori', netWeightG: 150,
+      energy: 180, protein: 9, fat: 12, carbs: 8, fibre: 3,
+    });
+    const b = await saveDishFromPortion({
+      name: 'palak  paneer!', quantity: 1, measure: 'bowl', netWeightG: 350,
+      energy: 420, protein: 21, fat: 28, carbs: 19, fibre: 7,
+    });
+    check('a second spelling is the same dish', a.foodId === b.foodId, `${a.foodId} vs ${b.foodId}`);
+    const rows = await nut.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM custom_foods WHERE slug = ? AND deleted_at IS NULL",
+      [slugFor('Palak Paneer')],
+    );
+    check('one row, not two', Number(rows[0]?.n) === 1, String(rows[0]?.n));
+  }
+
 
   // ---- targets, and what an unset one means -----------------------------
   const blank = await loadTargets();

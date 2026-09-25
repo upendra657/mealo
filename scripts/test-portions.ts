@@ -18,6 +18,7 @@ import {
   type Anchor,
 } from '../src/domain/portions';
 import { canonicalMeasure, toMeasure } from '../src/domain/measures';
+import { normalise, slugFor } from '../src/domain/foods';
 import {
   parseCsv,
   mapHeaders,
@@ -511,6 +512,34 @@ section('Parsing what you type');
 
   check('a whole line splits', parseMealText('2 roti, 1 katori dal, 1 cup curd').length, 3);
   check('and on "and"', parseMealText('1 bowl rice and 1 katori dal').length, 2);
+}
+
+// --------------------------------------------------- the library merge key
+
+section('Slugs: one dish, two devices');
+{
+  // Both phones must land on the same string without talking to each other,
+  // because that string is the only thing sync has to merge on.
+  check('same name, same slug', slugFor('Dal Tadka'), slugFor('dal tadka'));
+  check('spacing is not identity', slugFor('  Dal   Tadka '), 'dal tadka');
+  check('punctuation is not identity', slugFor('Dal-Tadka!'), 'dal tadka');
+  check('accents fold', slugFor('Sautéed Paneer'), slugFor('Sauteed Paneer'));
+  check('plurals fold', slugFor('Boiled Eggs'), slugFor('Boiled Egg'));
+
+  // It is the matcher's normaliser and must stay that way. A second, subtly
+  // different copy is what broke the unit list once already.
+  check('slugFor is normalise', slugFor('Aloo Gobi'), normalise('Aloo Gobi'));
+
+  // The backfill marks a collision by suffixing with '~'. That only works as
+  // a signal if a real slug can never contain one.
+  for (const n of ['Dal ~ Tadka', 'Rice~', '~~~', 'Egg ~2']) {
+    check(`no tilde survives: ${n}`, slugFor(n).includes('~'), false);
+  }
+
+  // A name with nothing alphanumeric in it has no identity to derive. The
+  // backfill leaves those alone rather than giving them all the same slug.
+  check('empty stays empty', slugFor('!!!'), '');
+  check('and so does blank', slugFor('   '), '');
 }
 
 // ------------------------------------------------------------------ done

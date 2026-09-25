@@ -78,6 +78,26 @@ export function normalise(s: string): string {
     .trim();
 }
 
+/**
+ * The identity a dish has on every device at once.
+ *
+ * Row ids are device-scoped and random, which is right for a meal and wrong
+ * for a dish: two phones adding "Dal Tadka" independently produce two ids and
+ * one dish, and no last-write-wins rule can tell that they are the same thing.
+ * The slug is derived from the name instead, so both phones arrive at the same
+ * string without talking to each other, and sync has something to merge on.
+ *
+ * It is `normalise` and nothing more — the same function the matcher uses. A
+ * second, subtly different normaliser is how "1 teacup filter coffee" once
+ * logged 100g of nothing: the parser kept its own copy of the unit list and it
+ * drifted. Do not reimplement this one either.
+ *
+ * Spaces are kept rather than hyphenated. This is a merge key, not a URL.
+ */
+export function slugFor(name: string): string {
+  return normalise(name);
+}
+
 function trigrams(s: string): Set<string> {
   const padded = `  ${s} `;
   const out = new Set<string>();
@@ -240,6 +260,7 @@ export async function saveCustomFood(food: {
 }): Promise<string> {
   return db.insert('custom_foods', {
     name: food.name.trim(),
+    slug: slugFor(food.name),
     per_unit: food.per_unit ?? '100g',
     energy_kcal: food.energy_kcal,
     protein_g: food.protein_g,
@@ -249,6 +270,90 @@ export async function saveCustomFood(food: {
     notes: null,
     deleted_at: null,
   });
+}
+
+/** The dish this slug names, if this device already has it. */
+export async function customFoodIdBySlug(slug: string): Promise<string | null> {
+  if (!slug) return null;
+  const rows = await db.query<{ id: string }>(
+    'SELECT id FROM custom_foods WHERE slug = ? AND deleted_at IS NULL LIMIT 1',
+    [slug],
+  );
+  return rows[0]?.id ?? null;
+}
+
+export type LibraryInit = {
+  /** Rows that had no slug and now do. */
+  filled: number;
+  /**
+   * Dishes whose names normalise to something another dish already claimed.
+   * Each entry is the name that had to be suffixed. These are duplicates in
+   * this library already — the slug did not create them, it revealed them.
+   */
+  clashes: string[];
+};
+
+/**
+ * Give every dish its slug. Runs once per start, cheap after the first time.
+ *
+ * The backfill is here rather than in the migration because normalisation
+ * strips accents and plurals and SQLite can do neither. Putting it in the
+ * migration would also mean a step that can fail on real data at startup,
+ * inside the worker, with the app already on screen.
+ *
+ * Two details worth keeping:
+ *
+ * `updated_at` is deliberately NOT touched. This is a raw UPDATE rather than
+ * `db.update` for that reason alone. The slug is not a change to the dish —
+ * filling it in is the app catching up with itself — and bumping the whole
+ * library's timestamps would hand the first sync a false story in which every
+ * dish was edited at once, letting a stale row win under last-write-wins.
+ *
+ * Oldest row first, so when two names collide the dish that has been here
+ * longest keeps the clean slug and the newcomer is the one marked.
+ */
+export async function initFoodLibrary(): Promise<LibraryInit> {
+  const rows = await db.query<{ id: string; name: string; slug: string | null }>(
+    `SELECT id, name, slug FROM custom_foods
+      WHERE deleted_at IS NULL
+      ORDER BY updated_at ASC`,
+  );
+
+  const taken = new Set<string>();
+  for (const r of rows) if (r.slug) taken.add(r.slug);
+
+  const clashes: string[] = [];
+  let filled = 0;
+
+  for (const r of rows) {
+    if (r.slug) continue;
+    const base = slugFor(r.name);
+    if (!base) continue; // a dish with no letters in its name; leave it alone
+
+    let slug = base;
+    if (taken.has(slug)) {
+      // '~' can never come out of normalise, so a suffixed slug is visibly a
+      // thing a human still has to resolve rather than a name that happens to
+      // look odd.
+      let n = 2;
+      while (taken.has(`${base} ~${n}`)) n++;
+      slug = `${base} ~${n}`;
+      clashes.push(r.name);
+    }
+    taken.add(slug);
+
+    await db.run('UPDATE custom_foods SET slug = ? WHERE id = ?', [slug, r.id]);
+    filled++;
+  }
+
+  if (clashes.length) {
+    console.warn(
+      '[library] these dishes share a name with another and were suffixed; ' +
+        'merge them by hand:',
+      clashes,
+    );
+  }
+  return { filled, clashes };
 }
 
 export async function listCustomFoods(): Promise<Food[]> {
