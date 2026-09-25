@@ -19,13 +19,11 @@ import {
   TARGET_FIELDS,
   type Targets,
 } from '../domain/targets';
-import { Bin, Chevron, Plus, useToast } from './bits';
+import { Bin, Chevron, fmtQty, Plus, useToast } from './bits';
 import { DatePicker } from './DatePicker';
 import type { Screen } from '../App';
 import { setDraft } from './LogFlow';
 
-const fmtQty = (q: number | null) =>
-  q === null ? '' : Number.isInteger(q) ? q.toFixed(1) : String(q);
 
 export function Day({
   go,

@@ -35,7 +35,7 @@ import { saveDishFromPortion } from '../domain/import';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
 import { MealDial } from './MealDial';
-import { Chevron, Plus, SearchIcon, Sheet, useToast } from './bits';
+import { Chevron, fmtQty, Plus, SearchIcon, Sheet, useToast } from './bits';
 import type { Screen } from '../App';
 
 /** Over this in one item, the app asks before writing it. */
@@ -51,12 +51,10 @@ const BIG_MEAL = 1000;
  * there for anything outside this.
  */
 const QTYS = [
-  0.25, 0.33, 0.5, 0.66, 0.75,
-  1, 1.25, 1.5, 1.75, 2, 2.5, 3,
-  ...Array.from({ length: 47 }, (_, i) => i + 4), // 4 … 50
+  0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,
+  ...Array.from({ length: 48 }, (_, i) => i + 3), // 3 … 50
 ];
 
-const fmtQty = (q: number) => (Number.isInteger(q) ? q.toFixed(1) : String(q));
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
@@ -649,7 +647,7 @@ function DishStep({
           <input
             id="qty-typed"
             type="number"
-            step="0.05"
+            step="0.01"
             min="0"
             inputMode="decimal"
             value={qtyDraft}
@@ -658,7 +656,9 @@ function DishStep({
               setQtyDraft(text);
               const v = Number(text);
               if (text.trim() !== '' && Number.isFinite(v) && v > 0) {
-                void reprice({ quantity: v });
+                // Two decimals is the floor. Anything finer is a number
+                // nobody measured, and it would print back as noise.
+                void reprice({ quantity: Math.round(v * 100) / 100 });
               }
             }}
             onBlur={() => setQtyDraft(String(item.quantity ?? 1))}

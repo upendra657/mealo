@@ -229,3 +229,18 @@ export function Header({
     </div>
   );
 }
+
+/**
+ * A quantity as you would say it: "2", not "2.0"; "1.25", not "1.250".
+ *
+ * Lives here because both the log flow and the day list show quantities, and
+ * this file already existed for exactly that. Two copies of a formatter is how
+ * the parser ended up with its own stale unit list.
+ *
+ * Rounded to two decimals, which is as fine as the picker lets you type and
+ * finer than any kitchen measure deserves.
+ */
+export function fmtQty(q: number | null | undefined): string {
+  if (q === null || q === undefined || !Number.isFinite(q)) return '';
+  return String(Math.round(q * 100) / 100);
+}
