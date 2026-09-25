@@ -34,8 +34,13 @@ export default defineConfig({
         short_name: 'Mealo',
         description:
           'Local-first health tracking with scoped AI agents. Your data stays on your device.',
-        theme_color: '#0E6B5C',
-        background_color: '#FBFCFA',
+        // Both track --ink in styles.css, the page's own background. They
+        // are what Android paints before any of our CSS exists: theme_color
+        // tints the status bar, background_color is the splash behind the
+        // icon. Left at the old light palette they made the app open with a
+        // white flash and a green status bar it never wears again.
+        theme_color: '#0a0c0b',
+        background_color: '#0a0c0b',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
