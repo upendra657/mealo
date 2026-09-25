@@ -26,3 +26,7 @@ FoodData_Central_*
 # this repo is public. Import it through the Library screen; it lives on disk,
 # not in here.
 my-meal-table.csv
+
+# Context handoff for whoever picks this up next. Notes on how we work, not
+# code, and it names the two of us. Hand it over as a file.
+HANDOFF.md
