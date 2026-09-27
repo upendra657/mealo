@@ -29,6 +29,7 @@ import { LogFlow } from './ui/LogFlow';
 import { Medications } from './ui/Medications';
 import { SettingsScreen } from './ui/SettingsScreen';
 import { TargetsScreen } from './ui/TargetsScreen';
+import { WeightScreen } from './ui/WeightScreen';
 import { ToastHost } from './ui/bits';
 import './styles.css';
 
@@ -40,6 +41,7 @@ export type Screen =
   | 'doctor'
   | 'meds'
   | 'dev'
+  | 'weight'
   | 'library'
   | 'targets'
   | 'settings';
@@ -152,6 +154,7 @@ export default function App() {
         {screen === 'meds' && <Medications go={go} />}
 
         {screen === 'dev' && <SettingsScreen go={go} />}
+        {screen === 'weight' && <WeightScreen onBack={() => go('home')} />}
 
         {screen === 'settings' && <SettingsScreen go={go} />}
       </div>

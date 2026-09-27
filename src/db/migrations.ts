@@ -393,9 +393,10 @@ MIGRATIONS.push({
     -- Stored in kilograms because storing a unit alongside a number invites
     -- two rows that disagree about what 70 means. Display can convert.
     --
-    -- No goal column. Nothing here computes what you should weigh, the same
-    -- reason targets.ts derives nothing from height or activity — that would
-    -- be the app making a health recommendation, which it does not do.
+    -- No goal column here; a goal belongs with the other things this person
+    -- is aiming at, so it lives on the targets table (v8). Either way nothing
+    -- in the app computes a goal weight from height or activity — that would
+    -- be a health recommendation. A number the user typed is their own.
     CREATE TABLE IF NOT EXISTS weights (
       id           TEXT PRIMARY KEY,
       profile_id   TEXT,
@@ -407,6 +408,22 @@ MIGRATIONS.push({
     );
     CREATE INDEX IF NOT EXISTS idx_weights_when
       ON weights(profile_id, measured_at);
+  `,
+});
+
+MIGRATIONS.push({
+  version: 8,
+  name: 'goal weight',
+  sql: `
+    -- A weight to aim at, sitting beside the daily macro targets because it is
+    -- the same kind of fact: something this person decided they are working
+    -- toward. Nullable and stays null until someone types a number, exactly
+    -- like every other column on this table — the chart draws no goal line
+    -- until there is a goal to draw.
+    --
+    -- Typed by the user, never derived. The app has no opinion about what
+    -- anyone should weigh and does not acquire one by storing this.
+    ALTER TABLE targets ADD COLUMN weight_kg REAL;
   `,
 });
 

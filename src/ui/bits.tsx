@@ -230,6 +230,19 @@ export function Header({
   );
 }
 
+/** A weighing scale: platform, riser, dial. */
+export function Scale({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="16" rx="3" />
+      <path d="M8.5 10.5 12 8l3.5 2.5" />
+      <path d="M12 8v3" />
+      <path d="M7 17h10" />
+    </svg>
+  );
+}
+
 /**
  * A quantity as you would say it: "2", not "2.0"; "1.25", not "1.250".
  *

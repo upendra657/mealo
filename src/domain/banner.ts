@@ -55,7 +55,27 @@ export type Situation =
 
 export type Tone = 'neutral' | 'nudge' | 'good';
 
-export type Phrase = { text: string; tone: Tone; situation: Situation };
+/** Which wash the card wears. Mapped to a colour in styles.css. */
+export type Hue = 'teal' | 'amber' | 'cyan' | 'blue' | 'violet' | 'rose';
+
+export type Phrase = {
+  text: string;
+  tone: Tone;
+  situation: Situation;
+  hue: Hue;
+  /** Who is talking — the card's eyebrow. */
+  who: string;
+  /**
+   * Which sentence template produced this, as "<situation>:<index>".
+   *
+   * Two cards can differ word for word and still be the same sentence with
+   * different numbers in it — "37g short on protein. Dinner is a good place
+   * to fix that." beside "12g short on fibre. Dinner is a good place to fix
+   * that." Comparing rendered text does not catch that; comparing the
+   * template does. Doubles as a stable React key.
+   */
+  tpl: string;
+};
 
 /** The macros the banner will ever ask you to add more of. */
 const ADDITIVE = [
@@ -222,6 +242,7 @@ type Candidate = {
 };
 
 const n = (x: number) => x.toLocaleString();
+const cap = (w: string) => w[0].toUpperCase() + w.slice(1);
 /** "yesterday" or "today", so one line serves both sides of midnight. */
 const when = (v: Vars) => (v.yesterday ? 'yesterday' : 'today');
 
@@ -242,19 +263,25 @@ const BANK: Record<Situation, Candidate[]> = {
 
   short: [
     { bands: ['morning'], say: (v) => `${v.gap!.left}g of ${v.gap!.name} to go, and the whole day to do it in.`, tone: 'nudge' },
-    { bands: ['morning'], say: (v) => `${v.gap!.name[0].toUpperCase()}${v.gap!.name.slice(1)} is the one to chase today — ${v.gap!.left}g left.`, tone: 'nudge' },
+    { bands: ['morning'], say: (v) => `${cap(v.gap!.name)} is the one to chase today — ${v.gap!.left}g left.`, tone: 'nudge' },
     { bands: ['midday', 'afternoon'], say: (v) => `${v.gap!.left}g of ${v.gap!.name} left. Plenty of day for it.`, tone: 'nudge' },
     { bands: ['midday', 'afternoon'], say: (v) => `Running light on ${v.gap!.name} — ${v.gap!.left}g to go.`, tone: 'nudge' },
     { bands: ['evening'], say: (v) => `${v.gap!.left}g short on ${v.gap!.name}. Dinner is a good place to fix that.`, tone: 'nudge' },
-    { bands: ['evening'], say: (v) => `${v.gap!.name} needs ${v.gap!.left}g more before the day is out.`, tone: 'nudge' },
+    { bands: ['evening'], say: (v) => `${cap(v.gap!.name)} needs ${v.gap!.left}g more before the day is out.`, tone: 'nudge' },
     { say: (v) => `${v.gap!.left}g of ${v.gap!.name} left ${when(v)}.`, tone: 'nudge' },
   ],
 
   'short-past': [
-    { say: (v) => `${when(v)[0].toUpperCase()}${when(v).slice(1)} finished ${v.gap!.left}g short on ${v.gap!.name}. Worth a stronger breakfast.`, tone: 'neutral' },
-    { say: (v) => `${v.gap!.name[0].toUpperCase()}${v.gap!.name.slice(1)} came up ${v.gap!.left}g short. Easy one to put right tomorrow.`, tone: 'neutral' },
+    { say: (v) => `${cap(when(v))} finished ${v.gap!.left}g short on ${v.gap!.name}. Worth a stronger breakfast.`, tone: 'neutral' },
+    { say: (v) => `${cap(v.gap!.name)} came up ${v.gap!.left}g short. Easy one to put right tomorrow.`, tone: 'neutral' },
+    // Several per band on purpose: the deck can hold two short cards at once,
+    // and a pool of one leaves the second with nothing else to say.
     { bands: ['small-hours'], say: (v) => `${v.gap!.left}g short on ${v.gap!.name} yesterday. Fresh slate now.`, tone: 'neutral' },
+    { bands: ['small-hours'], say: (v) => `${cap(v.gap!.name)} ended ${v.gap!.left}g down yesterday.`, tone: 'neutral' },
+    { bands: ['small-hours'], say: (v) => `Yesterday wanted another ${v.gap!.left}g of ${v.gap!.name}.`, tone: 'neutral' },
     { bands: ['night'], say: (v) => `${v.gap!.left}g of ${v.gap!.name} missing today. Tomorrow, then.`, tone: 'neutral' },
+    { bands: ['night'], say: (v) => `${cap(v.gap!.name)} closes ${v.gap!.left}g short.`, tone: 'neutral' },
+    { bands: ['night'], say: (v) => `Today wanted another ${v.gap!.left}g of ${v.gap!.name}.`, tone: 'neutral' },
   ],
 
   // Mid-day this states the number and stops — there is still a day to eat,
@@ -296,21 +323,52 @@ const BANK: Record<Situation, Candidate[]> = {
  * the day, the part of the day, or the size of the number moves — which is
  * often enough to feel awake and rarely enough to feel restless.
  */
-function pick<T>(list: T[], seed: string): T {
+function pickIndex(len: number, seed: string): number {
   let h = 2166136261;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return list[Math.abs(h) % list.length];
+  return Math.abs(h) % len;
 }
 
-export function banner(ctx: BannerCtx): Phrase {
-  const situation = situationOf(ctx);
+const HUE: Record<Situation, Hue> = {
+  'no-targets': 'violet',
+  empty: 'blue',
+  short: 'teal',
+  'short-past': 'teal',
+  high: 'rose',
+  'all-hit': 'teal',
+  weight: 'cyan',
+  steady: 'blue',
+};
+
+const WHO: Record<Situation, string> = {
+  'no-targets': 'Setup',
+  empty: 'Nutritionist',
+  short: 'Nutritionist',
+  'short-past': 'Nutritionist',
+  high: 'Nutritionist',
+  'all-hit': 'Nutritionist',
+  weight: 'Weight',
+  steady: 'Nutritionist',
+};
+
+/**
+ * One card, for a situation you have already chosen.
+ *
+ * `gap` is passed in rather than recomputed so the deck can build a card per
+ * shortfall — the same situation said twice about two different macros.
+ */
+function phraseFor(
+  situation: Situation,
+  ctx: BannerCtx,
+  gap: Gap | null,
+  salt = 0,
+): Phrase {
   const band = bandOf(ctx.now);
-  const gaps = shortfalls(ctx);
   const vars: Vars = {
-    gap: gaps[0] ?? null,
+    gap,
     over: overBy(ctx),
     kcal: Math.round(ctx.totals[0] ?? 0),
     trend: weightTrend(ctx.weights),
@@ -330,8 +388,78 @@ export function banner(ctx: BannerCtx): Phrase {
   // moves the gap changes the sentence, a rounding difference does not.
   const bucket = Math.round((vars.gap?.left ?? vars.kcal) / 10);
   const d = new Date(ctx.now);
-  const seed = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}|${band}|${situation}|${bucket}`;
-  const chosen = pick(pool, seed);
+  // The macro is in the seed so the protein card and the fibre card, which
+  // share a situation and often a bucket, do not land on the same sentence.
+  const seed = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}|${band}|${situation}|${gap?.name ?? ''}|${bucket}|${salt}`;
+  const idx = pickIndex(pool.length, seed);
+  const chosen = pool[idx];
 
-  return { text: chosen.say(vars), tone: chosen.tone, situation };
+  // Fibre and protein should not wear the same colour on two cards in a row.
+  const hue: Hue = situation === 'short' || situation === 'short-past'
+    ? (gap?.name === 'fibre' ? 'amber' : 'teal')
+    : HUE[situation];
+
+  return {
+    text: chosen.say(vars),
+    tone: chosen.tone,
+    situation,
+    hue,
+    who: WHO[situation],
+    tpl: `${situation}:${all.indexOf(chosen)}`,
+  };
+}
+
+/** The single most useful thing to say. Kept for callers that want one line. */
+export function banner(ctx: BannerCtx): Phrase {
+  const situation = situationOf(ctx);
+  return phraseFor(situation, ctx, shortfalls(ctx)[0] ?? null);
+}
+
+/**
+ * Everything worth saying right now, most useful first.
+ *
+ * The home banner is swipeable, so it wants a small deck rather than a single
+ * verdict: the two things that are short, how the day is going, and the weight
+ * trend are four separate observations and a person watching would mention
+ * them separately. Capped at four — past that it stops being a glance.
+ *
+ * Never empty. When nothing is notable it still says something, because a
+ * blank panel under the grid reads as broken rather than as calm.
+ */
+export function deck(ctx: BannerCtx): Phrase[] {
+  const situation = situationOf(ctx);
+  if (situation === 'no-targets' || situation === 'empty') {
+    return [phraseFor(situation, ctx, null)];
+  }
+
+  const out: Phrase[] = [];
+  const done = dayIsDone(ctx);
+  const gaps = shortfalls(ctx);
+
+  /**
+   * Add a card, re-rolling if it would repeat one already in the deck.
+   *
+   * The protein card and the fibre card share a situation and a part of the
+   * day, so with only two evening lines to choose from they landed on the
+   * same sentence about half the time — "Dinner is a good place to fix that",
+   * twice, side by side. Salting and retrying costs nothing and the deck is
+   * the only place a repeat is visible.
+   */
+  const add = (sit: Situation, gap: Gap | null) => {
+    for (let salt = 0; salt < 5; salt++) {
+      const p = phraseFor(sit, ctx, gap, salt);
+      if (!out.some((q) => q.tpl === p.tpl)) return out.push(p);
+    }
+    return out.push(phraseFor(sit, ctx, gap, 0));
+  };
+
+  for (const gap of gaps.slice(0, 2)) {
+    if (gap.pct >= 0.85 && out.length > 0) break; // nearly there is not news twice
+    add(done ? 'short-past' : 'short', gap);
+  }
+  if (overBy(ctx) > 250) add('high', null);
+  if (out.length === 0) add(situationOf(ctx) === 'all-hit' ? 'all-hit' : 'steady', null);
+  if (weightTrend(ctx.weights)) add('weight', null);
+
+  return out.slice(0, 4);
 }
