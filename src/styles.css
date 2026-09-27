@@ -148,6 +148,11 @@ textarea {
   width: min(100%, 460px);
   margin-inline: auto;
   padding-inline: 16px;
+  /* index.html asks for viewport-fit=cover, which is what lets the app paint
+     under the status bar — and what puts the first row of every screen behind
+     the notch or the Dynamic Island unless we pay the inset back here. It was
+     only ever paid at the bottom. Zero in a browser, so nothing moves there. */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* ---- header ---------------------------------------------------------- */
@@ -292,11 +297,20 @@ textarea {
 
 /* ---- home ------------------------------------------------------------ */
 .hero {
-  padding-block: 6px 22px;
+  padding-block: 2px 20px;
+}
+/* The greeting. Larger than the date under it, because which part of the day
+   it is is the thing you register first and the date is confirmation. */
+.hello {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 3px;
 }
 .kicker {
-  font-size: 12.5px;
-  letter-spacing: 0.09em;
+  font-size: 12px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
 }

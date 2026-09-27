@@ -87,10 +87,15 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <>
-      <button className="back" onClick={onBack}>
-        <Chevron size={15} />
-        Home
-      </button>
+      {/* The same header row every other screen uses. Without it the back
+          button starts at the very top of the shell, which on a phone means
+          underneath the status bar. */}
+      <div className="top">
+        <button className="back" onClick={onBack}>
+          <Chevron size={15} />
+          Home
+        </button>
+      </div>
 
       <div className="wgrid">
         <div className="wcard">

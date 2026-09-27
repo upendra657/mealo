@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { deck, focusDay, type Phrase } from '../domain/banner';
+import { deck, focusDay, greeting, type Phrase } from '../domain/banner';
 import { readDay, type DayView } from '../domain/day';
 import { loadTargets, standing, type Targets } from '../domain/targets';
 import { weightsSince, byDay } from '../domain/weight';
@@ -15,7 +15,13 @@ import { Banner } from './Banner';
 import { Code, Cutlery, Pill, Scale, Stethoscope } from './bits';
 import type { Screen } from '../App';
 
-export function Home({ go }: { go: (s: Screen) => void }) {
+export function Home({
+  go,
+  avatar,
+}: {
+  go: (s: Screen) => void;
+  avatar?: React.ReactNode;
+}) {
   const [day, setDay] = useState<DayView | null>(null);
   const [targets, setTargets] = useState<Targets | null>(null);
   const [cards, setCards] = useState<Phrase[]>([]);
@@ -61,28 +67,40 @@ export function Home({ go }: { go: (s: Screen) => void }) {
   const goal = targets?.energy_kcal ?? null;
   const st = standing(kcal, goal, true);
 
+  /**
+   * What sits under "Track meals".
+   *
+   * Three states, because a tile has room for one line and each of them is a
+   * different question: not loaded, nothing eaten, and a figure — against a
+   * target when there is one, bare when there is not. It never shows a
+   * percentage of a goal nobody set.
+   */
+  const mealsNote = !day
+    ? '\u2026'
+    : kcal <= 0
+      ? 'Nothing logged yet'
+      : goal
+        ? `${Math.round(kcal).toLocaleString()} of ${goal.toLocaleString()} Cal \u00b7 ${st.pct}%`
+        : `${Math.round(kcal).toLocaleString()} Cal today`;
+
   return (
     <>
-      <div className="hero">
-        <div className="kicker">Today so far</div>
-        <p className="line">
-          {!day ? (
-            '…'
-          ) : kcal <= 0 ? (
-            'Nothing logged yet.'
-          ) : goal ? (
-            <>
-              <b className="num">{Math.round(kcal)}</b> of{' '}
-              <b className="num">{goal}</b> Cal ·{' '}
-              <b className={`num is-${st.standing}`}>{st.pct}%</b>
-            </>
-          ) : (
-            <>
-              <b className="num">{Math.round(kcal)}</b> Cal · protein{' '}
-              <b className="num">{Math.round(day.totals[1])}g</b> · no target set
-            </>
-          )}
-        </p>
+      {/* One header, not two: the greeting is the title. The day's calories
+          moved down onto the tile they belong to — a number about meals reads
+          better under "Track meals" than floating above everything. */}
+      <div className="top">
+        <div>
+          <div className="hello">{greeting(now)}</div>
+          <div className="kicker">
+            {new Date(now).toLocaleDateString(undefined, {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+            })}
+          </div>
+        </div>
+        <div className="grow" />
+        {avatar}
       </div>
 
       {/* Right-aligned above the grid: small on purpose. Weight is a thing
@@ -106,7 +124,7 @@ export function Home({ go }: { go: (s: Screen) => void }) {
           <Cutlery />
           <div>
             <div className="name">Track meals</div>
-            <div className="note">Nutritionist</div>
+            <div className="note">{mealsNote}</div>
           </div>
         </button>
 

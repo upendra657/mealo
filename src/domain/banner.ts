@@ -113,6 +113,29 @@ export function bandOf(now: number): Band {
 }
 
 /**
+ * "Morning", "Afternoon", "Evening", "Night" — the home screen's greeting.
+ *
+ * Mapped off `bandOf` rather than reading the hour again. The app has one
+ * notion of what time it is and this is it; a second one drifts, which is how
+ * the text parser ended up with its own stale unit list.
+ */
+export function greeting(now: number): string {
+  switch (bandOf(now)) {
+    case 'small-hours':
+      return 'Late night';
+    case 'morning':
+      return 'Morning';
+    case 'midday':
+    case 'afternoon':
+      return 'Afternoon';
+    case 'evening':
+      return 'Evening';
+    case 'night':
+      return 'Evening';
+  }
+}
+
+/**
  * Which day the banner should be talking about.
  *
  * Between midnight and four, with nothing eaten yet, the day you are thinking

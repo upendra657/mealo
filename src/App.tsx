@@ -114,21 +114,9 @@ export default function App() {
       {/* Keyed on the profile: switching person remounts every screen rather
           than asking each one to notice. */}
       <div className="shell" key={active}>
-        {screen === 'home' && (
-          <>
-            <div className="top">
-              <div>
-                <h1>Mealo</h1>
-                <p className="small muted" style={{ margin: 0 }}>
-                  Local-first · nothing leaves this device
-                </p>
-              </div>
-              <div className="grow" />
-              {avatar}
-            </div>
-            <Home go={go} />
-          </>
-        )}
+        {/* Home renders its own header, because the greeting in it depends on
+            the time and Home is the screen that already ticks. */}
+        {screen === 'home' && <Home go={go} avatar={avatar} />}
 
         {screen === 'day' && (
           <Day
