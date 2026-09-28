@@ -31,6 +31,14 @@ import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import { readDay, contributors } from '../../src/domain/day';
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
+import {
+  createHousehold,
+  joinHousehold,
+  leaveHousehold,
+  loadHousehold,
+  open as openSealed,
+  seal,
+} from '../../src/lib/household';
 
 type Result = { name: string; ok: boolean; detail?: string };
 const results: Result[] = [];
@@ -221,6 +229,48 @@ async function main() {
     check('one row, not two', Number(rows[0]?.n) === 1, String(rows[0]?.n));
   }
 
+
+  // ---- the sync envelope -------------------------------------------------
+  //
+  // Here rather than in the node suite because this is the browser's own
+  // WebCrypto and the browser's own IndexedDB — the two things the envelope
+  // actually runs on. A stub would test the stub.
+  step('household');
+  {
+    const { household, code } = await createHousehold();
+    check('a pairing code is produced', /^[A-Z2-7]{5}(-[A-Z2-7]{1,5})+$/.test(code), code);
+
+    const stored = await loadHousehold();
+    check('and the household persists', stored?.id === household.id, String(stored?.id));
+
+    const msg = JSON.stringify({ v: 1, rows: [{ t: 'custom_foods', k: 'dal tadka' }] });
+    const sealed = await seal(household.key, msg);
+    check('the dish name is not on the wire',
+      !new TextDecoder().decode(sealed).includes('dal tadka'));
+
+    // The other phone, holding only the code.
+    const joined = await joinHousehold(code);
+    check('the code alone opens the batch', (await openSealed(joined.key, sealed)) === msg);
+    check('and lands on the same inbox', joined.id === household.id);
+
+    // A relay holding the ciphertext and a different key learns nothing.
+    const stranger = await createHousehold();
+    let refused = false;
+    try {
+      await openSealed(stranger.household.key, sealed);
+    } catch {
+      refused = true;
+    }
+    check('a stranger key cannot open it', refused);
+
+    // Nonce reuse is the one fatal mistake with AES-GCM.
+    const a = await seal(household.key, 'same');
+    const b = await seal(household.key, 'same');
+    check('identical batches differ on the wire', a.join() !== b.join());
+
+    await leaveHousehold();
+    check('leaving forgets the key', (await loadHousehold()) === null);
+  }
 
   // ---- targets, and what an unset one means -----------------------------
   const blank = await loadTargets();

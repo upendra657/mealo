@@ -30,6 +30,15 @@ import {
 } from '../src/domain/banner';
 import type { Macros } from '../src/domain/day';
 import {
+  collapse,
+  isAddressable,
+  nextCursor,
+  resolve,
+  since,
+  wireKey,
+  type WireRow,
+} from '../src/domain/sync';
+import {
   parseCsv,
   mapHeaders,
   readRows,
@@ -645,6 +654,91 @@ section('Banner: weight trend');
   check('down over a fortnight', down, { delta: -0.8, days: 14 });
   const up = weightTrend([{ kg: 72.6, measured_at: t0 }, { kg: 72.0, measured_at: t0 - 21 * day }]);
   check('and up', up, { delta: 0.6, days: 21 });
+}
+
+// ------------------------------------------------------------ sync merge
+
+section('Sync: the merge key is the only identity two devices share');
+{
+  check('a dish keys on its slug', wireKey('custom_foods', { slug: 'dal tadka' }), 'dal tadka');
+  check('a portion keys on dish + measure',
+    wireKey('food_portions', { food_slug: 'dal tadka', measure: 'katori' }), 'dal tadka|katori');
+  check('an alias keys on the words', wireKey('food_aliases', { alias: 'dal' }), 'dal');
+
+  // Nothing that crosses the wire may carry a local row id: hers means
+  // nothing on his device, and a portion pointing at a missing dish fails
+  // silently rather than loudly.
+  const portion: WireRow = { t: 'food_portions', k: 'dal tadka|katori', at: 5, del: null,
+    f: { food_slug: 'dal tadka', measure: 'katori', quantity: 1, net_weight_g: 150, source: 'user' } };
+  check('no id on the wire', 'id' in portion.f || 'food_id' in portion.f, false);
+  check('addressable', isAddressable(portion), true);
+  check('a portion with no dish is not', isAddressable(
+    { ...portion, f: { ...portion.f, food_slug: '' }, k: '|katori' }), false);
+}
+
+section('Sync: who wins');
+{
+  const older = { updated_at: 100, deleted_at: null, id: 'a' };
+  const newer = { updated_at: 200, deleted_at: null, id: 'b' };
+  check('newer wins', resolve('custom_foods', older, newer), 'incoming');
+  check('and does not lose going the other way', resolve('custom_foods', newer, older), 'local');
+
+  // A delete is an edit like any other.
+  check('a newer delete wins',
+    resolve('custom_foods', { updated_at: 100, deleted_at: null },
+                            { updated_at: 200, deleted_at: 200 }), 'incoming');
+  check('an older delete does not',
+    resolve('custom_foods', { updated_at: 300, deleted_at: null },
+                            { updated_at: 200, deleted_at: 200 }), 'local');
+
+  // The rule that is not last-write-wins: a number somebody weighed is not
+  // overwritten by the app's own arithmetic, however late it arrives.
+  const userOld = { updated_at: 100, deleted_at: null, source: 'user', id: 'a' };
+  const derivedNew = { updated_at: 900, deleted_at: null, source: 'derived', id: 'b' };
+  check('measured beats derived even when older',
+    resolve('food_portions', userOld, derivedNew), 'local');
+  check('and from the other side too',
+    resolve('food_portions', derivedNew, userOld), 'incoming');
+  check('two measured rows fall back to newest',
+    resolve('food_portions', { ...userOld }, { ...userOld, updated_at: 900, id: 'b' }), 'incoming');
+
+  // Convergence: swapping the sides must not swap the winner.
+  let disagreements = 0;
+  const cases: [number, string, string][] = [
+    [100, 'user', 'a'], [100, 'derived', 'b'], [200, 'user', 'c'], [200, 'derived', 'd'],
+  ];
+  for (const [aAt, aSrc, aId] of cases) for (const [bAt, bSrc, bId] of cases) {
+    if (aId === bId) continue;
+    const A = { updated_at: aAt, deleted_at: null, source: aSrc, id: aId };
+    const B = { updated_at: bAt, deleted_at: null, source: bSrc, id: bId };
+    const fromA = resolve('food_portions', A, B) === 'incoming' ? bId : aId;
+    const fromB = resolve('food_portions', B, A) === 'incoming' ? aId : bId;
+    if (fromA !== fromB) disagreements++;
+  }
+  check('both devices always pick the same row', disagreements, 0);
+}
+
+section('Sync: batching');
+{
+  const row = (k: string, at: number): WireRow =>
+    ({ t: 'custom_foods', k, at, del: null, f: { slug: k, name: k } });
+
+  const collapsed = collapse([row('dal', 1), row('dal', 9), row('dal', 4), row('roti', 2)]);
+  check('one row per key', collapsed.size, 2);
+  check('and it is the newest', collapsed.get('custom_foods:dal')!.at, 9);
+
+  check('unaddressable rows are dropped',
+    collapse([{ t: 'custom_foods', k: '', at: 1, del: null, f: {} }]).size, 0);
+
+  // The cursor is the highest updated_at actually sent, never the clock: a
+  // dish written while the push was in flight must not fall below it.
+  check('cursor is the high-water mark', nextCursor([row('a', 5), row('b', 12)], 0), 12);
+  check('and never goes backwards', nextCursor([row('a', 5)], 30), 30);
+
+  // Inclusive, because two rows can share a millisecond and > would drop the
+  // second one forever.
+  check('since is inclusive of the cursor',
+    since([{ updated_at: 10 }, { updated_at: 11 }], 10).length, 2);
 }
 
 // ------------------------------------------------------------------ done

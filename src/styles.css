@@ -1797,7 +1797,11 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 18px 0;
+  /* The sheet is position:fixed, so it sits outside .shell and never sees the
+     top inset that screen pays. Its own header has to pay it, or Cancel and
+     Save land under the status bar and the sheet looks like it has no way to
+     save at all — which is exactly how it looked. */
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 18px 0;
 }
 .wsh button { font-size: 15px; color: var(--muted); }
 .wsh .save { color: var(--cyan); font-weight: 500; }
