@@ -31,6 +31,7 @@ import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import { readDay, contributors } from '../../src/domain/day';
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
+import { apply, collect } from '../../src/domain/librarysync';
 import {
   createHousehold,
   joinHousehold,
@@ -270,6 +271,98 @@ async function main() {
 
     await leaveHousehold();
     check('leaving forgets the key', (await loadHousehold()) === null);
+  }
+
+  // ---- sync: collecting and applying ------------------------------------
+  step('librarysync');
+  {
+    const nut = scopedDb('nutritionist');
+    const rows = await collect(0);
+    check('the library collects as wire rows', rows.length > 0, String(rows.length));
+    check('dishes are in there', rows.some((r) => r.t === 'custom_foods'));
+    check('and so are their portions', rows.some((r) => r.t === 'food_portions'));
+
+    // Nothing on the wire may carry a local id — hers means nothing here.
+    const leaks = rows.filter((r) => 'id' in r.f || 'food_id' in r.f);
+    check('no local ids travel', leaks.length === 0, JSON.stringify(leaks[0] ?? {}));
+    // A portion names its dish by slug, not by row.
+    const p = rows.find((r) => r.t === 'food_portions');
+    check('a portion names its dish by slug', typeof p?.f.food_slug === 'string' && !!p.f.food_slug);
+
+    // THE ping-pong guard. Applying rows this device already has must change
+    // nothing at all — above all it must not restamp updated_at, or the rows
+    // look locally modified, get pushed back, and the two phones trade the
+    // same dish forever without ever converging.
+    const before = await nut.query<{ n: number; hi: number; lo: number }>(
+      `SELECT COUNT(*) AS n, MAX(updated_at) AS hi, MIN(updated_at) AS lo
+         FROM custom_foods WHERE deleted_at IS NULL`,
+    );
+    await apply(rows);
+    const after = await nut.query<{ n: number; hi: number; lo: number }>(
+      `SELECT COUNT(*) AS n, MAX(updated_at) AS hi, MIN(updated_at) AS lo
+         FROM custom_foods WHERE deleted_at IS NULL`,
+    );
+    check('applying our own rows adds nothing', after[0].n === before[0].n,
+      `${before[0].n} -> ${after[0].n}`);
+    check('and does not restamp updated_at',
+      after[0].hi === before[0].hi && after[0].lo === before[0].lo,
+      `${before[0].hi}/${before[0].lo} -> ${after[0].hi}/${after[0].lo}`);
+
+    // A dish only the other phone has arrives whole, with its timestamp.
+    const far = Date.now() - 5_000;
+    const got = await apply([
+      { t: 'custom_foods', k: 'rajma masala', at: far, del: null,
+        f: { slug: 'rajma masala', name: 'Rajma Masala', per_unit: '100g',
+             energy_kcal: 127, protein_g: 6.2, fat_g: 3.1, carbs_g: 18.4, fibre_g: 5.2,
+             notes: null, share: 0 } },
+      { t: 'food_portions', k: 'rajma masala|katori', at: far, del: null,
+        f: { food_slug: 'rajma masala', measure: 'katori', quantity: 1,
+             net_weight_g: 150, is_default: 1, source: 'user' } },
+    ]);
+    check('a new dish is created', got.dishes === 1, String(got.dishes));
+    check('along with its portion', got.portions === 1, String(got.portions));
+    const rajma = await nut.query<{ id: string; updated_at: number }>(
+      "SELECT id, updated_at FROM custom_foods WHERE slug = 'rajma masala'",
+    );
+    check('carrying the sender timestamp, not ours', rajma[0]?.updated_at === far, `${rajma[0]?.updated_at} vs ${far}`);
+    check('and it got a local id of its own', (rajma[0]?.id ?? '').length > 0);
+
+    // The portion resolved the slug to this device's row.
+    const anchor = await nut.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM food_portions WHERE food_id = ? AND measure = ?',
+      [rajma[0].id, 'katori'],
+    );
+    check('the anchor points at our copy of the dish', Number(anchor[0].n) === 1, String(anchor[0].n));
+
+    // An older edit must not win.
+    await apply([{ t: 'custom_foods', k: 'rajma masala', at: far - 10_000, del: null,
+      f: { slug: 'rajma masala', name: 'WRONG', per_unit: '100g', energy_kcal: 1,
+           protein_g: 0, fat_g: 0, carbs_g: 0, fibre_g: 0, notes: null, share: 0 } }]);
+    const still = await nut.query<{ name: string }>(
+      "SELECT name FROM custom_foods WHERE slug = 'rajma masala'",
+    );
+    check('an older row does not overwrite a newer one', still[0]?.name === 'Rajma Masala', String(still[0]?.name));
+
+    // A portion whose dish has not arrived is skipped, not guessed at and not
+    // fatal — it applies on the next sync once the dish shows up.
+    const orphan = await apply([
+      { t: 'food_portions', k: 'not here yet|bowl', at: Date.now(), del: null,
+        f: { food_slug: 'not here yet', measure: 'bowl', quantity: 1,
+             net_weight_g: 350, is_default: 0, source: 'user' } },
+    ]);
+    check('an orphan portion is skipped', orphan.skipped === 1, String(orphan.skipped));
+    check('and nothing was written for it', orphan.portions === 0, String(orphan.portions));
+
+    // The app's arithmetic never buries a number somebody weighed.
+    await apply([{ t: 'food_portions', k: 'rajma masala|katori', at: Date.now() + 60_000, del: null,
+      f: { food_slug: 'rajma masala', measure: 'katori', quantity: 1,
+           net_weight_g: 999, is_default: 0, source: 'derived' } }]);
+    const kept = await nut.query<{ net_weight_g: number; source: string }>(
+      'SELECT net_weight_g, source FROM food_portions WHERE food_id = ? AND measure = ?',
+      [rajma[0].id, 'katori'],
+    );
+    check('a derived portion cannot overwrite a measured one',
+      Number(kept[0].net_weight_g) === 150, JSON.stringify(kept[0]));
   }
 
   // ---- targets, and what an unset one means -----------------------------
