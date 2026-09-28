@@ -30,3 +30,6 @@ my-meal-table.csv
 # Context handoff for whoever picks this up next. Notes on how we work, not
 # code, and it names the two of us. Hand it over as a file.
 HANDOFF.md
+
+# wrangler dev --local keeps its miniflare state (the local D1) here
+.wrangler
