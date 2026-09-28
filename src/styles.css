@@ -1910,3 +1910,34 @@ textarea {
   white-space: nowrap;
   font-weight: 400;
 }
+
+/* ---- pairing ---------------------------------------------------------- */
+.syncrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-block: 10px 4px;
+}
+/* The code is the key, so it is styled like something you handle carefully
+   rather than like a caption. */
+.keywarn {
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  padding-left: 10px;
+  margin-block: 12px 8px;
+}
+.paircode {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 12px 13px;
+  margin-block: 4px 8px;
+  cursor: copy;
+  user-select: all;
+}

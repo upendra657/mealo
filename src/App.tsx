@@ -20,6 +20,7 @@ import {
 } from './profiles/store';
 import { AvatarMenu } from './ui/AvatarMenu';
 import { initFoodLibrary } from './domain/foods';
+import { syncLibrary } from './domain/relay';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
 import { FoodLibrary } from './ui/FoodLibrary';
@@ -65,6 +66,12 @@ export default function App() {
         // renders: it touches only a column nothing reads yet, and blocking
         // the first paint on a library backfill would be a poor trade.
         void initFoodLibrary();
+
+        // A sync on open, if this phone is paired. Also not awaited, and it
+        // swallows its own failures: the app has to work on a train with no
+        // signal, so a relay that cannot be reached is a line in Settings
+        // rather than anything the home screen waits for or reports.
+        void syncLibrary().catch(() => {});
       } catch (e) {
         setFailed(e instanceof Error ? e.message : String(e));
       }

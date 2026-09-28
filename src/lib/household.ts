@@ -150,6 +150,20 @@ export async function loadHousehold(): Promise<Household | null> {
   return { id, key: await importKey(fromBase32(raw)) };
 }
 
+/**
+ * The pairing code for the household this device is already in.
+ *
+ * Rebuilt from storage rather than kept around, so the only long-lived copy
+ * of the key is the CryptoKey and the string exists only while it is on
+ * screen.
+ */
+export async function pairingCodeFor(): Promise<string | null> {
+  const id = await kvGet<string>(ID_KV);
+  const raw = await kvGet<string>(KEY_KV);
+  if (!id || !raw) return null;
+  return pairingCode(fromBase32(id), fromBase32(raw));
+}
+
 export async function leaveHousehold(): Promise<void> {
   await kvSet(ID_KV, null);
   await kvSet(KEY_KV, null);

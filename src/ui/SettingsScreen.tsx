@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { SyncCard } from './SyncCard';
 import { Chevron } from './bits';
 import { StatusBar } from './StatusBar';
 import type { Screen } from '../App';
@@ -239,6 +240,8 @@ export function SettingsScreen({
           </label>
         ))}
       </section>
+
+      <SyncCard />
 
       <section className="card">
         <h2>Your data</h2>
