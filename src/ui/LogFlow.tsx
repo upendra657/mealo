@@ -29,8 +29,8 @@ import {
   searchFoods,
   type Food,
 } from '../domain/foods';
-import { MEASURES, toMeasure } from '../domain/measures';
-import { resolveFor, upsertPortion } from '../domain/portions';
+import { allMeasureIds, describeMeasure, MEASURES, toMeasure } from '../domain/measures';
+import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
@@ -54,6 +54,24 @@ const QTYS = [
   0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,
   ...Array.from({ length: 48 }, (_, i) => i + 3), // 3 … 50
 ];
+
+/**
+ * Weighing something is a different kind of counting.
+ *
+ * Nobody eats 1.25 grams and nobody eats 400 katoris, so the two cases want
+ * different ladders: quarters up to two and then whole numbers to fifty for
+ * bowls and pieces, and fives up to five hundred for the scale. Both let you
+ * type past the end, to a thousand, which is where a plate stops being a
+ * plate in either unit.
+ */
+const GRAM_QTYS = Array.from({ length: 100 }, (_, i) => (i + 1) * 5); // 5 … 500
+
+/** The typed box goes further than the wheel, but not indefinitely. */
+const TYPED_MAX = 1000;
+
+function laddersFor(unit: string | null): number[] {
+  return toMeasure(unit)?.kind === 'weight' ? GRAM_QTYS : QTYS;
+}
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -494,6 +512,29 @@ function DishStep({
   const [picker, setPicker] = useState<'qty' | 'meas' | 'slot' | null>(null);
   /** What the typed quantity box is showing, mid-edit. See the input below. */
   const [qtyDraft, setQtyDraft] = useState(String(item.quantity ?? 1));
+  /**
+   * The measures this dish has actually been weighed in.
+   *
+   * They lead the picker because their answer is measured rather than
+   * derived — Sambar in a katori is a number somebody put on a scale, and
+   * Sambar in a teacup is arithmetic from it.
+   */
+  const [anchors, setAnchors] = useState<{ measure: string }[]>([]);
+
+  useEffect(() => {
+    const id = item.food?.id;
+    if (!id) {
+      setAnchors([]);
+      return;
+    }
+    let live = true;
+    void portionsFor(id).then((rows) => {
+      if (live) setAnchors(rows.map((r) => ({ measure: r.measure })));
+    });
+    return () => {
+      live = false;
+    };
+  }, [item.food?.id]);
 
   // The wheel and the box are two views of one number, so a turn of the wheel
   // has to show up in the box. Skipped when the box already reads the same
@@ -514,8 +555,23 @@ function DishStep({
     setItem(await repriceItem(item, change));
   };
 
-  const ownMeasures = food ? [] : [];
-  const measureIds = Object.keys(MEASURES);
+  /**
+   * The dish's own measures first, then the rest of the vocabulary.
+   *
+   * Both of these were stubs. `ownMeasures` returned [] from either branch,
+   * so a dish's recorded anchors never appeared; and `Object.keys(MEASURES)`
+   * on an *array* returns its indices, so the wheel offered "0","1","2"…,
+   * `toMeasure("3")` resolved to nothing, and picking one repriced nothing.
+   * That is why Sambar could only be logged in bowls.
+   *
+   * Anchors go first because they are the measures this dish has actually
+   * been weighed in — the ones whose answer is measured rather than derived.
+   */
+  const qtys = laddersFor(item.unit ?? null);
+  const ownMeasures = anchors
+    .map((a: { measure: string }) => a.measure)
+    .filter((id: string, i: number, all: string[]) => all.indexOf(id) === i);
+  const measureIds = allMeasureIds().filter((id) => !ownMeasures.includes(id));
 
   const rememberPortion = async () => {
     if (!food || !measure || measure.kind === 'weight') return;
@@ -630,7 +686,7 @@ function DishStep({
       <Sheet open={picker === 'qty'} onClose={() => setPicker(null)} label="Quantity">
         <h3>Quantity</h3>
         <Wheel
-          values={QTYS.includes(item.quantity ?? 1) ? QTYS : [...QTYS, item.quantity ?? 1].sort((a, b) => a - b)}
+          values={qtys.includes(item.quantity ?? 1) ? qtys : [...qtys, item.quantity ?? 1].sort((a, b) => a - b)}
           value={item.quantity ?? 1}
           render={(v) => fmtQty(v as number)}
           onChange={(v) => void reprice({ quantity: v as number })}
@@ -649,6 +705,7 @@ function DishStep({
             type="number"
             step="0.01"
             min="0"
+            max={TYPED_MAX}
             inputMode="decimal"
             value={qtyDraft}
             onChange={(e) => {
@@ -658,7 +715,9 @@ function DishStep({
               if (text.trim() !== '' && Number.isFinite(v) && v > 0) {
                 // Two decimals is the floor. Anything finer is a number
                 // nobody measured, and it would print back as noise.
-                void reprice({ quantity: Math.round(v * 100) / 100 });
+                void reprice({
+                  quantity: Math.min(TYPED_MAX, Math.round(v * 100) / 100),
+                });
               }
             }}
             onBlur={() => setQtyDraft(String(item.quantity ?? 1))}
@@ -674,7 +733,7 @@ function DishStep({
         <Wheel
           values={[...ownMeasures, ...measureIds]}
           value={item.unit ?? 'g'}
-          render={(v) => cap(toMeasure(v as string)?.label ?? String(v))}
+          render={(v) => describeMeasure(v as string) || String(v)}
           onChange={(v) => void reprice({ unit: v as string })}
         />
         <button className="done" onClick={() => setPicker(null)}>

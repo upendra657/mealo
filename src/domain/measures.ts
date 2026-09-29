@@ -150,6 +150,38 @@ export function toMeasure(raw: string | null | undefined): Measure | null {
   return BY_KEY.get(key) ?? BY_KEY.get(key.replace(/s$/, '')) ?? null;
 }
 
+/**
+ * A measure as the picker should show it: "katori (150 ml)", "piece", "g".
+ *
+ * The volume is on the label because a katori and a small bowl are the same
+ * 150 ml and a cup is not, and picking between them blind is guesswork. A
+ * count measure has no volume to show, and a restaurant portion has one that
+ * would be a lie — `needsOwn` means the size came from one specific plate, so
+ * quoting an average as though it were a standard is exactly the impression
+ * not to give.
+ */
+export function describeMeasure(x: Measure | string | null | undefined): string {
+  const mm = typeof x === 'string' ? toMeasure(x) : x;
+  if (!mm) return '';
+  // Spelt out in the picker, abbreviated everywhere else. A list of measures
+  // wants "Grams" beside "Katori (150 ml)"; a logged row wants "450 g", and
+  // capitalising the label would give the list a shouted "G".
+  const spelt: Record<string, string> = {
+    g: 'Grams',
+    kg: 'Kilograms',
+    ml: 'Millilitres',
+    l: 'Litres',
+  };
+  const name = spelt[mm.id] ?? mm.label.charAt(0).toUpperCase() + mm.label.slice(1);
+  if (mm.kind === 'volume' && mm.ml && !mm.needsOwn) return `${name} (${mm.ml} ml)`;
+  return name;
+}
+
+/** Every measure, in the order the picker should offer them. */
+export function allMeasureIds(): string[] {
+  return MEASURES.map((x) => x.id);
+}
+
 /** The canonical id, for storage. */
 export function canonicalMeasure(raw: string | null | undefined): string | null {
   return toMeasure(raw)?.id ?? null;

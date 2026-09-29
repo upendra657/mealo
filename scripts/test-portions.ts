@@ -17,7 +17,12 @@ import {
   resolvePortion,
   type Anchor,
 } from '../src/domain/portions';
-import { canonicalMeasure, toMeasure } from '../src/domain/measures';
+import {
+  allMeasureIds,
+  canonicalMeasure,
+  describeMeasure,
+  toMeasure,
+} from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import {
   banner,
@@ -739,6 +744,55 @@ section('Sync: batching');
   // second one forever.
   check('since is inclusive of the cursor',
     since([{ updated_at: 10 }, { updated_at: 11 }], 10).length, 2);
+}
+
+// -------------------------------------------------- the measure vocabulary
+
+section('Measures: what the picker offers');
+{
+  const ids = allMeasureIds();
+  // The bug this replaces: Object.keys() on an array returns its indices, so
+  // the picker offered "0","1","2" and choosing one resolved to nothing.
+  check('the list is ids, not array indices', ids.includes('katori') && !ids.includes('0'), true,
+    ids.slice(0, 4).join(','));
+  check('every id resolves to a measure', ids.every((i) => toMeasure(i) !== null), true);
+  check('no duplicates', ids.length === new Set(ids).size, true);
+
+  for (const id of ['katori', 'smallbowl', 'piece', 'cup', 'glass', 'g']) {
+    check(`${id} is offered`, ids.includes(id), true);
+  }
+
+  // A volume says how big it is, because a katori and a small bowl are the
+  // same 150 ml and a cup is not.
+  check('katori shows its volume', describeMeasure('katori'), 'Katori (150 ml)');
+  check('small bowl shows the same 150', describeMeasure('smallbowl'), 'Small bowl (150 ml)');
+  check('glass', describeMeasure('glass'), 'Glass (250 ml)');
+  // A count has no volume to show.
+  check('piece shows none', describeMeasure('piece'), 'Piece');
+  check('grams are spelt out in the picker', describeMeasure('g'), 'Grams');
+  check('but the label itself stays short', toMeasure('g')?.label, 'g');
+  // A restaurant portion has one, and quoting it would be a lie: the size
+  // came from one plate, not from a standard.
+  check('a serve does not quote a volume', describeMeasure('serve').includes('ml'), false,
+    describeMeasure('serve'));
+}
+
+section('Measures: three katoris of sambar');
+{
+  // The case that started this. Sambar is anchored in bowls; a katori answer
+  // comes through density, and three of them is not one and a half bowls.
+  const sambar: Anchor[] = [{ measure: 'bowl', quantity: 1, net_weight_g: 350 }];
+  const bowl = resolvePortion(1.5, 'bowl', sambar);
+  check('1.5 bowl is what the screen showed', bowl.grams, 525);
+  const katori = resolvePortion(3, 'katori', sambar);
+  check('3 katori is 450g, not 525', katori.grams, 450);
+  check('and it says it was derived', katori.basis, 'density');
+
+  // Weighing it is the exact path: no derivation at all.
+  const weighed = resolvePortion(450, 'g', sambar);
+  check('450 g is 450 g', weighed.grams, 450);
+  check('straight off the scale', weighed.basis, 'weight');
+  check('and 1 kg is 1000 g', resolvePortion(1, 'kg', sambar).grams, 1000);
 }
 
 // ------------------------------------------------------------------ done
