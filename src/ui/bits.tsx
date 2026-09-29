@@ -244,6 +244,27 @@ export function Scale({ size = 24 }: { size?: number }) {
 }
 
 /**
+ * A flame, in two strokes.
+ *
+ * The outer tongue takes the burn red and the inner one the yellow, so the
+ * icon carries both halves of the palette on its own rather than needing a
+ * label to say what it is. Two colours rather than `currentColor`, which is
+ * why it does not take a colour from its parent the way the others do.
+ */
+export function Flame({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path
+        stroke="var(--burn)"
+        d="M12 2.6c2.6 3.2 1.3 5.2-.4 6.7-1.5 1.4-2.6 2.6-2.6 4.3a3 3 0 0 0 6 .2c0-.8-.2-1.4-.5-2 2.2 1.5 3.4 3.6 3.4 5.9a6.5 6.5 0 0 1-13 0c0-6.5 4.2-9 7.1-15.1Z"
+      />
+      <path stroke="var(--burn-2)" d="M12 17.2c0 1.1-.7 1.9-1.6 2.3" />
+    </svg>
+  );
+}
+
+/**
  * A quantity as you would say it: "2", not "2.0"; "1.25", not "1.250".
  *
  * Lives here because both the log flow and the day list show quantities, and

@@ -37,6 +37,7 @@ const ALL_TABLES = [
   'current_state',
   'targets',
   'weights',
+  'burns',
   'citations',
   'messages',
   'conversation_summaries',
@@ -62,6 +63,7 @@ const PROFILE_SCOPED = [
   'meal_items',
   'symptoms',
   'weights',
+  'burns',
   'messages',
 ] as const;
 
@@ -108,6 +110,13 @@ export const SCOPES: Record<Agent, Scope> = {
       // it; the Nutritionist sees it because the home banner speaks in its
       // voice and a trend is part of how a day reads.
       'weights',
+      // Same: the Doctor owns what the body did, the Nutritionist may read it
+      // when asked about a day. Read access here is not permission for the
+      // banner to bring it up — the banner is a pure function in
+      // domain/banner.ts and composes no burn card, deliberately. And it is
+      // not permission to net burn against the energy target: nothing in the
+      // app subtracts one from the other.
+      'burns',
       'citations',
       'messages',
       'conversation_summaries',

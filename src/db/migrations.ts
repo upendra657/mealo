@@ -427,4 +427,48 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 9,
+  name: 'burns',
+  sql: `
+    -- Calories burnt, entered by hand. The same shape as weights and for the
+    -- same reasons: per person, local day bucketed in JS, soft deleted.
+    --
+    -- One row per day holding the day's TOTAL, not one row per session. A
+    -- walk in the morning and a gym session at night add into the same row,
+    -- because every question anyone asks of this number is a daily one — did
+    -- I hit 500 today, what has the week looked like — and a table of
+    -- sessions would have to be summed before any of them could be answered.
+    -- The cost is that the app cannot show you the session breakdown, which
+    -- nothing in it asks for.
+    --
+    -- kcal, matching foods and targets, so nothing in the app has to know
+    -- which unit a number is in.
+    --
+    -- Emphatically NOT netted against the food budget. Burning 500 does not
+    -- raise the day's remaining calories; the tile and the banner read the
+    -- plain energy target exactly as before. This is a measurement the agents
+    -- can reason about, not a term in an equation the app computes.
+    CREATE TABLE IF NOT EXISTS burns (
+      id           TEXT PRIMARY KEY,
+      profile_id   TEXT,
+      measured_at  INTEGER NOT NULL,   -- ms since epoch, local day bucketed in JS
+      kcal         REAL NOT NULL,
+      note         TEXT,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_burns_when
+      ON burns(profile_id, measured_at);
+
+    -- A daily burn target, beside weight_kg and the macro goals. Nullable and
+    -- null until someone types a number: the chart draws no target line and
+    -- the card shows no meter until there is one.
+    --
+    -- Typed by the user, never derived. The app has no view on how much
+    -- anyone should burn and does not acquire one by storing this.
+    ALTER TABLE targets ADD COLUMN burn_kcal REAL;
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

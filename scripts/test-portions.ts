@@ -26,6 +26,13 @@ import {
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import {
+  average,
+  byDay as burnByDay,
+  ceiling,
+  slotsFor,
+  streak,
+} from '../src/domain/burn';
+import {
   banner,
   bandOf,
   focusDay,
@@ -815,6 +822,65 @@ section('Measures: the picker is shorter than the vocabulary');
   check('the picker lost exactly ten', every.length - offered.length, gone.length);
   check('and every offered id still resolves',
     offered.every((i) => toMeasure(i) !== null), true);
+}
+
+section('Burn: one row a day, and the second entry adds');
+{
+  // The pure half only — recordBurn talks to the database, so what is checked
+  // here is the bucketing and the arithmetic the screen depends on.
+  const day = (n: number, h = 9) => new Date(2026, 8, n, h, 0, 0).getTime();
+
+  const rows = [
+    { measured_at: day(20), kcal: 400 },
+    { measured_at: day(21), kcal: 520 },
+    { measured_at: day(21, 19), kcal: 750 }, // corrected later the same day
+    { measured_at: day(22), kcal: 300 },
+  ];
+  const pts = burnByDay(rows);
+  check('one point per local day', pts.length, 3);
+  check('the later reading wins within a day', pts[1].kcal, 750);
+  check('and they come out oldest first', pts[0].kcal, 400);
+
+  // A day nobody logged is absent, never zero. Zero would claim you moved
+  // nothing; absence says nobody recorded it.
+  const gappy = burnByDay([
+    { measured_at: day(20), kcal: 600 },
+    { measured_at: day(23), kcal: 600 },
+  ]);
+  check('a gap is a gap, not a zero', gappy.length, 2);
+
+  check('average', average(pts), Math.round((400 + 750 + 300) / 3));
+  check('average of nothing is null', average([]), null);
+
+  // Bars are read against zero, so only the ceiling is chosen.
+  check('ceiling clears the tallest bar', ceiling(pts, null), 900);
+  check('and clears the target when the target is higher', ceiling(pts, 1500), 1700);
+  check('never zero-height', ceiling([], null), 100);
+}
+
+section('Burn: a run is calendar days, not readings');
+{
+  const day = (n: number) => new Date(2026, 8, n, 9, 0, 0).getTime();
+  const at = (n: number, kcal: number) => ({ t: day(n), kcal });
+
+  check('three in a row', streak([at(20, 600), at(21, 600), at(22, 600)], 500), 3);
+  check('the latest under target ends it', streak([at(20, 600), at(21, 400)], 500), 0);
+  check('a miss part-way stops the count', streak([at(20, 600), at(21, 300), at(22, 600)], 500), 1);
+
+  // The one that matters. Monday and Wednesday both at target with no Tuesday
+  // is not "two days running" — that asserts something about a Tuesday there
+  // is no reading for.
+  check('a missing day breaks the run', streak([at(20, 600), at(22, 600)], 500), 1);
+  check('exactly on target counts', streak([at(22, 500)], 500), 1);
+  check('no target means no run', streak([at(22, 900)], null), 0);
+  check('nothing logged means no run', streak([], 500), 0);
+
+  // Slots span the data, not the range, so a year view with a month of
+  // readings does not lay out 365 two-pixel splinters.
+  check('slots span the data', slotsFor([at(20, 1), at(22, 1)], day(22)), 7);
+  check('and grow once there is more than the floor',
+    slotsFor([at(1, 1), at(22, 1)], day(22)), 22);
+  check('with nothing logged, the floor', slotsFor([], day(22)), 7);
 }
 
 section('Measures: three katoris of sambar');

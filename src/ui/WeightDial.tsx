@@ -22,7 +22,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const STEP = 0.01;
 const DEG = 1.25; // degrees of arc per step
 const R = 252; // arc radius; matches the circle in the SVG below
 // 46 was too narrow for the labels: at 0.01 a step, only one half-kilo
@@ -34,22 +33,55 @@ const PX_PER_STEP = 3.2;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * The dial takes its scale as props so the burn sheet can use the same
+ * geometry without a second copy of it.
+ *
+ * Every default is the weight behaviour it shipped with — hundredths of a kilo
+ * from 20 to 250, a label every half kilo, one decimal on the labels — so
+ * WeightScreen passes nothing and renders exactly as before. Calories come in
+ * at `step={10} min={0} max={3000} labelEvery={250} majorEvery={50} decimals={0}`.
+ *
+ * `step` being a prop is why `snap` exists: rounding to the step has to happen
+ * in the step's own units, and 0.01 and 10 round differently.
+ */
 export function WeightDial({
   value,
   onChange,
   min = 20,
   max = 250,
+  step = 0.01,
+  /** Ticks at multiples of this get the long treatment and a number. */
+  labelEvery = 0.5,
+  /** Ticks at multiples of this are drawn heavier. */
+  majorEvery = 0.1,
+  /** Decimal places on the tick labels. */
+  decimals = 1,
+  label = 'Weight',
+  unitWord = 'kilograms',
+  /** Recolours the needle and ticks. Undefined keeps the weight cyan. */
+  hue,
 }: {
   value: number;
-  onChange: (kg: number) => void;
+  onChange: (v: number) => void;
   min?: number;
   max?: number;
+  step?: number;
+  labelEvery?: number;
+  majorEvery?: number;
+  decimals?: number;
+  label?: string;
+  unitWord?: string;
+  hue?: 'burn';
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; from: number } | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const set = (v: number) => onChange(Math.min(max, Math.max(min, round2(v))));
+  // Snap in the step's own units. Working in hundredths regardless would land
+  // a 10-calorie step on 423 and the needle would sit between two ticks.
+  const snap = (v: number) => round2(Math.round(v / step) * step);
+  const set = (v: number) => onChange(Math.min(max, Math.max(min, snap(v))));
 
   const onDown = (e: React.PointerEvent) => {
     drag.current = { x: e.clientX, from: value };
@@ -58,7 +90,7 @@ export function WeightDial({
   };
   const onMove = (e: React.PointerEvent) => {
     if (!drag.current) return;
-    set(drag.current.from - ((e.clientX - drag.current.x) * STEP) / PX_PER_STEP);
+    set(drag.current.from - ((e.clientX - drag.current.x) * step) / PX_PER_STEP);
   };
   const onUp = () => {
     drag.current = null;
@@ -69,27 +101,33 @@ export function WeightDial({
   // keyboard and this is the only way to enter the number without typing it.
   const onKey = (e: React.KeyboardEvent) => {
     const big = e.shiftKey ? 10 : 1;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); set(value + STEP * big); }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); set(value - STEP * big); }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); set(value + step * big); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); set(value - step * big); }
   };
 
-  const centre = Math.round(value / STEP);
+  // Multiples are tested in integer units of the step rather than with a
+  // modulo on the float: 0.3 % 0.1 is 0.09999999999999998, and every tenth
+  // label would have gone missing.
+  const perMajor = Math.max(1, Math.round(majorEvery / step));
+  const perLabel = Math.max(1, Math.round(labelEvery / step));
+
+  const centre = Math.round(value / step);
   const ticks = [];
   for (let k = -SPAN; k <= SPAN; k++) {
-    const kg = (centre + k) * STEP;
-    if (kg < min || kg > max) continue;
+    const n = centre + k;
+    const v = round2(n * step);
+    if (v < min || v > max) continue;
     const a = (k * DEG * Math.PI) / 180;
-    const hundredths = Math.round(kg * 100);
-    const isTenth = hundredths % 10 === 0;
-    const isHalf = hundredths % 50 === 0;
-    const len = isHalf ? 22 : isTenth ? 15 : 9;
+    const isMajor = n % perMajor === 0;
+    const isLabel = n % perLabel === 0;
+    const len = isLabel ? 22 : isMajor ? 15 : 9;
     const opacity = 1 - Math.min(0.8, Math.abs(k) / 58);
     const tx = R * Math.sin(a);
     const ty = -R * Math.cos(a);
     ticks.push(
       <i
-        key={hundredths}
-        className={isTenth ? 'major' : undefined}
+        key={n}
+        className={isMajor ? 'major' : undefined}
         style={{
           height: len,
           opacity,
@@ -97,17 +135,17 @@ export function WeightDial({
         }}
       />,
     );
-    if (isHalf) {
+    if (isLabel) {
       const lr = R - 30;
       ticks.push(
         <b
-          key={`l${hundredths}`}
+          key={`l${n}`}
           style={{
             opacity,
             transform: `translate(${(lr * Math.sin(a)).toFixed(1)}px, ${(-lr * Math.cos(a)).toFixed(1)}px) rotate(${(k * DEG).toFixed(2)}deg) translate(-50%, 0)`,
           }}
         >
-          {(kg).toFixed(1)}
+          {v.toFixed(decimals)}
         </b>,
       );
     }
@@ -119,14 +157,15 @@ export function WeightDial({
       ref={wrap}
       role="slider"
       tabIndex={0}
-      aria-label="Weight"
+      aria-label={label}
       aria-valuenow={value}
       aria-valuemin={min}
       aria-valuemax={max}
-      aria-valuetext={`${value.toFixed(2)} kilograms`}
+      aria-valuetext={`${value.toFixed(decimals)} ${unitWord}`}
       data-dragging={dragging ? '1' : undefined}
       onPointerDown={onDown}
       onPointerMove={onMove}
+      data-hue={hue}
       onPointerUp={onUp}
       onPointerCancel={onUp}
       onKeyDown={onKey}
@@ -152,18 +191,28 @@ export function WeightNumber({
   value,
   onChange,
   unit = 'kg',
+  /** 2 for kilos, 0 for calories. Also what the typed value is rounded to. */
+  decimals = 2,
+  label = 'Weight in kilograms',
 }: {
   value: number;
-  onChange: (kg: number) => void;
+  onChange: (v: number) => void;
   unit?: string;
+  decimals?: number;
+  label?: string;
 }) {
   const [typing, setTyping] = useState(false);
-  const [draft, setDraft] = useState(value.toFixed(2));
+  const [draft, setDraft] = useState(value.toFixed(decimals));
   const input = useRef<HTMLInputElement>(null);
 
+  // Calories are shown with a thousands separator when they are just sitting
+  // there, and without one the moment you start typing, because a comma in a
+  // field you are editing is something you then have to delete.
+  const shown = decimals === 0 ? Math.round(value).toLocaleString() : value.toFixed(decimals);
+
   useEffect(() => {
-    if (!typing) setDraft(value.toFixed(2));
-  }, [value, typing]);
+    if (!typing) setDraft(value.toFixed(decimals));
+  }, [value, typing, decimals]);
 
   useEffect(() => {
     if (typing) {
@@ -174,7 +223,9 @@ export function WeightNumber({
 
   const commit = () => {
     const v = Number(draft);
-    if (draft.trim() !== '' && Number.isFinite(v) && v > 0) onChange(round2(v));
+    if (draft.trim() !== '' && Number.isFinite(v) && v > 0) {
+      onChange(decimals === 0 ? Math.round(v) : round2(v));
+    }
     setTyping(false);
   };
 
@@ -186,12 +237,12 @@ export function WeightNumber({
         type="text"
         inputMode="decimal"
         value={draft}
-        aria-label="Weight in kilograms"
+        aria-label={label}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          if (e.key === 'Escape') { setDraft(value.toFixed(2)); setTyping(false); }
+          if (e.key === 'Escape') { setDraft(value.toFixed(decimals)); setTyping(false); }
         }}
       />
     );
@@ -199,7 +250,7 @@ export function WeightNumber({
 
   return (
     <button className="bignum" onClick={() => setTyping(true)} title="Type it instead">
-      <span className="n">{value.toFixed(2)}</span>
+      <span className="n">{shown}</span>
       <span className="u">{unit}</span>
     </button>
   );

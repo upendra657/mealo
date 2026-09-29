@@ -46,6 +46,25 @@
      macro bar. The banner's washes are separate again — they tint the
      background only and never a control. */
   --weight: #ff9448;
+
+  /* Burn gets two hues doing two jobs rather than one hue in two shades:
+
+       --burn    the burn itself — the flame, the number, the needle, the
+                 Save, and any day that made target
+       --burn-2  short of target, and only that — a bar that fell under, a
+                 drop on yesterday, the unfilled part of today's meter
+
+     So yellow means one thing on that screen and means it everywhere on it,
+     and the chart is readable without consulting the legend. The pair
+     separates at deuteranopic deltaE 18.5 and both clear 3:1 against
+     --surface, which two shades of red would not have managed. Red is also
+     hotter and far more saturated than --weight, so the two screens never
+     read as the same measurement. */
+  --burn: #ff4635;
+  --burn-2: #ffc53d;
+  --hue-burn: 255, 70, 53;
+  --hue-burn-2: 255, 197, 61;
+
   --cyan: #3fc4d8;
   --hue-teal: 79, 209, 169;
   --hue-amber: 232, 180, 74;
@@ -1523,6 +1542,9 @@ textarea {
 .wrow {
   display: flex;
   justify-content: flex-end;
+  /* Two buttons now. The gap is what stops them reading as one wide control
+     with a dividing line down it. */
+  gap: 9px;
   margin-bottom: 9px;
 }
 .wbtn {
@@ -1538,6 +1560,8 @@ textarea {
 }
 .wbtn:hover { background: var(--surface-2); border-color: #2e3b35; }
 .wbtn:active { transform: scale(0.94); }
+/* The Flame paints its own two strokes, so this only warms the border. */
+.wbtn--burn:hover { border-color: rgba(var(--hue-burn), 0.45); }
 
 /* ---- the banner ------------------------------------------------------ */
 .banner {
@@ -1890,7 +1914,19 @@ textarea {
   height: 640px;
   transform: translateX(-50%);
 }
-.dialwrap .arc circle { fill: none; stroke: #22302c; stroke-width: 1.5; }
+/* stroke-dasharray is reset, not merely overridden. `.arc circle` above dots
+   its stroke 2-on-7-off, which is right for the meal selector — the dotted
+   arc reads as a track the items travel along. This rule used to restate
+   fill, stroke and width and leave the dash inherited, so the weight dial got
+   a dotted circle: a faint broken line rising up the left of the sheet, which
+   is the circle's flank showing through a window shorter than its diameter.
+   `none` rather than a new value, because this arc is a solid guide. */
+.dialwrap .arc circle {
+  fill: none;
+  stroke: #22302c;
+  stroke-width: 1.5;
+  stroke-dasharray: none;
+}
 .dialwrap .ticks { position: absolute; left: 50%; bottom: 20px; width: 0; height: 0; }
 .dialwrap .ticks i {
   position: absolute;
@@ -1941,3 +1977,121 @@ textarea {
   cursor: copy;
   user-select: all;
 }
+
+/* ---- burn screen ------------------------------------------------------
+   The weight screen's components with the red/yellow palette over them, so
+   only what actually differs is restated here. Three things do: the delta
+   polarity inverts (more burnt is the good direction), today carries a meter
+   toward a target that resets at midnight, and the chart is bars rather than
+   a line, so it needs bar fills instead of a stroke and a dot. */
+
+.wcard--burn .d.up { color: var(--accent); }
+/* Overriding the weight rule, which paints .up amber. Specificity is equal at
+   two classes plus an element, and this block comes later, so it wins —
+   fragile if the weight block ever moves below this one, which is why the two
+   live next to each other and in this order. */
+.wcard--burn .d.down { color: var(--burn-2); }
+
+/* Yellow behind, red filling across it. The one place the two hues touch, and
+   the only flourish on the screen. */
+.meter {
+  margin-top: 9px;
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(var(--hue-burn-2), 0.28);
+  overflow: hidden;
+}
+.meter i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--burn-2), var(--burn));
+}
+.mlbl {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.wact--burn {
+  border-color: rgba(var(--hue-burn), 0.45);
+  background: rgba(var(--hue-burn), 0.07);
+}
+.wact--burn small { color: var(--burn); }
+
+/* The way back from a mistyped total. Deliberately a plain text button and not
+   a third tile: it is the rare path, and giving it the same weight as the two
+   above would suggest you are meant to choose between three things. */
+.wfix {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 2px 0 12px;
+}
+.wfix:hover { color: var(--burn-2); }
+
+.ranges--burn button[aria-pressed='true'] {
+  background: var(--burn);
+  color: var(--ink);
+}
+
+.bar {
+  fill: var(--burn-2);
+  transition: fill 0.12s;
+}
+.bar.met { fill: var(--burn); }
+/* A 2px surface ring on the hovered bar rather than a colour change, so the
+   fill goes on meaning what it means — at target, or under it. */
+.bar.hot { stroke: var(--surface); stroke-width: 2; }
+
+.ctip--burn b { color: var(--burn); }
+.clegend .sw-burn { background: var(--burn); }
+.clegend .sw-burn-2 { background: var(--burn-2); }
+
+.cstreak {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--burn);
+  margin-bottom: 9px;
+}
+
+/* ---- the burn sheet ---------------------------------------------------
+   A yellow core going to red as it climbs, which is what a flame does. Two
+   stacked radials rather than one multi-stop, so the yellow stays tight to the
+   dial's origin instead of washing the whole sheet. */
+.wsheet--burn .wwash {
+  background:
+    radial-gradient(52% 26% at 50% 106%, rgba(var(--hue-burn-2), 0.34), transparent 70%),
+    radial-gradient(120% 68% at 50% 108%, rgba(var(--hue-burn), 0.3), rgba(var(--hue-burn), 0.07) 45%, transparent 72%);
+}
+.wsheet--burn .wsh .save { color: var(--burn); }
+.wsheet--burn .wlbl { color: #6f6059; }
+.wsheet--burn .numbox { border-bottom-color: var(--burn); }
+.wsheet--burn .wtap { color: #6b5a54; }
+.wsheet--burn .wdelta.up { color: var(--accent); }
+.wsheet--burn .wdelta.down { color: var(--burn-2); }
+
+/* The line under the delta that says what Save will actually do — add to a
+   total, or replace one. The add behaviour is only safe because this is here. */
+.wnote {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 7px;
+  text-align: center;
+  max-width: 250px;
+}
+
+/* The needle takes both hues; the ticks warm to match the wash. */
+.dialwrap[data-hue='burn'] .needle {
+  background: linear-gradient(180deg, var(--burn), var(--burn-2));
+  box-shadow: 0 0 11px rgba(var(--hue-burn-2), 0.75);
+}
+.dialwrap[data-hue='burn'] .arc circle { stroke: #2c2622; }
+.dialwrap[data-hue='burn'] .ticks i { background: #4a3d38; }
+.dialwrap[data-hue='burn'] .ticks i.major { background: #8a736b; }
+.dialwrap[data-hue='burn']:focus-visible { outline-color: var(--burn); }

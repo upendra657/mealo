@@ -28,6 +28,14 @@ import { draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/mea
 import { portionsFor, resolveFor } from '../../src/domain/portions';
 import { collectFacts, renderSlice } from '../../src/domain/state';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
+import {
+  burnOn,
+  dayStartOf,
+  goalBurn,
+  recordBurn,
+  setBurnTotal,
+  setGoalBurn,
+} from '../../src/domain/burn';
 import { readDay, contributors } from '../../src/domain/day';
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
@@ -472,6 +480,70 @@ async function main() {
     sharedOk = false;
   }
   check('but a shared table reads freely', sharedOk);
+
+  // ---- burn: the second entry of the day adds ---------------------------
+  // The whole reason burn does not simply reuse the weight code, and it can
+  // only be proved against a real database: two sessions have to land in one
+  // row, summed, without the second replacing the first.
+  {
+    const morning = new Date(2026, 8, 24, 7, 30).getTime();
+    const evening = new Date(2026, 8, 24, 20, 15).getTime();
+
+    const first = await recordBurn(320, morning);
+    check('first entry is the day total', first.total === 320, String(first.total));
+
+    const second = await recordBurn(430, evening);
+    check('the second adds rather than replacing', second.total === 750, String(second.total));
+    check('and it is the same row', second.id === first.id);
+
+    const rows = await query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM burns WHERE deleted_at IS NULL',
+    );
+    check('one row for the day, not two', Number(rows[0].n) === 1, String(rows[0].n));
+
+    const onDay = await burnOn(dayStartOf(morning));
+    check('read back as 750', Number(onDay?.kcal) === 750, String(onDay?.kcal));
+
+    // The way back from a mistyped number.
+    await setBurnTotal(500, evening);
+    const fixed = await burnOn(dayStartOf(morning));
+    check('correcting overwrites the total', Number(fixed?.kcal) === 500, String(fixed?.kcal));
+    const stillOne = await query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM burns WHERE deleted_at IS NULL',
+    );
+    check('and still one row', Number(stillOne[0].n) === 1, String(stillOne[0].n));
+
+    // A different day is a different row, bucketed on local midnight.
+    await recordBurn(600, new Date(2026, 8, 25, 8, 0).getTime());
+    const two = await query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM burns WHERE deleted_at IS NULL',
+    );
+    check('the next day opens its own row', Number(two[0].n) === 2, String(two[0].n));
+
+    // The target lives on targets beside weight_kg, and nothing nets it
+    // against the energy goal.
+    await setGoalBurn(500);
+    check('the daily target round-trips', (await goalBurn()) === 500, String(await goalBurn()));
+
+    // burns is per-person, so the same guard has to hold for it.
+    let burnThrew = false;
+    try {
+      await scopedDb('doctor').query('SELECT kcal FROM burns WHERE deleted_at IS NULL');
+    } catch (e) {
+      burnThrew = e instanceof ProfileScopeError;
+    }
+    check('an unfiltered read of burns throws too', burnThrew);
+
+    // The Nutritionist may read it when asked about a day, and may not write.
+    let nutWrote = false;
+    try {
+      await scopedDb('nutritionist').insert('burns', { kcal: 1, measured_at: morning });
+      nutWrote = true;
+    } catch {
+      nutWrote = false;
+    }
+    check('the Nutritionist cannot write burns', !nutWrote);
+  }
 }
 
 main()

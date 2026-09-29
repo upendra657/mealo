@@ -21,6 +21,7 @@ import {
 import { AvatarMenu } from './ui/AvatarMenu';
 import { initFoodLibrary } from './domain/foods';
 import { syncLibrary } from './domain/relay';
+import { BurnScreen } from './ui/BurnScreen';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
 import { FoodLibrary } from './ui/FoodLibrary';
@@ -43,6 +44,7 @@ export type Screen =
   | 'meds'
   | 'dev'
   | 'weight'
+  | 'burn'
   | 'library'
   | 'targets'
   | 'settings';
@@ -150,6 +152,7 @@ export default function App() {
 
         {screen === 'dev' && <SettingsScreen go={go} />}
         {screen === 'weight' && <WeightScreen onBack={() => go('home')} />}
+        {screen === 'burn' && <BurnScreen onBack={() => go('home')} />}
 
         {screen === 'settings' && <SettingsScreen go={go} />}
       </div>

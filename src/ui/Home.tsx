@@ -12,7 +12,7 @@ import { readDay, type DayView } from '../domain/day';
 import { loadTargets, standing, type Targets } from '../domain/targets';
 import { weightsSince, byDay } from '../domain/weight';
 import { Banner } from './Banner';
-import { Code, Cutlery, Pill, Scale, Stethoscope } from './bits';
+import { Code, Cutlery, Flame, Pill, Scale, Stethoscope } from './bits';
 import type { Screen } from '../App';
 
 export function Home({
@@ -103,9 +103,16 @@ export function Home({
         {avatar}
       </div>
 
-      {/* Right-aligned above the grid: small on purpose. Weight is a thing
-          you touch once a morning, not a place you live. */}
+      {/* Right-aligned above the grid: small on purpose. Neither of these is a
+          place you live — they are things you touch once a day and leave.
+
+          Burn first, then weight. Both get logged in the same sitting and burn
+          is the one with something to add most days, so it takes the position
+          the thumb reaches first. */}
       <div className="wrow">
+        <button className="wbtn wbtn--burn" onClick={() => go('burn')} aria-label="Burnt calories">
+          <Flame />
+        </button>
         <button className="wbtn" onClick={() => go('weight')} aria-label="Weight">
           <Scale />
         </button>
