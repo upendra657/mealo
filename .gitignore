@@ -22,10 +22,16 @@ public/sqlite-wasm
 # Raw USDA download - source data, not a build input worth versioning
 FoodData_Central_*
 
-# Your own dish table. It is a record of what the two of you actually eat, and
-# this repo is public. Import it through the Library screen; it lives on disk,
-# not in here.
-my-meal-table.csv
+# Your food data. Every one of these is a record of what the two of you
+# actually eat, and this repo is public — the dish table itself, the weighing
+# worksheets, the anchors derived from them. They live on disk and go into the
+# app through the Library screen, never in here.
+#
+# A blanket rule on the root rather than a list, because the list kept growing
+# and the failure mode is silent: `git add -A` sweeps up a new one and nobody
+# notices until it is pushed. Anything that genuinely belongs in the repo can
+# be un-ignored below, deliberately.
+/*.csv
 
 # Context handoff for whoever picks this up next. Notes on how we work, not
 # code, and it names the two of us. Hand it over as a file.
