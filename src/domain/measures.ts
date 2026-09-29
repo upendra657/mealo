@@ -50,6 +50,14 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['gram', 'grams', 'gm', 'gms'] },
   { id: 'kg', label: 'kg', kind: 'weight', grams: 1000, group: 'Weight & volume',
     aliases: ['kilo', 'kilos', 'kilogram', 'kilograms'] },
+  // A house unit. 100 g flat, so a plate of anything can be logged in round
+  // hundreds without anyone deciding whether it was a katori or a bowl.
+  //
+  // Weight-kind, which is the whole point: it needs no anchor and no density,
+  // so it resolves identically for every dish and nothing has to be added to
+  // any of them. Count measures are untouched — a roti is still a roti.
+  { id: 'tingu', label: 'tingu', kind: 'weight', grams: 100, group: 'Weight & volume',
+    aliases: ['tingus'] },
   { id: 'ml', label: 'ml', kind: 'weight', grams: 1,    group: 'Weight & volume',
     aliases: ['millilitre', 'millilitres', 'milliliter', 'milliliters', 'cc'] },
   { id: 'l',  label: 'litre', kind: 'weight', grams: 1000, group: 'Weight & volume',
@@ -171,6 +179,7 @@ export function describeMeasure(x: Measure | string | null | undefined): string 
     kg: 'Kilograms',
     ml: 'Millilitres',
     l: 'Litres',
+    tingu: 'Tingu (100 g)',
   };
   const name = spelt[mm.id] ?? mm.label.charAt(0).toUpperCase() + mm.label.slice(1);
   if (mm.kind === 'volume' && mm.ml && !mm.needsOwn) return `${name} (${mm.ml} ml)`;

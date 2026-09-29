@@ -795,6 +795,30 @@ section('Measures: three katoris of sambar');
   check('and 1 kg is 1000 g', resolvePortion(1, 'kg', sambar).grams, 1000);
 }
 
+section('Tingu: the house unit');
+{
+  // 100 g flat, and weight-kind on purpose: no anchor, no density, so it
+  // resolves the same for every dish and nothing is added to any of them.
+  check('tingu is offered', allMeasureIds().includes('tingu'), true);
+  check('it says what it is', describeMeasure('tingu'), 'Tingu (100 g)');
+  check('and it is a weight', toMeasure('tingu')?.kind, 'weight');
+
+  const dal: Anchor[] = [{ measure: 'katori', quantity: 1, net_weight_g: 150 }];
+  const none: Anchor[] = [];
+  check('1 tingu is 100 g', resolvePortion(1, 'tingu', dal).grams, 100);
+  check('2.5 tingu is 250 g', resolvePortion(2.5, 'tingu', dal).grams, 250);
+  // The point of weight-kind: a dish with no anchors at all still resolves.
+  check('it needs no anchor', resolvePortion(3, 'tingu', none).grams, 300);
+  check('and reads as weighed, not derived', resolvePortion(1, 'tingu', dal).basis, 'weight');
+  check('plural parses', toMeasure('tingus')?.id, 'tingu');
+
+  // Count measures are untouched: a roti is still a roti.
+  const roti: Anchor[] = [{ measure: 'piece', quantity: 1, net_weight_g: 35 }];
+  check('a piece is unaffected', resolvePortion(2, 'piece', roti).grams, 70);
+  check('and a serve still refuses to derive',
+    resolvePortion(1, 'serve', roti).basis, 'restaurant');
+}
+
 // ------------------------------------------------------------------ done
 
 console.log(`\n${passed} passed, ${failed} failed`);

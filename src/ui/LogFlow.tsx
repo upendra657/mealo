@@ -70,7 +70,12 @@ const GRAM_QTYS = Array.from({ length: 100 }, (_, i) => (i + 1) * 5); // 5 … 5
 const TYPED_MAX = 1000;
 
 function laddersFor(unit: string | null): number[] {
-  return toMeasure(unit)?.kind === 'weight' ? GRAM_QTYS : QTYS;
+  // The fine ladder is for units so small you need hundreds of them — grams
+  // and millilitres. A kilo, a litre and a tingu are all big enough that you
+  // count them the ordinary way, so they keep the quarters-and-whole-numbers
+  // ladder. Nobody eats 340 tingu.
+  const m = toMeasure(unit);
+  return m?.kind === 'weight' && m.grams <= 1 ? GRAM_QTYS : QTYS;
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
