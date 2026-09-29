@@ -39,6 +39,28 @@ export type Measure = {
    * derive these and refuses to derive anything from them.
    */
   needsOwn?: boolean;
+  /**
+   * Kept in the vocabulary, kept out of the picker.
+   *
+   * Two sorts of measure earn this. One is the generic serving word — whole,
+   * serve, large, regular, burger, bar, nugget — which says "one of these"
+   * and nothing more, which is what `piece` already says. Nineteen entries
+   * under Pieces meant reading a list to find the one that mattered.
+   * The other is the wrong magnitude for a plate of food: kg and litre, when
+   * grams already runs to a kilo.
+   *
+   * Hidden rather than deleted, and that distinction is the whole point.
+   * `toMeasure` still resolves these, so:
+   *   - a meal logged in 'burger' last month still prices correctly;
+   *   - an anchor recorded against one still resolves, and still appears in
+   *     the picker for that dish, because a dish's own measures are listed
+   *     ahead of the vocabulary;
+   *   - the importer still understands "2 handfuls", "1 kg", "each", "medium"
+   *     in a CSV, which is where half of these aliases were earning their
+   *     keep anyway.
+   * Deleting them would have turned every one of those into a silent zero.
+   */
+  hidden?: boolean;
   aliases: readonly string[];
   /** Grouping for the dropdown. */
   group: 'Weight & volume' | 'Bowls & spoons' | 'Pieces';
@@ -48,7 +70,7 @@ export const MEASURES: readonly Measure[] = [
   // ---- weight -----------------------------------------------------------
   { id: 'g',  label: 'g',  kind: 'weight', grams: 1,    group: 'Weight & volume',
     aliases: ['gram', 'grams', 'gm', 'gms'] },
-  { id: 'kg', label: 'kg', kind: 'weight', grams: 1000, group: 'Weight & volume',
+  { id: 'kg', label: 'kg', kind: 'weight', grams: 1000, hidden: true, group: 'Weight & volume',
     aliases: ['kilo', 'kilos', 'kilogram', 'kilograms'] },
   // A house unit. 100 g flat, so a plate of anything can be logged in round
   // hundreds without anyone deciding whether it was a katori or a bowl.
@@ -60,7 +82,7 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['tingus'] },
   { id: 'ml', label: 'ml', kind: 'weight', grams: 1,    group: 'Weight & volume',
     aliases: ['millilitre', 'millilitres', 'milliliter', 'milliliters', 'cc'] },
-  { id: 'l',  label: 'litre', kind: 'weight', grams: 1000, group: 'Weight & volume',
+  { id: 'l',  label: 'litre', kind: 'weight', grams: 1000, hidden: true, group: 'Weight & volume',
     aliases: ['litre', 'litres', 'liter', 'liters', 'lt'] },
 
   // ---- volume -----------------------------------------------------------
@@ -90,7 +112,8 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['glasses', 'tumbler'] },
   { id: 'plate',   label: 'plate',     kind: 'volume', ml: 350, grams: 350, group: 'Bowls & spoons',
     aliases: ['plates', 'thali'] },
-  { id: 'handful', label: 'handful',   kind: 'volume', ml: 40,  grams: 30,  group: 'Bowls & spoons',
+  // A handful is whoever's hand. Kept for the importer, out of the picker.
+  { id: 'handful', label: 'handful',   kind: 'volume', ml: 40,  grams: 30,  hidden: true, group: 'Bowls & spoons',
     aliases: ['handfuls', 'mutthi', 'muthi'] },
 
   // ---- count ------------------------------------------------------------
@@ -98,21 +121,27 @@ export const MEASURES: readonly Measure[] = [
   // own portion instead; that is what the Save-portion path is for.
   { id: 'piece',   label: 'piece',   kind: 'count', grams: 50,  group: 'Pieces',
     aliases: ['pieces', 'pc', 'pcs', 'no', 'nos', 'number'] },
+  // ---- the generic serving words ----------------------------------------
+  // Every one of these means "one of whatever this dish is", which is what
+  // `piece` says in a word everybody already uses. They stay resolvable for
+  // old rows and for the importer; see `hidden` on the type above.
+  //
   // A serve is whatever that restaurant plates — 112g of fries or 750g of
   // penne. `needsOwn` stops the resolver inventing one and stops it lending
   // its size to any other measure.
-  { id: 'serve',   label: 'serve',   kind: 'count', grams: 300, needsOwn: true, group: 'Pieces',
+  { id: 'serve',   label: 'serve',   kind: 'count', grams: 300, needsOwn: true, hidden: true, group: 'Pieces',
     aliases: ['serves', 'serving', 'servings', 'portion', 'portions', 'helping', 'plateful'] },
-  { id: 'large',   label: 'large',   kind: 'count', grams: 200, needsOwn: true, group: 'Pieces',
+  { id: 'large',   label: 'large',   kind: 'count', grams: 200, needsOwn: true, hidden: true, group: 'Pieces',
     aliases: ['big'] },
-  { id: 'regular', label: 'regular', kind: 'count', grams: 100, needsOwn: true, group: 'Pieces',
+  { id: 'regular', label: 'regular', kind: 'count', grams: 100, needsOwn: true, hidden: true, group: 'Pieces',
     aliases: ['standard', 'medium'] },
-  { id: 'burger',  label: 'burger',  kind: 'count', grams: 200, needsOwn: true, group: 'Pieces',
+  { id: 'burger',  label: 'burger',  kind: 'count', grams: 200, needsOwn: true, hidden: true, group: 'Pieces',
     aliases: ['burgers', 'sandwich', 'wrap', 'roll'] },
-  { id: 'bar',     label: 'bar',     kind: 'count', grams: 50, group: 'Pieces',
+  { id: 'bar',     label: 'bar',     kind: 'count', grams: 50, hidden: true, group: 'Pieces',
     aliases: ['bars'] },
-  { id: 'nugget',  label: 'nugget',  kind: 'count', grams: 35, group: 'Pieces',
+  { id: 'nugget',  label: 'nugget',  kind: 'count', grams: 35, hidden: true, group: 'Pieces',
     aliases: ['nuggets'] },
+  // ---- shapes that name a food, and so carry a weight of their own -------
   { id: 'slice',   label: 'slice',   kind: 'count', grams: 30,  group: 'Pieces',
     aliases: ['slices'] },
   { id: 'egg',     label: 'egg',     kind: 'count', grams: 50,  group: 'Pieces',
@@ -135,7 +164,7 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['bottles', 'can', 'cans', 'tetrapack'] },
   { id: 'clove',   label: 'clove',   kind: 'count', grams: 3,   group: 'Pieces',
     aliases: ['cloves', 'kali'] },
-  { id: 'whole',   label: 'whole',   kind: 'count', grams: 120, group: 'Pieces',
+  { id: 'whole',   label: 'whole',   kind: 'count', grams: 120, hidden: true, group: 'Pieces',
     aliases: ['full', 'entire', 'unit', 'units', 'each'] },
 ];
 
@@ -186,8 +215,21 @@ export function describeMeasure(x: Measure | string | null | undefined): string 
   return name;
 }
 
-/** Every measure, in the order the picker should offer them. */
+/**
+ * What the picker offers, in order.
+ *
+ * Not every measure — the hidden ones are still in `MEASURES` and still
+ * resolve, they are just not worth a row in a list you scroll past three
+ * times a day. A dish's own anchors are listed ahead of this by the caller,
+ * so a hidden measure that a dish has actually been weighed in still appears
+ * for that dish.
+ */
 export function allMeasureIds(): string[] {
+  return MEASURES.filter((x) => !x.hidden).map((x) => x.id);
+}
+
+/** Every measure, hidden ones included. For the resolver and the importer. */
+export function everyMeasureId(): string[] {
   return MEASURES.map((x) => x.id);
 }
 
@@ -201,7 +243,7 @@ export function measureGroups(): { group: string; measures: Measure[] }[] {
   const order: Measure['group'][] = ['Bowls & spoons', 'Pieces', 'Weight & volume'];
   return order.map((group) => ({
     group,
-    measures: MEASURES.filter((m) => m.group === group),
+    measures: MEASURES.filter((m) => m.group === group && !m.hidden),
   }));
 }
 

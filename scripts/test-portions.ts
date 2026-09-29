@@ -21,6 +21,7 @@ import {
   allMeasureIds,
   canonicalMeasure,
   describeMeasure,
+  everyMeasureId,
   toMeasure,
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
@@ -775,6 +776,45 @@ section('Measures: what the picker offers');
   // came from one plate, not from a standard.
   check('a serve does not quote a volume', describeMeasure('serve').includes('ml'), false,
     describeMeasure('serve'));
+}
+
+section('Measures: the picker is shorter than the vocabulary');
+{
+  const offered = allMeasureIds();
+  const every = everyMeasureId();
+
+  // Nineteen entries under Pieces, most of them a synonym for one of them.
+  // These are out of the picker.
+  const gone = ['kg', 'l', 'handful', 'serve', 'large', 'regular', 'burger',
+                'bar', 'nugget', 'whole'];
+  for (const id of gone) {
+    check(`${id} is not offered`, offered.includes(id), false);
+    // The load-bearing half: still in the vocabulary, so nothing that already
+    // refers to it breaks. Hiding is not deleting.
+    check(`${id} still resolves`, toMeasure(id)?.id, id);
+    check(`${id} is still in the full list`, every.includes(id), true);
+  }
+
+  // Aliases go on working, which is what the CSV importer reads.
+  check('"kilograms" still parses', toMeasure('kilograms')?.id, 'kg');
+  check('"each" still parses', toMeasure('each')?.id, 'whole');
+  check('"medium" still parses', toMeasure('medium')?.id, 'regular');
+  check('"sandwich" still parses', toMeasure('sandwich')?.id, 'burger');
+
+  // A shape that names a food carries a weight of its own and stays.
+  for (const id of ['piece', 'roti', 'slice', 'egg', 'idli', 'dosa', 'paratha',
+                    'naan', 'biscuit', 'clove', 'packet', 'bottle']) {
+    check(`${id} is still offered`, offered.includes(id), true);
+  }
+  // As does every bowl and spoon, and the three weights worth logging a plate in.
+  for (const id of ['katori', 'smallbowl', 'bowl', 'cup', 'glass', 'plate',
+                    'teacup', 'tsp', 'tbsp', 'scoop', 'ladle', 'g', 'ml', 'tingu']) {
+    check(`${id} is still offered`, offered.includes(id), true);
+  }
+
+  check('the picker lost exactly ten', every.length - offered.length, gone.length);
+  check('and every offered id still resolves',
+    offered.every((i) => toMeasure(i) !== null), true);
 }
 
 section('Measures: three katoris of sambar');

@@ -954,8 +954,11 @@ function NewDishStep({
                 key={kind}
                 label={kind === 'volume' ? 'Bowls and spoons' : kind === 'count' ? 'Pieces' : 'Weight'}
               >
-                {Object.values(MEASURES)
-                  .filter((m) => m.kind === kind)
+                {MEASURES
+                  // Same list the log picker offers. A generic serving word is
+                  // no more use when defining a dish than when logging one,
+                  // and "something else…" below covers anything missing.
+                  .filter((m) => m.kind === kind && !m.hidden)
                   .map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.label}
