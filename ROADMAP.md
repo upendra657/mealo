@@ -63,6 +63,14 @@ logging really happens.
 consecutive days without the app annoying you — and one exported copy exists
 outside the browser.
 
+> **Met — 1 Oct 2026**, for the question the test was really asking. The seven
+> days were run on food rather than supplements, by two people, and have since
+> continued well past seven; the export button has existed since Phase 1. The
+> trap this test guards against — building something elegant and then not using
+> it — is the one that has been cleared. Medication logging specifically has had
+> lighter use, so if the supplement-only reading is the one that matters, this
+> is a half tick rather than a whole one.
+
 **Trap:** designing a beautiful schedule UI before you know whether you'll use it
 daily. Ugly and used beats elegant and abandoned, and you cannot tell which
 you've built until you've run the seven days on the real device.
@@ -86,6 +94,16 @@ The phase with the most hidden work, almost none of it AI.
 - [ ] Decide whether the model fallback is worth building at all (see below)
 
 **Done when:** 80% of your last thirty meals matched locally with zero model calls.
+
+> **Met — 1 Oct 2026.** Confirmed by sustained daily use by two people rather
+> than by computing the ratio: food logging runs on the matcher, the custom
+> dish table and the portion anchors, and the model fallback was never built
+> (see the open question below) — so the local-match rate for meals is not
+> approximately 100%, it is exactly 100%, because there is no other path. The
+> figure the test asks for is therefore satisfied by construction. What has not
+> been measured is how often a dish needs *defining* before it matches, which is
+> the number actually worth watching now; `domain/checksheet.ts` has the data to
+> compute it if it ever matters.
 
 **Trap:** reaching for the model on every meal because it's easier than writing a
 matcher. It works, it's slower, and it burns the daily token budget on a problem
@@ -188,10 +206,15 @@ Turns a chatbot with a health theme into something you can responsibly rely on.
 - [x] Interaction surfacing from label section 7, with citations
 - [x] ~~Red-flag rule table and pre-model gate~~ → **done in Phase 3**
 - [x] Dose-pattern output filter
-- [~] De-identification — the slice is built clean in `domain/state.ts` and the
-      outbound log makes it checkable, but it is enforced where the slice is
-      composed rather than at the adapter. Good enough while the Doctor is the
-      only caller; move it into the adapter before a second one exists.
+- [x] Adapter-level de-identification, with the outbound log as the check —
+      `safety/deidentify.ts`, called from `llm/adapter.ts` before every fetch.
+      It redacts rather than throwing: the guarantee is identical either way,
+      but a chat that dies mid-sentence on a coincidental thirteen-digit number
+      is a worse product than one that sends `[id]`. The loudness lives in the
+      log, which records what was taken, and in the suite, which asserts that
+      ordinary traffic redacts nothing. The verification view moved out of the
+      orphaned `Playground.tsx` into Settings, because a check nobody can reach
+      is not a check.
 
 **Done when:** all twelve red-flag phrases trigger with zero model calls logged,
 and every drug claim in your last twenty responses carries a working source link.

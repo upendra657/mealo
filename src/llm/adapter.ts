@@ -8,6 +8,14 @@
  */
 
 import {
+  deidentify,
+  type Identity,
+  type Redaction,
+} from '../safety/deidentify';
+import { getDeviceId } from '../lib/device';
+import { loadHousehold } from '../lib/household';
+import { listProfiles, PRIMARY_PROFILE } from '../profiles/store';
+import {
   LlmError,
   type ChatOptions,
   type ChatResult,
@@ -22,10 +30,19 @@ import {
  * the adapter, not in a prompt, and the only way to know it holds is to look at
  * exactly what went over the wire. Kept in memory only — never persisted.
  */
-const OUTBOUND_LOG_LIMIT = 20;
-const outboundLog: { at: number; url: string; body: unknown }[] = [];
+export const OUTBOUND_LOG_LIMIT = 20;
 
-export function getOutboundLog() {
+export type OutboundEntry = {
+  at: number;
+  url: string;
+  body: unknown;
+  /** What the boundary took out on the way past. Empty is the normal state. */
+  redactions: Redaction[];
+};
+
+const outboundLog: OutboundEntry[] = [];
+
+export function getOutboundLog(): OutboundEntry[] {
   return [...outboundLog];
 }
 
@@ -33,9 +50,48 @@ export function clearOutboundLog() {
   outboundLog.length = 0;
 }
 
-function recordOutbound(url: string, body: unknown) {
-  outboundLog.unshift({ at: Date.now(), url, body });
+function recordOutbound(url: string, body: unknown, redactions: Redaction[]) {
+  outboundLog.unshift({ at: Date.now(), url, body, redactions });
   if (outboundLog.length > OUTBOUND_LOG_LIMIT) outboundLog.pop();
+}
+
+/**
+ * The identifiers this install must never emit.
+ *
+ * Cached after the first call: the device id and the profile list change
+ * roughly never, and a database read in front of every model call would be a
+ * silly price for a property that is checked in microseconds.
+ *
+ * Failing open would defeat the point, so a lookup that throws is treated as
+ * "assume everything is secret and scrub what can be recognised by shape" —
+ * the shape rules below do not need the identity list at all.
+ */
+let identityCache: Identity | null = null;
+
+export function clearIdentityCache() {
+  identityCache = null;
+}
+
+async function identity(): Promise<Identity> {
+  if (identityCache) return identityCache;
+  try {
+    const [device, profiles] = await Promise.all([getDeviceId(), listProfiles()]);
+    const household = await loadHousehold().catch(() => null);
+    identityCache = {
+      // 'primary' is excluded on purpose: it is the fixed id every install
+      // shares, so it identifies nobody, and scrubbing a common English word
+      // out of every payload would mangle ordinary sentences.
+      secrets: [
+        device,
+        household?.id ?? '',
+        ...profiles.map((p) => p.id).filter((id) => id !== PRIMARY_PROFILE),
+      ].filter(Boolean),
+      names: profiles.map((p) => p.name).filter(Boolean),
+    };
+  } catch {
+    identityCache = { secrets: [], names: [] };
+  }
+  return identityCache;
 }
 
 function headers(cfg: ProviderConfig): HeadersInit {
@@ -111,9 +167,17 @@ export async function chat(
   opts: ChatOptions,
 ): Promise<ChatResult> {
   const url = joinUrl(cfg.baseUrl, 'chat/completions');
+
+  // R5. The boundary is here and nowhere else: this is the only function in
+  // the app that calls fetch with a model payload, so whatever leaves has
+  // passed through it regardless of which caller assembled the messages or
+  // how careful that caller was. Upstream composition staying clean is still
+  // the intent — see domain/state.ts — but intent is not enforcement.
+  const { messages, redactions } = deidentify(opts.messages, await identity());
+
   const body = {
     model: cfg.model,
-    messages: opts.messages,
+    messages,
     ...(opts.tools?.length ? { tools: opts.tools } : {}),
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
@@ -122,7 +186,10 @@ export async function chat(
     stream: false,
   };
 
-  recordOutbound(url, body);
+  // Logged after scrubbing, deliberately. The log exists to show what went
+  // over the wire; recording the pre-scrub payload would make it a record of
+  // something that never left, and would itself hold the identifiers.
+  recordOutbound(url, body, redactions);
 
   const started = performance.now();
   let res: Response;

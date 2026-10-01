@@ -2110,3 +2110,28 @@ textarea {
 .dialwrap[data-hue='burn'] .ticks i { background: #4a3d38; }
 .dialwrap[data-hue='burn'] .ticks i.major { background: #8a736b; }
 .dialwrap[data-hue='burn']:focus-visible { outline-color: var(--burn); }
+
+/* ---- the R5 verification view ----------------------------------------
+   One entry per outbound payload. The redaction line is the thing being
+   checked, so it sits above the body rather than inside it. */
+.outbound-entry {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.outbound-entry:first-of-type { border-top: 0; }
+.outbound {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}

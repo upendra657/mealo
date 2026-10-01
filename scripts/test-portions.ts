@@ -27,6 +27,11 @@ import {
 import { normalise, slugFor } from '../src/domain/foods';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
+  deidentify,
+  describeRedactions,
+  type Identity,
+} from '../src/safety/deidentify';
+import {
   average,
   byDay as burnByDay,
   ceiling,
@@ -857,6 +862,79 @@ section('Burn: one row a day, and the second entry adds');
   check('ceiling clears the tallest bar', ceiling(pts, null), 900);
   check('and clears the target when the target is higher', ceiling(pts, 1500), 1700);
   check('never zero-height', ceiling([], null), 100);
+}
+
+section('R5: the de-identification boundary');
+{
+  const DEVICE = '9f8e7d6c-5b4a-4321-9876-0123456789ab';
+  const HOUSE = 'JBSWY3DPEHPK3PXP';
+  const ID: Identity = {
+    secrets: [DEVICE, HOUSE, 'prof-2b7c91de4f0a'],
+    names: ['Upendra', 'Priya'],
+  };
+  const sys = (content: string) => ({ role: 'system', content });
+  const usr = (content: string) => ({ role: 'user', content });
+
+  // The acceptance test, stated as the requirement states it: a realistic
+  // payload goes out and no name, no device id and no fine-grained history
+  // survives the boundary.
+  const payload = [
+    sys('You are the Doctor. Device 9f8e7d6c-5b4a-4321-9876-0123456789ab.'),
+    sys('Known: Upendra logged 3 meals. Row 0123456789abcdef0123456789abcdef at 1790843792011.'),
+    { role: 'assistant', content: 'Priya had 2 meals on 2026-10-01T09:14:22Z.' },
+    usr('I have a headache'),
+  ];
+  const { messages, redactions } = deidentify(payload, ID);
+  const wire = JSON.stringify(messages);
+
+  check('the device id is gone', wire.includes(DEVICE), false);
+  check('both names are gone', /Upendra|Priya/.test(wire), false);
+  check('the row id is gone', wire.includes('0123456789abcdef'), false);
+  check('the epoch timestamp is gone', wire.includes('1790843792011'), false);
+  check('the clock time is gone', wire.includes('09:14:22'), false);
+  check('and every one of them was recorded', redactions.length >= 5, true,
+    JSON.stringify(redactions));
+
+  // What must survive, or the boundary is a censor rather than a filter.
+  check("the user's own question is untouched", wire.includes('I have a headache'), true);
+  check('the persona survives', wire.includes('You are the Doctor'), true);
+  check('the facts survive', wire.includes('logged 3 meals'), true);
+
+  // Whole days are the unit the state slice is built in; only the clock is
+  // the problem, so a bare date has to come through.
+  const dated = deidentify([sys('On 2026-09-28 you logged 4 meals.')], ID);
+  check('a bare date is left alone', dated.redactions.length, 0,
+    JSON.stringify(dated.messages));
+
+  // The user's words are theirs. Scrubbing a date out of the question someone
+  // asked would corrupt the question.
+  const typed = deidentify([usr('on 2026-10-01T09:00 I felt dizzy')], ID);
+  check("a date the user typed is left alone", typed.redactions.length, 0);
+  // But a machine identifier never belongs in any message, including theirs.
+  const leaked = deidentify([usr(`my id is ${DEVICE}`)], ID);
+  check('a device id in a user message is still taken', leaked.redactions.length, 1);
+
+  // The default profile is called "Me". Replacing that substring everywhere
+  // turns "some" into "so[name]" and every other word containing it.
+  const shortName = deidentify([sys('Some meals were logged.')],
+    { secrets: [], names: ['Me'] });
+  check('a two-letter name is skipped', shortName.redactions.length, 0,
+    shortName.messages[0].content);
+
+  // 'primary' is the fixed id every install shares, so it identifies nobody
+  // and must not be treated as a secret.
+  const common = deidentify([sys('the primary complaint was a headache')],
+    { secrets: ['primary'], names: [] });
+  check("'primary' is too short to be taken as a secret",
+    common.messages[0].content.includes('primary complaint'), true);
+
+  // A clean payload is the normal state, and the one the tests assert.
+  const clean = deidentify(
+    [sys('You are the Nutritionist.'), usr('how much protein today')], ID);
+  check('ordinary traffic redacts nothing', clean.redactions.length, 0);
+  check('and says so', describeRedactions(clean.redactions), '');
+  check('a summary reads for a human', describeRedactions(redactions).includes('redaction'), true,
+    describeRedactions(redactions));
 }
 
 section('Previous: naming the gap it spans');

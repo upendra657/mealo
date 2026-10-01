@@ -10,7 +10,14 @@ import {
   type Settings,
 } from '../settings/store';
 import { PROVIDERS, getProvider, policyLabel } from '../llm/providers';
-import { listModels } from '../llm/adapter';
+import {
+  OUTBOUND_LOG_LIMIT,
+  clearOutboundLog,
+  getOutboundLog,
+  listModels,
+  type OutboundEntry,
+} from '../llm/adapter';
+import { describeRedactions } from '../safety/deidentify';
 import { LlmError } from '../llm/types';
 import { downloadDatabase } from '../db/client';
 
@@ -28,6 +35,8 @@ export function SettingsScreen({
   onSaved?: (s: Settings) => void;
 }) {
   const [s, setS] = useState<Settings | null>(null);
+  const [showOutbound, setShowOutbound] = useState(false);
+  const [outbound, setOutbound] = useState<OutboundEntry[]>([]);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -219,7 +228,9 @@ export function SettingsScreen({
         <h2>What may be sent to a training-enabled provider</h2>
         <p className="muted small">
           Only applies when the selected provider trains on free-tier data.
-          Recorded now; enforced at the adapter in Phase 4.
+          Whatever is allowed through, identifiers are not: the de-identification
+          boundary in the adapter runs on every payload regardless of these
+          switches. See what left this device, below.
         </p>
         {(['nutrition', 'medications', 'symptoms'] as const).map((k) => (
           <label key={k} className="check">
@@ -242,6 +253,60 @@ export function SettingsScreen({
       </section>
 
       <SyncCard />
+
+      {/* R5's verification view. It used to live in Playground.tsx, which
+          nothing imports — a check nobody can reach is not a check. */}
+      <section className="card">
+        <h2>What left this device</h2>
+        <p className="muted small">
+          Every model payload passes the de-identification boundary in the
+          adapter on its way out, and this is what it sent afterwards — newest
+          first, last {OUTBOUND_LOG_LIMIT} only, in memory and never saved.
+          Redactions should read none; anything else means something upstream
+          put an identifier in a payload and the boundary caught it.
+        </p>
+        <div className="row">
+          {/* Read on open rather than held in state, because the log fills
+              from the adapter while this screen is mounted and nothing
+              notifies React when it does. */}
+          <button
+            onClick={() => {
+              setOutbound(getOutboundLog());
+              setShowOutbound((v) => !v);
+            }}
+          >
+            {showOutbound ? 'Hide' : 'Show'} ({getOutboundLog().length})
+          </button>
+          <button
+            onClick={() => {
+              clearOutboundLog();
+              setOutbound([]);
+            }}
+          >
+            Clear
+          </button>
+        </div>
+        {showOutbound && outbound.length === 0 && (
+          <p className="muted small">
+            Nothing sent yet this session. Ask the Doctor something and come
+            back.
+          </p>
+        )}
+        {showOutbound &&
+          outbound.map((e, i) => (
+            <div key={`${e.at}-${i}`} className="outbound-entry">
+              <div className="small">
+                <span className="num">
+                  {new Date(e.at).toLocaleTimeString()}
+                </span>{' '}
+                <span className={e.redactions.length ? 'bad-text' : 'muted'}>
+                  {describeRedactions(e.redactions) || 'no redactions'}
+                </span>
+              </div>
+              <pre className="outbound">{JSON.stringify(e.body, null, 2)}</pre>
+            </div>
+          ))}
+      </section>
 
       <section className="card">
         <h2>Your data</h2>
