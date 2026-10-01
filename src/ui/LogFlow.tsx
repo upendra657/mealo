@@ -124,6 +124,8 @@ export function LogFlow({
   const [slot, setSlot] = useState<MealType>(editing?.slot ?? guessMealType());
   const [item, setItem] = useState<DraftItem | null>(null);
   const [busy, setBusy] = useState(false);
+  /** What the search box held when "add a dish" was pressed. */
+  const [seed, setSeed] = useState('');
   const toast = useToast();
 
   // Rehydrate an edit into a live draft item.
@@ -224,7 +226,10 @@ export function LogFlow({
           slot={slot}
           onBack={back}
           onPick={open}
-          onNew={() => setStep('new')}
+          onNew={(s) => {
+            setSeed(s);
+            setStep('new');
+          }}
         />
       )}
 
@@ -242,7 +247,7 @@ export function LogFlow({
       )}
 
       {step === 'new' && (
-        <NewDishStep onBack={back} onCreated={open} />
+        <NewDishStep seed={seed} onBack={back} onCreated={open} />
       )}
     </>
   );
@@ -310,7 +315,8 @@ function SearchStep({
   slot: MealType;
   onBack: () => void;
   onPick: (f: Food, q: number, m: string | null) => void;
-  onNew: () => void;
+  /** Carries whatever was typed, so the new-dish form opens with it filled. */
+  onNew: (seed: string) => void;
 }) {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Food[]>([]);
@@ -362,7 +368,10 @@ function SearchStep({
         />
       </div>
 
-      <button className="row" style={{ width: '100%', marginTop: 9 }} onClick={onNew}>
+      {/* Seeds too, not just the CTA below. Type something, change your mind
+          about which button to press, and the typed text is still what you
+          meant. An empty box seeds nothing, exactly as before. */}
+      <button className="row" style={{ width: '100%', marginTop: 9 }} onClick={() => onNew(term)}>
         <span className="add-mark" aria-hidden="true">
           <Plus size={15} />
         </span>
@@ -387,7 +396,9 @@ function SearchStep({
           {!searching && hits.length === 0 && (
             <>
               <p className="empty-note">Nothing matches “{term}”.</p>
-              <button className="cta" onClick={onNew}>
+              {/* This button has had the name in its own label all along and
+                  then handed over an empty field. */}
+              <button className="cta" onClick={() => onNew(term)}>
                 Add “{term}” as a dish
               </button>
             </>
@@ -857,13 +868,20 @@ function Wheel({
 /* ------------------------------------------------------------ new dish */
 
 function NewDishStep({
+  seed,
   onBack,
   onCreated,
 }: {
+  /** What was typed in the search box. Fills the Dish field on arrival. */
+  seed: string;
   onBack: () => void;
   onCreated: (f: Food, q: number, m: string | null) => void;
 }) {
-  const [name, setName] = useState('');
+  // Seeded, not locked: it is an ordinary field you can edit or clear. The
+  // initialiser runs on mount and this step mounts fresh each time it is
+  // entered, so going back, changing the search and returning brings the new
+  // term rather than the stale one.
+  const [name, setName] = useState(seed);
   const [quantity, setQuantity] = useState('1');
   const [measure, setMeasure] = useState('katori');
   const [custom, setCustom] = useState('');

@@ -244,22 +244,29 @@ export function Scale({ size = 24 }: { size?: number }) {
 }
 
 /**
- * A flame, in two strokes.
+ * The fire mark, as an outline.
  *
- * The outer tongue takes the burn red and the inner one the yellow, so the
- * icon carries both halves of the palette on its own rather than needing a
- * label to say what it is. Two colours rather than `currentColor`, which is
- * why it does not take a colour from its parent the way the others do.
+ * Traced from the logo file rather than drawn freehand, so the proportions,
+ * the three tongues and the inner curl are the real ones. One contour does
+ * the whole thing: every white area in the source reaches the outside edge,
+ * so tracing the silhouette and then not filling it gives the outline with
+ * no cutout paths to manage. The two side arms were thickened inward by
+ * about a percent of the width before tracing — inward because their outer
+ * edge *is* the logo's circle, and growing that way would change the
+ * silhouette.
+ *
+ * 1.4 rather than the 1.6 every other icon here uses. This mark packs far
+ * more line into the same 24 pixels than, say, the scale, and at 1.6 the
+ * inner curl closes into a blob.
+ *
+ * One colour. The burn screen already gives --burn-2 a specific meaning —
+ * short of target — and a two-tone icon would spend it on decoration.
  */
 export function Flame({ size = 24 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path
-        stroke="var(--burn)"
-        d="M12 2.6c2.6 3.2 1.3 5.2-.4 6.7-1.5 1.4-2.6 2.6-2.6 4.3a3 3 0 0 0 6 .2c0-.8-.2-1.4-.5-2 2.2 1.5 3.4 3.6 3.4 5.9a6.5 6.5 0 0 1-13 0c0-6.5 4.2-9 7.1-15.1Z"
-      />
-      <path stroke="var(--burn-2)" d="M12 17.2c0 1.1-.7 1.9-1.6 2.3" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--burn)"
+      strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12.11,1.43 C12.11,2.43 11.62,3.74 10.48,5.79 C9.15,8.18 8.66,9.44 8.48,10.89 C8.26,12.75 9,14.87 10.43,16.49 C10.78,16.88 10.78,16.88 10.56,16.91 C9.84,17.01 8.92,16.78 8.19,16.31 C8.02,16.2 7.43,15.61 7.43,15.55 C7.43,15.53 7.36,15.42 7.27,15.3 C7.19,15.17 7.11,15.03 7.1,14.98 C7.09,14.93 7.05,14.83 7.01,14.75 C6.8,14.36 6.53,13.4 6.48,12.92 C6.45,12.68 6.43,12.63 6.35,12.62 C6.22,12.6 6.19,12.49 6.32,12.49 C6.4,12.49 6.41,12.46 6.41,12.23 C6.41,11.43 6.62,10.83 7.4,9.26 C8.2,7.68 8.32,7.34 8.31,6.63 C8.31,6.1 8.27,5.72 8.2,5.64 C8.18,5.61 8.14,5.47 8.11,5.32 C8.07,5.18 8.03,5.05 8.01,5.05 C7.99,5.05 7.96,4.99 7.94,4.91 C7.9,4.72 7.85,4.73 7.78,4.97 C7.44,6.1 6.8,7.28 5.27,9.54 C3.56,12.06 3.07,14.26 3.69,16.65 C4.65,20.38 9.01,22.6 13.94,21.87 C18.38,21.21 20.93,18.51 20.93,14.46 C20.92,12.51 20.66,11.7 19.23,9.22 C18.01,7.11 17.33,5.45 17.33,4.66 C17.33,4.47 17.26,4.52 17.16,4.78 C17.12,4.92 17.06,5.04 17.04,5.05 C17.01,5.08 16.84,5.56 16.73,5.95 C16.36,7.28 16.52,8.59 17.34,11.15 C17.51,11.66 17.67,12.18 17.7,12.28 C17.74,12.43 17.78,12.49 17.84,12.49 C17.89,12.49 17.94,12.52 17.96,12.56 C17.98,12.6 17.95,12.63 17.88,12.63 C17.8,12.63 17.79,12.65 17.82,12.78 C17.93,13.32 17.89,14 17.69,14.63 C17.64,14.81 17.6,14.97 17.6,14.99 C17.6,15.01 17.55,15.14 17.48,15.28 C17.41,15.41 17.36,15.53 17.36,15.55 C17.36,15.57 17.23,15.74 17.07,15.93 C16.08,17.07 14.27,17.26 13.36,16.3 C12.5,15.4 12.52,13.92 13.39,13.05 C13.92,12.51 14.55,12.4 15.82,12.61 C15.98,12.64 15.98,12.64 15.95,11.89 C15.86,9.68 15.41,8.31 13.82,5.43 C12.83,3.62 12.25,2.16 12.25,1.46 C12.25,1.45 12.21,1.43 12.18,1.41 C12.14,1.4 12.11,1.41 12.11,1.43 Z" />
     </svg>
   );
 }

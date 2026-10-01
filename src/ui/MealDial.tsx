@@ -128,6 +128,12 @@ export function MealDial({
                   transform: `translate(${R * Math.sin(a)}px, ${-R * Math.cos(a)}px) scale(${Math.max(0.62, 1 - dist * 0.16)})`,
                   opacity: Math.max(0.4, 1 - dist * 0.26),
                   transition: animate && !dragging ? undefined : 'none',
+                  // The selected mark's ring takes the slot's colour. The icon
+                  // inside does not: dinner is 1.9:1 against the ink and would
+                  // be unreadable, and one slot behaving differently from the
+                  // other five is worse than none of them doing it.
+                  ['--slot-ring' as string]: s.hue,
+                  ['--slot-glow' as string]: `${s.hue}66`,
                 }}
                 onClick={() => {
                   if (selected === i) onConfirm();

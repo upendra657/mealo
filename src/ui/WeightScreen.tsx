@@ -14,15 +14,20 @@ import {
   bounds,
   byDay,
   dayStartOf,
+  daysBetween,
   goalWeight,
+  lastBefore,
   latestWeight,
   recordWeight,
   setGoalWeight,
+  spanLabel,
   thin,
   weightOn,
   weightsSince,
+  whenLabel,
   type Point,
   type RangeId,
+  type Weight,
 } from '../domain/weight';
 import { Chevron } from './bits';
 import { WeightDial, WeightNumber } from './WeightDial';
@@ -37,12 +42,29 @@ type Sheet = null | 'today' | 'goal';
 export function WeightScreen({ onBack }: { onBack: () => void }) {
   const [points, setPoints] = useState<Point[]>([]);
   const [today, setToday] = useState<number | null>(null);
-  const [yesterday, setYesterday] = useState<number | null>(null);
-  const [beforeThat, setBeforeThat] = useState<number | null>(null);
+  /**
+   * The last reading before today, whenever it was, and the one before that.
+   *
+   * Not "yesterday" and "the day before": skip a morning and those addresses
+   * are empty while a perfectly good reading sits further back. The card
+   * states which day it is showing, because once it can be any day, a bare
+   * number no longer says when.
+   */
+  const [prev, setPrev] = useState<Weight | null>(null);
+  const [prev2, setPrev2] = useState<Weight | null>(null);
   const [goal, setGoal] = useState<number | null>(null);
   const [range, setRange] = useState<RangeId>('1M');
   const [sheet, setSheet] = useState<Sheet>(null);
   const [draft, setDraft] = useState(70);
+  /**
+   * Captured once, on mount.
+   *
+   * Every "4 days ago" on this screen is measured from here. Reading the clock
+   * during render instead would let the label jump a day the first time the
+   * screen re-rendered after midnight, with nothing in the data having
+   * changed. Same reason Home and the burn screen hold their own.
+   */
+  const [now] = useState(() => Date.now());
 
   const load = useCallback(async () => {
     const days = RANGES.find((r) => r.id === range)!.days;
@@ -51,11 +73,10 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
 
     const t0 = dayStartOf(Date.now());
     const t = await weightOn(t0);
-    const y = await weightOn(t0 - 86_400_000);
-    const b = await weightOn(t0 - 2 * 86_400_000);
+    const before = await lastBefore(t0);
     setToday(t?.kg ?? null);
-    setYesterday(y?.kg ?? null);
-    setBeforeThat(b?.kg ?? null);
+    setPrev(before[0] ?? null);
+    setPrev2(before[1] ?? null);
     setGoal(await goalWeight());
   }, [range]);
 
@@ -82,8 +103,17 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
     await load();
   };
 
-  const yDelta = yesterday !== null && beforeThat !== null ? yesterday - beforeThat : null;
-  const tDelta = today !== null && yesterday !== null ? today - yesterday : null;
+  const pDelta =
+    prev && prev2
+      ? { v: prev.kg - prev2.kg, span: spanLabel(daysBetween(prev2.measured_at, prev.measured_at), 'previous') }
+      : null;
+  /** How far back the previous reading is, from today. Needed by the sheet
+      even on a day with nothing logged yet, so it is computed separately. */
+  const prevSpan = prev ? spanLabel(daysBetween(prev.measured_at, now), 'today') : null;
+  const tDelta =
+    today !== null && prev && prevSpan ? { v: today - prev.kg, span: prevSpan } : null;
+  /** Past a week, the date line is worth a second look. Not an error. */
+  const stale = prev ? daysBetween(prev.measured_at, now) > 7 : false;
 
   return (
     <>
@@ -99,18 +129,26 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
 
       <div className="wgrid">
         <div className="wcard">
-          <div className="k">Yesterday</div>
-          {yesterday === null ? (
-            <div className="v none">Not recorded</div>
+          <div className="k">Previous</div>
+          {prev === null ? (
+            <div className="v none">Nothing yet</div>
           ) : (
-            <div className="v">
-              {kg2(yesterday)}
-              <small>kg</small>
-            </div>
+            <>
+              {/* Which day, every time. Without this the card says 71.40 and
+                  leaves you to guess whether that was last night or last
+                  month, and those mean completely different things. */}
+              <div className={`when${stale ? ' stale' : ''}`}>
+                {whenLabel(prev.measured_at, now)}
+              </div>
+              <div className="v">
+                {kg2(prev.kg)}
+                <small>kg</small>
+              </div>
+            </>
           )}
-          {yDelta !== null && (
-            <div className={`d ${yDelta < 0 ? 'down' : yDelta > 0 ? 'up' : ''}`}>
-              {signed(yDelta)} on the day before
+          {pDelta !== null && (
+            <div className={`d ${pDelta.v < 0 ? 'down' : pDelta.v > 0 ? 'up' : ''}`}>
+              {signed(pDelta.v)} {pDelta.span}
             </div>
           )}
         </div>
@@ -126,8 +164,8 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
             </div>
           )}
           {tDelta !== null && (
-            <div className={`d ${tDelta < 0 ? 'down' : tDelta > 0 ? 'up' : ''}`}>
-              {signed(tDelta)} on yesterday
+            <div className={`d ${tDelta.v < 0 ? 'down' : tDelta.v > 0 ? 'up' : ''}`}>
+              {signed(tDelta.v)} {tDelta.span}
             </div>
           )}
         </div>
@@ -158,7 +196,14 @@ export function WeightScreen({ onBack }: { onBack: () => void }) {
           <div className="wmid">
             <div className="wlbl">{sheet === 'goal' ? 'Target weight' : "Today's weight"}</div>
             <WeightNumber value={draft} onChange={setDraft} />
-            <DraftDelta draft={draft} sheet={sheet} today={today} yesterday={yesterday} goal={goal} />
+            <DraftDelta
+              draft={draft}
+              sheet={sheet}
+              today={today}
+              previous={prev?.kg ?? null}
+              previousSpan={prevSpan}
+              goal={goal}
+            />
             <div className="wtap">tap the number to type it</div>
           </div>
           <WeightDial value={draft} onChange={setDraft} />
@@ -179,17 +224,21 @@ function DraftDelta({
   draft,
   sheet,
   today,
-  yesterday,
+  previous,
+  previousSpan,
   goal,
 }: {
   draft: number;
   sheet: Exclude<Sheet, null>;
   today: number | null;
-  yesterday: number | null;
+  /** The last reading before today, at whatever distance. */
+  previous: number | null;
+  /** How far back that was, already worded: "on yesterday", "over 4 days". */
+  previousSpan: string | null;
   goal: number | null;
 }) {
   if (sheet === 'goal') {
-    const from = today ?? yesterday;
+    const from = today ?? previous;
     if (from === null) return <div className="wdelta same">no reading to compare with yet</div>;
     const d = draft - from;
     if (Math.abs(d) < 0.005) return <div className="wdelta same">where you are now</div>;
@@ -200,7 +249,7 @@ function DraftDelta({
     );
   }
 
-  const from = yesterday ?? today;
+  const from = previous ?? today;
   if (from === null) {
     // The first entry has nothing to be a delta from. Say that, rather than
     // leaving the line blank — a blank there reads as something failing.
@@ -214,11 +263,23 @@ function DraftDelta({
       </div>
     );
   }
+  // The span comes from the caller rather than being assumed here: with no
+  // reading since Friday, "same as yesterday" would be a plain falsehood.
+  const span = previousSpan ?? 'on your last reading';
   const d = draft - from;
-  if (Math.abs(d) < 0.005) return <div className="wdelta same">same as yesterday</div>;
+  if (Math.abs(d) < 0.005) {
+    // "same as yesterday" reads well; "same as over 4 days" does not, so a
+    // counted span gets a different verb rather than being forced into the
+    // same sentence.
+    return (
+      <div className="wdelta same">
+        {span.startsWith('on ') ? `same as ${span.slice(3)}` : `unchanged ${span}`}
+      </div>
+    );
+  }
   return (
     <div className={`wdelta ${d < 0 ? 'down' : 'up'}`}>
-      {signed(d)} kg on yesterday
+      {signed(d)} kg {span}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Burnt calories: yesterday, today, and the days behind them.
+ * Burnt calories: the last day you logged, today, and the days behind them.
  *
  * The weight screen's layout with four deliberate differences, each of which
  * follows from burn being a daily amount rather than a running level.
@@ -27,6 +27,10 @@ import {
   BURN_RANGES,
   average,
   burnOn,
+  daysBetween,
+  lastBefore,
+  spanLabel,
+  whenLabel,
   burnsSince,
   byDay,
   ceiling,
@@ -38,6 +42,7 @@ import {
   slotsFor,
   streak,
   thin,
+  type Burn,
   type BurnPoint,
   type BurnRangeId,
 } from '../domain/burn';
@@ -56,8 +61,17 @@ type Sheet = null | { kind: 'goal' } | { kind: 'entry'; replace: boolean };
 export function BurnScreen({ onBack }: { onBack: () => void }) {
   const [points, setPoints] = useState<BurnPoint[]>([]);
   const [today, setToday] = useState<number | null>(null);
-  const [yesterday, setYesterday] = useState<number | null>(null);
-  const [beforeThat, setBeforeThat] = useState<number | null>(null);
+  /**
+   * The last day you logged before today, whenever that was, and the one
+   * before it. Not "yesterday": skip a day and that address is empty while a
+   * perfectly good total sits further back.
+   *
+   * Weaker information here than on the weight screen — a burn from four days
+   * ago is a different session on a different day — which is exactly why the
+   * card states the gap instead of letting it pass for yesterday.
+   */
+  const [prev, setPrev] = useState<Burn | null>(null);
+  const [prev2, setPrev2] = useState<Burn | null>(null);
   const [goal, setGoal] = useState<number | null>(null);
   const [range, setRange] = useState<BurnRangeId>('1M');
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -79,8 +93,9 @@ export function BurnScreen({ onBack }: { onBack: () => void }) {
 
     const t0 = dayStartOf(Date.now());
     setToday((await burnOn(t0))?.kcal ?? null);
-    setYesterday((await burnOn(t0 - 86_400_000))?.kcal ?? null);
-    setBeforeThat((await burnOn(t0 - 2 * 86_400_000))?.kcal ?? null);
+    const before = await lastBefore(t0);
+    setPrev(before[0] ?? null);
+    setPrev2(before[1] ?? null);
     setGoal(await goalBurn());
   }, [range]);
 
@@ -115,9 +130,18 @@ export function BurnScreen({ onBack }: { onBack: () => void }) {
     await load();
   };
 
-  const yDelta =
-    yesterday !== null && beforeThat !== null ? yesterday - beforeThat : null;
-  const tDelta = today !== null && yesterday !== null ? today - yesterday : null;
+  const pDelta =
+    prev && prev2
+      ? {
+          v: prev.kcal - prev2.kcal,
+          span: spanLabel(daysBetween(prev2.measured_at, prev.measured_at), 'previous'),
+        }
+      : null;
+  const prevSpan = prev ? spanLabel(daysBetween(prev.measured_at, now), 'today') : null;
+  const tDelta =
+    today !== null && prev && prevSpan ? { v: today - prev.kcal, span: prevSpan } : null;
+  /** Past a week, the date line is worth a second look. Not an error. */
+  const stale = prev ? daysBetween(prev.measured_at, now) > 7 : false;
   const pct =
     today !== null && goal !== null && goal > 0
       ? Math.min(100, Math.round((today / goal) * 100))
@@ -134,18 +158,25 @@ export function BurnScreen({ onBack }: { onBack: () => void }) {
 
       <div className="wgrid">
         <div className="wcard wcard--burn">
-          <div className="k">Yesterday</div>
-          {yesterday === null ? (
-            <div className="v none">Not recorded</div>
+          <div className="k">Previous</div>
+          {prev === null ? (
+            <div className="v none">Nothing yet</div>
           ) : (
-            <div className="v">
-              {cal(yesterday)}
-              <small>Cal</small>
-            </div>
+            <>
+              {/* Which day, every time. 530 Cal from Friday and 530 Cal from
+                  last night are not the same fact. */}
+              <div className={`when${stale ? ' stale' : ''}`}>
+                {whenLabel(prev.measured_at, now)}
+              </div>
+              <div className="v">
+                {cal(prev.kcal)}
+                <small>Cal</small>
+              </div>
+            </>
           )}
-          {yDelta !== null && (
-            <div className={`d ${yDelta > 0 ? 'up' : yDelta < 0 ? 'down' : ''}`}>
-              {signed(yDelta)} on the day before
+          {pDelta !== null && (
+            <div className={`d ${pDelta.v > 0 ? 'up' : pDelta.v < 0 ? 'down' : ''}`}>
+              {signed(pDelta.v)} {pDelta.span}
             </div>
           )}
         </div>
@@ -161,8 +192,8 @@ export function BurnScreen({ onBack }: { onBack: () => void }) {
             </div>
           )}
           {tDelta !== null && (
-            <div className={`d ${tDelta > 0 ? 'up' : tDelta < 0 ? 'down' : ''}`}>
-              {signed(tDelta)} on yesterday
+            <div className={`d ${tDelta.v > 0 ? 'up' : tDelta.v < 0 ? 'down' : ''}`}>
+              {signed(tDelta.v)} {tDelta.span}
             </div>
           )}
           {/* Only with a target to fill toward. A meter against no goal is a
@@ -235,7 +266,8 @@ export function BurnScreen({ onBack }: { onBack: () => void }) {
               draft={draft}
               sheet={sheet}
               today={today}
-              yesterday={yesterday}
+              previous={prev?.kcal ?? null}
+              previousSpan={prevSpan}
               goal={goal}
               points={points}
             />
@@ -273,14 +305,18 @@ function DraftNote({
   draft,
   sheet,
   today,
-  yesterday,
+  previous,
+  previousSpan,
   goal,
   points,
 }: {
   draft: number;
   sheet: Exclude<Sheet, null>;
   today: number | null;
-  yesterday: number | null;
+  /** The last day logged before today, at whatever distance. */
+  previous: number | null;
+  /** Already worded: "on yesterday", "over 4 days". */
+  previousSpan: string | null;
   goal: number | null;
   points: BurnPoint[];
 }) {
@@ -315,7 +351,7 @@ function DraftNote({
 
   // Adding. The total it becomes is the number that matters, so it leads.
   const total = (today ?? 0) + draft;
-  const d = yesterday !== null ? total - yesterday : null;
+  const d = previous !== null ? total - previous : null;
   return (
     <>
       <div className={`wdelta ${d === null ? 'same' : d > 0 ? 'up' : d < 0 ? 'down' : 'same'}`}>
@@ -323,7 +359,7 @@ function DraftNote({
           ? goal !== null && total >= goal
             ? 'target met'
             : 'first entry'
-          : `${signed(d)} on yesterday`}
+          : `${signed(d)} ${previousSpan ?? 'on your last day'}`}
       </div>
       <div className="wnote">
         {today === null

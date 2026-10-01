@@ -33,7 +33,7 @@
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import { localDayKey } from './day';
-import { dayStartOf } from './weight';
+import { dayStartOf, daysBetween, spanLabel, whenLabel } from './weight';
 
 const db = scopedDb('doctor');
 
@@ -44,8 +44,13 @@ export type Burn = {
   note: string | null;
 };
 
-/** Local midnight for a timestamp. Shared with weight, same bucketing. */
-export { dayStartOf };
+/**
+ * Day arithmetic and the wording that goes with it, shared with weight.
+ *
+ * Re-exported rather than reimplemented so the two screens can never drift on
+ * what "three days ago" means, or on how a delta names the span it covers.
+ */
+export { dayStartOf, daysBetween, spanLabel, whenLabel };
 
 // ------------------------------------------------------------- writes
 
@@ -123,6 +128,28 @@ export async function burnsSince(fromMs: number): Promise<Burn[]> {
       WHERE profile_id = ? AND deleted_at IS NULL AND measured_at >= ?
       ORDER BY measured_at ASC`,
     [activeProfile(), fromMs],
+  );
+}
+
+/**
+ * The most recent daily totals strictly before a local day, newest first.
+ *
+ * Same reasoning as the weight version: a fixed `today − 1 day` offset asks
+ * where a row should be rather than what the latest one is, so a skipped day
+ * emptied the card.
+ *
+ * Worth knowing that this is weaker information than it is for weight. A
+ * weight from four days ago is still a fair comparison, because bodies move
+ * slowly; a burn from four days ago is a different session on a different
+ * day. Better than blank, and the screen states the gap rather than letting
+ * it read as yesterday.
+ */
+export async function lastBefore(dayStart: number, limit = 2): Promise<Burn[]> {
+  return db.query<Burn>(
+    `SELECT id, measured_at, kcal, note FROM burns
+      WHERE profile_id = ? AND deleted_at IS NULL AND measured_at < ?
+      ORDER BY measured_at DESC LIMIT ?`,
+    [activeProfile(), dayStart, limit],
   );
 }
 

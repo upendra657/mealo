@@ -37,6 +37,48 @@ export function dayStartOf(ms: number): number {
   return d.getTime();
 }
 
+/**
+ * Whole local days between two instants.
+ *
+ * Bucketed to midnight before subtracting, so 11pm Monday to 1am Tuesday is
+ * one day rather than zero. Rounded because a DST change makes one of those
+ * days 23 or 25 hours long and a bare division would come back 0.96.
+ *
+ * Lives here beside dayStartOf, and the burn screen imports it from here, so
+ * the two screens can never drift on what "three days ago" means.
+ */
+export function daysBetween(a: number, b: number): number {
+  return Math.round(Math.abs(dayStartOf(b) - dayStartOf(a)) / 86_400_000);
+}
+
+/**
+ * How a delta names the span it covers.
+ *
+ * The whole point of showing an older reading is that the comparison stops
+ * being overnight, and a bare "−0.35" would still be read as overnight. So
+ * every delta says what it spans.
+ *
+ * A single day gets a name rather than a count, and which name depends on
+ * which card is speaking: from today, one day back is yesterday; from the
+ * previous reading, one day back is the day before it. Saying "on yesterday"
+ * on the Previous card would point at the wrong day.
+ */
+export function spanLabel(days: number, from: 'today' | 'previous'): string {
+  if (days !== 1) return `over ${days} days`;
+  return from === 'today' ? 'on yesterday' : 'on the day before';
+}
+
+/** "26 Sep · 4 days ago", for the Previous card. Empty when there is none. */
+export function whenLabel(measuredAt: number, now = Date.now()): string {
+  const n = daysBetween(measuredAt, now);
+  const date = new Date(measuredAt).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+  });
+  const rel = n === 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`;
+  return `${date} · ${rel}`;
+}
+
 // ------------------------------------------------------------- writes
 
 /**
@@ -98,6 +140,25 @@ export async function latestWeight(): Promise<Weight | null> {
     [activeProfile()],
   );
   return rows[0] ?? null;
+}
+
+/**
+ * The most recent readings strictly before a local day, newest first.
+ *
+ * This replaces asking for `today − 1 day` and `today − 2 days`. A fixed
+ * offset is a question about an address rather than about the data: skip a
+ * morning and there is nothing at that address, so the card went blank even
+ * though a perfectly good reading sat a day further back.
+ *
+ * Two is what the screen needs — one to show, one to measure it against.
+ */
+export async function lastBefore(dayStart: number, limit = 2): Promise<Weight[]> {
+  return db.query<Weight>(
+    `SELECT id, measured_at, kg, note FROM weights
+      WHERE profile_id = ? AND deleted_at IS NULL AND measured_at < ?
+      ORDER BY measured_at DESC LIMIT ?`,
+    [activeProfile(), dayStart, limit],
+  );
 }
 
 /** The reading for one local day, or null. */

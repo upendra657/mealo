@@ -31,6 +31,8 @@ import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
   burnOn,
   dayStartOf,
+  daysBetween,
+  lastBefore,
   goalBurn,
   recordBurn,
   setBurnTotal,
@@ -543,6 +545,32 @@ async function main() {
       nutWrote = false;
     }
     check('the Nutritionist cannot write burns', !nutWrote);
+
+    // ---- the Previous card's query ------------------------------------
+    // The bug it replaces: the screen asked for the row at `today - 1 day`.
+    // Nothing here was logged yesterday — the two rows are 24 and 25 Sept —
+    // so the old question returns nothing while two perfectly good totals sit
+    // further back. This asks for the latest ones instead, at any distance.
+    const t0 = dayStartOf(Date.now());
+    const yday = await burnOn(t0 - 86_400_000);
+    check('nothing was logged yesterday', yday === null, String(yday?.kcal));
+
+    const back = await lastBefore(t0);
+    check('but the previous days are still found', back.length === 2, String(back.length));
+    check('newest first', back[0].measured_at > back[1].measured_at);
+    check('and it is the 25th, not a blank', Number(back[0].kcal) === 600, String(back[0].kcal));
+    check('with the 24th behind it', Number(back[1].kcal) === 500, String(back[1].kcal));
+
+    // Today is excluded, or the card would just repeat the Today card.
+    await recordBurn(999, Date.now());
+    const afterToday = await lastBefore(t0);
+    check("today's own row is not 'previous'",
+      Number(afterToday[0].kcal) === 600, String(afterToday[0].kcal));
+
+    // The gap is what the card has to state. These two are a day apart; the
+    // newest is however many days back it happens to be.
+    check('the gap between them is a day',
+      daysBetween(back[1].measured_at, back[0].measured_at), 1);
   }
 }
 

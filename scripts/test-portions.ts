@@ -25,6 +25,7 @@ import {
   toMeasure,
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
+import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
   average,
   byDay as burnByDay,
@@ -856,6 +857,35 @@ section('Burn: one row a day, and the second entry adds');
   check('ceiling clears the tallest bar', ceiling(pts, null), 900);
   check('and clears the target when the target is higher', ceiling(pts, 1500), 1700);
   check('never zero-height', ceiling([], null), 100);
+}
+
+section('Previous: naming the gap it spans');
+{
+  const at = (d: number, h = 9) => new Date(2026, 9, d, h, 0, 0).getTime();
+
+  check('same day is zero', daysBetween(at(1, 7), at(1, 22)), 0);
+  check('one day', daysBetween(at(1), at(2)), 1);
+  // Bucketed to midnight before subtracting, so late night to early morning
+  // is one day rather than zero.
+  check('11pm to 1am is a day', daysBetween(at(1, 23), at(2, 1)), 1);
+  check('order does not matter', daysBetween(at(9), at(1)), 8);
+
+  // The wording has to say which card is speaking. From today, one day back
+  // is yesterday; from the previous reading, it is the day before that one.
+  check('today, one day', spanLabel(1, 'today'), 'on yesterday');
+  check('previous, one day', spanLabel(1, 'previous'), 'on the day before');
+  check('longer gaps are counted', spanLabel(4, 'today'), 'over 4 days');
+  check('and counted the same either way', spanLabel(4, 'previous'), 'over 4 days');
+  // The whole reason the span is shown: a bare figure reads as overnight.
+  check('never silently implies yesterday', spanLabel(12, 'today').includes('yesterday'), false);
+
+  // Locale-agnostic on purpose: the label uses the device's own date order,
+  // so "27 Oct" and "Oct 27" are both correct and the test must not pick one.
+  const when = whenLabel(at(27), at(31));
+  check('the date line carries a date', /\d/.test(when) && /[A-Za-z]{3}/.test(when), true, when);
+  check('and the distance', when.endsWith('· 4 days ago'), true, when);
+  check('one day back reads as yesterday',
+    whenLabel(at(5), at(6)).endsWith('yesterday'), true, whenLabel(at(5), at(6)));
 }
 
 section('Burn: a run is calendar days, not readings');

@@ -25,6 +25,30 @@ export type Slot = {
   hint: string;
   /** Hour this slot starts, used only to guess a default. */
   from: number;
+  /**
+   * This slot's colour, at full strength. The selected mark on the dial takes
+   * it; the sky below is built from it.
+   *
+   * The six are not six decisions — they are one ramp, a day burning down:
+   *
+   *   hue        49  37  27  10  255  298   falls all day, one turn at dusk
+   *   lightness   72  55  52  47   36   46  falls all day, never turns back
+   *   saturation  92  91  73  66   46   48  thins as the fire cools
+   *
+   * Across the four daylight slots both hue and lightness only ever move one
+   * way, which is what makes them read as a ramp rather than as a list. The
+   * one big step is evening into dinner — 115° — and it stays, because dusk
+   * is the only moment a day genuinely does change colour. Lightness carries
+   * you across it: 52, 47, 36, the fire visibly going out.
+   *
+   * `other` sits outside the fire on purpose. It is the slot that means this
+   * did not belong to the day.
+   *
+   * Dinner is 1.9:1 against the ink, so this is a sky colour and a ring
+   * colour, never an icon or a label colour — the dial's icons stay off-white
+   * for that reason.
+   */
+  hue: string;
   sky: string;
 };
 
@@ -34,42 +58,48 @@ export const SLOTS: readonly Slot[] = [
     label: 'Breakfast',
     hint: 'first thing',
     from: 0,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #58341C 0%, #2A2338 42%, #0A0C0B 82%)',
+    hue: '#F9E076',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #F9E076 0%, #605110 44%, #0A0C0B 83%)',
   },
   {
     id: 'msnack',
     label: 'Morning snack',
     hint: 'mid-morning',
     from: 10,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #3D4A63 0%, #23314A 44%, #0A0C0B 82%)',
+    hue: '#F5A422',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #F5A422 0%, #604110 44%, #0A0C0B 83%)',
   },
   {
     id: 'lunch',
     label: 'Lunch',
     hint: 'midday',
     from: 12,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #1D6C86 0%, #123A52 44%, #0A0C0B 82%)',
+    hue: '#DE7D2C',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #DE7D2C 0%, #603410 44%, #0A0C0B 83%)',
   },
   {
     id: 'esnack',
     label: 'Evening snack',
     hint: 'late afternoon',
     from: 16,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #7A3C2C 0%, #3A2438 44%, #0A0C0B 82%)',
+    hue: '#C84429',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #C84429 0%, #5D2013 44%, #0A0C0B 83%)',
   },
   {
     id: 'dinner',
     label: 'Dinner',
     hint: 'evening',
     from: 19,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #1C2450 0%, #10152C 44%, #0A0C0B 84%)',
+    hue: '#473286',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #473286 0%, #2B1E52 44%, #0A0C0B 83%)',
   },
   {
     id: 'other',
     label: 'Something else',
     hint: 'late night, or a meal of your own',
     from: 23,
-    sky: 'radial-gradient(120% 78% at 50% 104%, #223029 0%, #151B18 44%, #0A0C0B 84%)',
+    hue: '#AA3DAE',
+    sky: 'radial-gradient(120% 78% at 50% 104%, #AA3DAE 0%, #511D53 44%, #0A0C0B 83%)',
   },
 ];
 
