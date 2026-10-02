@@ -1927,15 +1927,19 @@ textarea {
   bottom: -300px;
   width: 640px;
   height: 640px;
-  transform: translateX(-50%);
+  /* Centred by the inherited `margin-left: -320px` on `.arc`, and by nothing
+     else. This rule used to add `transform: translateX(-50%)` on top of that
+     margin, which shifted the element twice — 640px in total — and put the
+     circle's centre at x = -125 instead of 195. The arc was never under the
+     ticks at all; what showed on screen was the right flank of a circle
+     sitting most of a screen-width to the left, which read as a stray curve
+     down the side of the sheet. The 2-on-7 dash had been hiding it, so
+     making the stroke solid is what finally made it visible. */
 }
-/* stroke-dasharray is reset, not merely overridden. `.arc circle` above dots
-   its stroke 2-on-7-off, which is right for the meal selector — the dotted
-   arc reads as a track the items travel along. This rule used to restate
-   fill, stroke and width and leave the dash inherited, so the weight dial got
-   a dotted circle: a faint broken line rising up the left of the sheet, which
-   is the circle's flank showing through a window shorter than its diameter.
-   `none` rather than a new value, because this arc is a solid guide. */
+/* stroke-dasharray is reset rather than merely overridden: `.arc circle` above
+   dots its stroke 2-on-7-off, which is right for the meal selector, where the
+   dotted arc reads as a track the items travel along. Under a dense tick scale
+   it reads as texture. Solid, because this arc is a guide. */
 .dialwrap .arc circle {
   fill: none;
   stroke: #22302c;
