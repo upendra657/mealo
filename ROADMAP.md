@@ -10,7 +10,9 @@ not when the code is written.
 
 ## Phase 0 — Skeleton, adapter, storage decision · 1–2 weekends
 
-- [x] Vite + React PWA shell, installable, dark and light
+- [x] Vite + React PWA shell, installable, dark and light — light was dropped
+      in the dark rebuild; one dark theme since, because this is opened at the
+      table at night
 - [x] SQLite over OPFS in a worker, with migrations
 - [x] `updated_at`, `deleted_at` and device-scoped ids on every table from v1
 - [x] `navigator.storage.persist()` requested and its result surfaced
@@ -49,15 +51,21 @@ The smallest agent, chosen first because it tests the one thing that decides the
 project: whether you actually log. That test is only honest on the device where
 logging really happens.
 
-- [ ] Repos layer enforcing per-agent table scope
-- [ ] Add a medication or supplement; list; edit; stop
-- [ ] One-tap taken/skipped from the home screen
-- [ ] Free text to structured record via the model, with confirmation
+- [x] Repos layer enforcing per-agent table scope
+- [x] Add a medication or supplement; list; edit; stop
+- [ ] One-tap taken/skipped from the home screen — **built, then orphaned.**
+      It lived on `ui/Today.tsx`, which the dark rebuild stopped mounting.
+      `logIntake` survives in `domain/medications.ts` but no reachable screen
+      calls it, so the deployed app has no way to record a dose at all.
+- [x] Free text to structured record via the model, with confirmation
 - [x] Plain export button — download the raw database file
-- [ ] Manifest, service worker, offline shell
-- [ ] Deployed to Cloudflare Pages with COOP/COEP `_headers`, installed to the
-      iPhone home screen
-- [ ] Sync decision: adopt Evolu, or build encrypted deltas onto a Worker
+- [x] Manifest, service worker, offline shell
+- [x] Deployed with COOP/COEP `_headers`, installed to the iPhone home screen —
+      as a Worker with static assets rather than Pages, because the dashboard's
+      Workers-scoped token cannot run `wrangler pages deploy` (`32c21db`)
+- [x] Sync decision: **built** — encrypted deltas onto the app's own Worker and
+      D1. Evolu was never spiked; one household across its own devices almost
+      never produces a real conflict, which is what made building defensible.
 
 **Done when:** you have logged your own supplements from your phone for seven
 consecutive days without the app annoying you — and one exported copy exists
@@ -69,7 +77,8 @@ outside the browser.
 > trap this test guards against — building something elegant and then not using
 > it — is the one that has been cleared. Medication logging specifically has had
 > lighter use, so if the supplement-only reading is the one that matters, this
-> is a half tick rather than a whole one.
+> is a half tick rather than a whole one — and since the rebuild it could not
+> have been otherwise, because the taken/skipped button is no longer reachable.
 
 **Trap:** designing a beautiful schedule UI before you know whether you'll use it
 daily. Ugly and used beats elegant and abandoned, and you cannot tell which
@@ -146,7 +155,9 @@ elastic rather than a lookup table of fixed rows.
 
 *Tested.* `npm test` — 74 assertions on the arithmetic in node, and 44 against
 real OPFS SQLite in a headless browser (`scripts/e2e/`), covering migrations,
-import idempotence, the scope layer and profile isolation.
+import idempotence, the scope layer and profile isolation. Those were the counts
+when this phase closed. On 2 Oct 2026: 330 in node, 118 in a browser, and 15
+against the relay's D1.
 
 *Data licensing.* The `ifct2017` npm package is AGPL-3.0 and would relicense the
 whole app, so it is not used. USDA FoodData Central is US federal data and
@@ -287,9 +298,13 @@ should be shared and the one thing that takes real effort to build.
 
 ---
 
-## Phase 5 — Sync, reminders and the passphrase · 2–3 weekends
+## Phase 5 — Sync, reminders and the passphrase · 2–3 weekends · about 30% in
 
-- [ ] Sync on: passphrase setup, relay on the Mac behind Tailscale, deltas both ways
+- [x] **Food library sync**, both ways — 28 Sep 2026, `8977ab9` → `240536e`.
+      Envelope and merge rules, the relay, the client, pairing. On, and
+      running on open on both phones.
+- [ ] Health-table sync — meals, meal items, medications, intake, symptoms,
+      weights, burns, targets. Blocked on the three questions below.
 - [ ] Passphrase treated like a wallet seed — generated, recorded, re-confirmed.
       There is no reset, by design.
 - [ ] Encrypted export and import with its own password
@@ -302,6 +317,65 @@ fresh browser with only the passphrase rebuilds your full history.
 
 **Trap:** testing sync only with both devices online. The offline-then-reconnect
 case is the one that breaks.
+
+*The relay moved off the Mac.* The plan put it on the Mac behind Tailscale,
+because the alternative then on the table was an always-on relay somebody pays
+for. It lives in the app's own Worker on D1 instead: same origin, so no CORS
+preflight on every sync; one deploy rather than two things to keep alive; and
+no dependence on a laptop being awake. The relay stores AES-GCM ciphertext
+keyed by a household id and cannot read a dish name, so P1 holds without an
+asterisk — what leaves the device is ciphertext.
+
+*What the library sync already settles,* and health sync should inherit rather
+than re-decide: no foreign key crosses the wire as a local id; last write wins
+on `updated_at` except that a measured portion beats a derived one; applying a
+row writes the sender's `updated_at`, never now(), or two phones trade the same
+row forever; the push cursor is a local timestamp and the pull cursor a relay
+seq, and neither advances before its work has succeeded; push runs before pull;
+a batch that will not decrypt is skipped; and a failed sync never blocks logging.
+
+### What the health tables change
+
+Found reading the sync code against this phase on 2 Oct. Each needs a decision
+before a single health row travels.
+
+**1. Every install's first profile is called `primary`.** It is a fixed id
+(`lib/active-profile.ts`), not a generated one, so `primary` on his phone and
+`primary` on hers are two different people under one id. Ship per-person rows
+keyed on `profile_id` as they stand and the receiving phone files them under
+whoever *it* calls primary — one person's meals in the other's day, which is
+exactly what `ProfileScopeError` exists to stop, arriving through the one path
+the guard never sees: the apply step writes raw SQL. Profiles need an identity
+two devices agree on, the way dishes got slugs in v6.
+
+**2. Whose devices are we syncing?** The library is per household and travels
+under the household key, which both phones hold. The exit criterion is about
+one person's own devices — a meal on *the* phone appears on *the* Mac. Sending
+health rows under the household key would put his symptoms and medications on
+her phone, in ciphertext that her phone can open. That reads as two layers: a
+household key for the kitchen, and a personal key — the passphrase — for a
+body. Not decided.
+
+**3. The relay forgets, by design.** Batches are pruned on write after 30 days
+or past 2,000 per household. That is fine for two live phones trading dishes
+and cannot meet "a fresh browser with only the passphrase rebuilds your full
+history". It also has a quieter consequence already live for the library: a
+phone that has not synced in 30 days never receives what was pruned in the
+meantime, and nothing says so. Full-history restore needs either a periodic
+encrypted snapshot on the relay or the encrypted export as the restore path —
+which would make those two checklist items one piece of work.
+
+**Smaller, but easy to get wrong.** Health rows do not need a second identity
+the way dishes did: their ids are a device prefix plus a uuid, and two people
+cannot log the same dinner. But `meal_items.food_id` points at a device-local
+`custom_foods` id, so it has to travel as a slug and resolve on receipt, the
+same treatment portions already get.
+
+*On the passphrase.* The pairing code is already a random secret — 16 bytes of
+household id and 32 of key — so "generated" is done. "Recorded, re-confirmed"
+is not: the code can be shown in Settings at any time and nothing asks anyone to
+write it down. Whether the personal key should be the same kind of code or
+something a person can read back from paper is part of question 2.
 
 ---
 
@@ -317,3 +391,14 @@ within ten minutes using nothing but the README.
 
 **Trap:** shipping without saying plainly what the app is not. For a health tool
 that is the most important paragraph in the repository.
+
+---
+
+## Not yet in any phase
+
+Written here so they stop living in one person's head. Neither has a checklist
+yet; both need one.
+
+- **Medications: definitions and regimens.** A shared definition of what a
+  medication is, and a per-person regimen of how one person takes it.
+- **The remaining Doctor and Pharmacist work.**

@@ -91,12 +91,40 @@ with macros per 100 g; other measures derive through implied density. A
 the app's arithmetic must never bury a scale reading.
 
 **Sync carries the food library only.** The kitchen is shared; a body is not.
-Row ids are device-local, so portions travel as `(food_slug, measure)` and
-resolve on receipt — shipping a local foreign key produces anchors pointing at
-dishes that do not exist, silently.
+Row ids are globally unique (`newId()` is a device prefix plus a uuid), but a
+dish two phones added independently has two ids — so dishes merge on `slug`,
+and portions travel as `(food_slug, measure)` and resolve on receipt. Shipping
+a local foreign key produces anchors pointing at dishes that do not exist,
+silently.
 
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.
+
+---
+
+## Before health tables sync
+
+Smaller than it looks: health rows need no second identity, since their ids are
+already globally unique and two people cannot log the same dinner. Only foreign
+keys into the library need translating — `meal_items.food_id` travels as a slug,
+as portions do. But three decisions come first, and none is made yet:
+
+**`primary` is not one person.** Every install's first profile has the fixed id
+`primary` (`lib/active-profile.ts`), so his `primary` and hers are two people
+under one id. Rows keyed on it would file one person's meals in the other's day,
+through the sync apply step's raw SQL, which `ProfileScopeError` never sees.
+Profiles need a cross-device identity first, as dishes got slugs in v6.
+
+**Household key or personal key.** The library travels under the household key,
+which both phones hold. Health rows under that key would put his symptoms on her
+phone in a form it can open. The exit test is one person's phone → that
+person's Mac, which points at a separate per-person key — the passphrase.
+
+**The relay forgets.** `worker/index.ts` prunes batches after 30 days or past
+2,000 per household, so it cannot meet "a fresh browser with only the passphrase
+rebuilds your full history". Restore needs an encrypted snapshot or the
+encrypted export. It already bites the library: a phone silent for 30 days
+never receives what was pruned, and nothing says so.
 
 ---
 
