@@ -17,8 +17,8 @@ work, not every session. This file is what you need every time.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + e2e
-npm run test:portions  # 330 pure-logic assertions, node, fast
-npm run test:e2e       # 118 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 370 pure-logic assertions, node, fast
+npm run test:e2e       # 139 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.json
 npx oxlint src/ scripts/
@@ -147,7 +147,12 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v9**.
+at **v9**. A new one ships with two additions or the tests fail: its checksum
+pinned in `SHIPPED` (`test-portions.ts`), and rows in `SEEDS`
+(`scripts/e2e/upgrade.ts`) for every table and column it adds. The e2e run
+then upgrades a populated database from the previous version through the real
+worker and checks every value survived. A statement that deletes or rewrites
+rows fails the lint unless it is in `SANCTIONED`, with its reason.
 
 **CSS is one dark theme.** Tokens in `:root` at the top of `styles.css`. No light
 mode — the app is opened at the table, often at night.

@@ -67,6 +67,8 @@ import {
 } from '../src/domain/import';
 import { parseMealText } from '../src/domain/foods';
 import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
+import { createHash } from 'node:crypto';
+import { LATEST_VERSION, MIGRATIONS, type Migration } from '../src/db/migrations';
 
 let passed = 0;
 let failed = 0;
@@ -1031,6 +1033,151 @@ section('Tingu: the house unit');
   check('a piece is unaffected', resolvePortion(2, 'piece', roti).grams, 70);
   check('and a serve still refuses to derive',
     resolvePortion(1, 'serve', roti).basis, 'restaurant');
+}
+
+// ------------------------------------------------------------ migrations
+
+/**
+ * A migration runs once, on a phone holding the only copy of someone's
+ * history, and its transaction only protects against SQL that errors. SQL that
+ * is valid and wrong commits. So the two guards below run before anything
+ * ships, and they are deliberately blunt.
+ *
+ * Comments are stripped before either looks, so correcting the reasoning in a
+ * shipped migration is allowed and changing what it does is not. The stripper
+ * is naive about `--` inside a string literal; no migration has one, and the
+ * day one does this fails loudly rather than quietly.
+ */
+function sqlOf(m: Migration): string {
+  return m.sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pinned when a migration ships. A phone that already ran v3 will never run it
+ * again, so editing v3 does not fix anyone's data — it forks the schema into
+ * "phones that installed before the edit" and "after", with nothing recording
+ * which is which. A new migration needs its pin added here, which is the point:
+ * shipping one is a decision, not a side effect of merging.
+ */
+const SHIPPED: Record<number, string> = {
+  1: '6d19aa27eadbbbf4',
+  2: 'b97f9671112fc251',
+  3: '892ee1ea68b7baf5',
+  4: '8d7b7389e9afac9f',
+  5: '53116ed260f65f9a',
+  6: '46cf98f569649e1a',
+  7: '38e1614eef705c52',
+  8: 'c77a06d22d3e2df7',
+  9: '0d8a642f53260b28',
+};
+
+/**
+ * Statements that remove or rewrite existing rows. An UPDATE is let through
+ * only when it fills a single column where that column is still NULL — the
+ * shape of every backfill, and the one shape that cannot overwrite something a
+ * person typed. REPLACE is here because it is a DELETE followed by an INSERT,
+ * and the delete takes every column the new row does not mention.
+ */
+function destructive(sql: string): string[] {
+  const found: string[] = [];
+  for (const raw of sql.split(';')) {
+    const s = raw.trim();
+    if (!s) continue;
+    const fillsNull =
+      /^UPDATE\s+\w+\s+SET\s+(\w+)\s*=[^,]*\bWHERE\s+\1\s+IS\s+NULL\s*$/i.test(s);
+    if (
+      /\bDROP\s+TABLE\b/i.test(s) ||
+      /\bALTER\s+TABLE\s+\w+\s+(DROP|RENAME)\b/i.test(s) ||
+      /\bDELETE\s+FROM\b/i.test(s) ||
+      /\b(INSERT\s+OR\s+REPLACE|REPLACE\s+INTO)\b/i.test(s) ||
+      (/^UPDATE\b/i.test(s) && !fillsNull)
+    ) {
+      found.push(s);
+    }
+  }
+  return found;
+}
+
+/**
+ * Rewrites that shipped knowingly. Each is keyed by version and the exact
+ * statement, so a second rewrite slipped into the same migration is still
+ * caught. Adding to this list should need the same justification these have.
+ */
+const SANCTIONED: Record<string, string> = {
+  "4:UPDATE current_state SET id = 'primary' WHERE id = 'singleton'":
+    'the one pre-profile state row becomes the primary profile\'s; content untouched',
+  "4:UPDATE conversation_summaries SET id = 'primary:' || id WHERE id IN ('doctor','nutritionist','pharmacist')":
+    'summaries re-keyed to <profile>:<agent>; content untouched',
+};
+
+section('Migrations: what shipped stays shipped');
+{
+  const versions = MIGRATIONS.map((m) => m.version);
+  check('numbered 1..n with no gaps',
+    versions, versions.map((_, i) => i + 1));
+  check('LATEST_VERSION is the last one', LATEST_VERSION, versions.at(-1));
+
+  for (const m of MIGRATIONS) {
+    const sum = createHash('sha256').update(sqlOf(m)).digest('hex').slice(0, 16);
+    if (SHIPPED[m.version] === undefined) {
+      check(`v${m.version} is pinned — add ${m.version}: '${sum}' to SHIPPED once it ships`,
+        false, true);
+    } else {
+      check(`v${m.version} unchanged since it shipped`, sum, SHIPPED[m.version]);
+    }
+  }
+}
+
+section('Migrations: nothing deletes or rewrites a row');
+{
+  for (const m of MIGRATIONS) {
+    const unsanctioned = destructive(sqlOf(m)).filter(
+      (s) => SANCTIONED[`${m.version}:${s}`] === undefined,
+    );
+    check(`v${m.version} ${m.name}`, unsanctioned, []);
+  }
+
+  // Every sanctioned entry still matches a real statement. An entry that
+  // matches nothing is either a typo or a statement that changed, and either
+  // way it would be quietly sanctioning nothing while looking like a review.
+  const live = new Set(
+    MIGRATIONS.flatMap((m) => destructive(sqlOf(m)).map((s) => `${m.version}:${s}`)),
+  );
+  for (const key of Object.keys(SANCTIONED)) {
+    check(`sanctioned rewrite still exists: ${key.slice(0, 50)}…`, live.has(key), true);
+  }
+
+  // The lint itself, against the mistakes it exists for. Without these a
+  // regex that matched nothing would pass every migration forever.
+  const caught = (s: string) => destructive(s).length > 0;
+  check('catches DROP TABLE', caught('DROP TABLE meals'), true);
+  check('catches DROP TABLE IF EXISTS', caught('drop table if exists meals'), true);
+  check('catches a dropped column', caught('ALTER TABLE meals DROP COLUMN raw_text'), true);
+  check('catches a dropped column without COLUMN', caught('ALTER TABLE meals DROP raw_text'), true);
+  check('catches a renamed column', caught('ALTER TABLE meals RENAME COLUMN raw_text TO text'), true);
+  check('catches a renamed table', caught('ALTER TABLE meals RENAME TO meal'), true);
+  check('catches DELETE', caught("DELETE FROM meals WHERE deleted_at IS NOT NULL"), true);
+  check('catches INSERT OR REPLACE', caught("INSERT OR REPLACE INTO targets (id) VALUES ('x')"), true);
+  check('catches REPLACE INTO', caught("REPLACE INTO targets (id) VALUES ('x')"), true);
+  check('catches an UPDATE with no WHERE', caught('UPDATE meals SET meal_type = NULL'), true);
+  check('catches an UPDATE over live values',
+    caught("UPDATE meal_items SET source = 'matched' WHERE source = 'direct'"), true);
+  check('catches a backfill that also sets a second column',
+    caught("UPDATE meals SET profile_id = 'primary', meal_type = 'lunch' WHERE profile_id IS NULL"), true);
+  check('catches a backfill guarded on a different column',
+    caught("UPDATE meals SET meal_type = 'lunch' WHERE profile_id IS NULL"), true);
+  check('catches a NULL guard with more after it',
+    caught("UPDATE meals SET profile_id = 'primary' WHERE profile_id IS NULL OR 1"), true);
+  check('finds the bad one among good ones',
+    destructive('CREATE TABLE a (id TEXT); DELETE FROM meals; ALTER TABLE a ADD COLUMN b TEXT').length, 1);
+
+  check('lets a NULL backfill through',
+    caught("UPDATE meals SET profile_id = 'primary' WHERE profile_id IS NULL"), false);
+  check('lets additive DDL through',
+    caught('CREATE TABLE IF NOT EXISTS x (id TEXT); ALTER TABLE x ADD COLUMN y REAL; CREATE INDEX i ON x(y)'),
+    false);
+  check('lets INSERT OR IGNORE through',
+    caught("INSERT OR IGNORE INTO profiles (id) VALUES ('primary')"), false);
 }
 
 // ------------------------------------------------------------------ done

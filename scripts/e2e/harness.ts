@@ -50,6 +50,7 @@ import {
   open as openSealed,
   seal,
 } from '../../src/lib/household';
+import { upgradeFromPrevious } from './upgrade';
 
 type Result = { name: string; ok: boolean; detail?: string };
 const results: Result[] = [];
@@ -77,6 +78,10 @@ const SHEET = [
 ].join('\n');
 
 async function main() {
+  // First, because it decides what file the worker opens. See upgrade.ts.
+  step('upgrade');
+  await upgradeFromPrevious(check);
+
   step('initDb');
   const info = await initDb();
   check(`schema migrated to v4 (got v${info.version}, ${info.mode})`, info.version >= 4);
