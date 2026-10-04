@@ -41,6 +41,11 @@ export function StatusBar() {
           '…'
         )}
       </span>
+      {db?.snapshot.status === 'failed' && (
+        <span className="warn" title={db.snapshot.error}>
+          no copy kept from before this update
+        </span>
+      )}
       <span>
         <b>Durability</b>{' '}
         {storage ? (

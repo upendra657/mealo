@@ -10,7 +10,8 @@
  * possible failure mode for a health log.
  */
 
-import { MIGRATIONS } from './migrations';
+import { LATEST_VERSION, MIGRATIONS } from './migrations';
+import { pruneSnapshots, snapshotName, type SnapshotOutcome } from './snapshots';
 
 /**
  * Loaded from a static URL rather than imported as a package dependency.
@@ -65,9 +66,12 @@ type Capi = { sqlite3_js_db_export(ptr: number): Uint8Array };
 let db: OoDb | null = null;
 let capi: Capi | null = null;
 let mode: 'opfs' | 'memory' = 'memory';
+let snapshot: SnapshotOutcome = { status: 'none' };
 
-async function init(): Promise<{ mode: string; version: number }> {
-  if (db) return { mode, version: currentVersion() };
+type Info = { mode: string; version: number; snapshot: SnapshotOutcome };
+
+async function init(): Promise<Info> {
+  if (db) return { mode, version: currentVersion(), snapshot };
 
   const sqlite3 = await loadSqlite3();
 
@@ -85,8 +89,8 @@ async function init(): Promise<{ mode: string; version: number }> {
   }
 
   db.exec({ sql: 'PRAGMA foreign_keys = ON;' });
-  migrate();
-  return { mode, version: currentVersion() };
+  await migrate();
+  return { mode, version: currentVersion(), snapshot };
 }
 
 function currentVersion(): number {
@@ -94,9 +98,14 @@ function currentVersion(): number {
   return Number(db.selectValue('PRAGMA user_version') ?? 0);
 }
 
-function migrate(): void {
+async function migrate(): Promise<void> {
   if (!db) throw new Error('database not open');
   const from = currentVersion();
+  // Version 0 is a database no migration has touched, so there is nothing in
+  // it to keep; a memory database holds nothing from before this launch.
+  if (from > 0 && from < LATEST_VERSION && mode === 'opfs') {
+    snapshot = await takeSnapshot(from);
+  }
   for (const m of MIGRATIONS) {
     if (m.version <= from) continue;
     db.exec({ sql: 'BEGIN' });
@@ -110,6 +119,41 @@ function migrate(): void {
       db.exec({ sql: 'ROLLBACK' });
       throw e;
     }
+  }
+}
+
+/**
+ * Copies the database aside before the first pending migration runs.
+ *
+ * VACUUM INTO rather than exporting the bytes and writing them out: SQLite
+ * produces a consistent copy through the same VFS that already holds the
+ * database, without the whole file passing through JS memory, and without
+ * depending on an OPFS write API whose availability in workers still differs
+ * between Safari versions.
+ *
+ * A failure here does not stop the update. Refusing to migrate would leave
+ * the new build unable to open the data at all, and the likeliest cause —
+ * storage full — would stop the database growing anyway. It is reported
+ * instead, in the status bar.
+ */
+async function takeSnapshot(from: number): Promise<SnapshotOutcome> {
+  if (!db) throw new Error('database not open');
+  try {
+    const root = await navigator.storage.getDirectory();
+    // A copy under this name can only be left by an earlier attempt at this
+    // same update that never advanced the version, so the database is still
+    // what that copy holds and replacing it loses nothing. VACUUM INTO will
+    // not write over an existing file.
+    await root.removeEntry(snapshotName(from)).catch(() => {});
+    db.exec({ sql: 'VACUUM INTO ?', bind: [`/${snapshotName(from)}`] });
+    // An old copy that outlives its turn costs space and nothing else, so a
+    // failed prune is not a failed snapshot.
+    await pruneSnapshots(root, from).catch(() => {});
+    return { status: 'saved', version: from };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.warn(`[db] no copy taken before migrating from v${from}: ${error}`);
+    return { status: 'failed', version: from, error };
   }
 }
 

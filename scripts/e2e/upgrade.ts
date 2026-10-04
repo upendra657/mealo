@@ -20,6 +20,7 @@
 
 import { initDb, query, run as sql } from '../../src/db/client';
 import { LATEST_VERSION, MIGRATIONS } from '../../src/db/migrations';
+import { listSnapshots, snapshotFile, snapshotName } from '../../src/db/snapshots';
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 type Row = Record<string, unknown>;
@@ -202,7 +203,15 @@ type OoDb = {
 };
 type Sqlite3 = {
   oo1: { DB: new (path: string, flags: string) => OoDb };
-  capi: { sqlite3_js_db_export(ptr: number): Uint8Array };
+  capi: {
+    sqlite3_js_db_export(ptr: number): Uint8Array;
+    sqlite3_deserialize(
+      db: number, schema: string, data: number, size: number, bufSize: number, flags: number,
+    ): number;
+    SQLITE_DESERIALIZE_FREEONCLOSE: number;
+    SQLITE_DESERIALIZE_RESIZEABLE: number;
+  };
+  wasm: { allocFromTypedArray(bytes: Uint8Array): number };
 };
 
 /**
@@ -269,10 +278,18 @@ function uncovered(db: OoDb): string[] {
  * that name at the origin's root, so writing the bytes there is
  * indistinguishable from a phone that last ran the previous build.
  */
-async function placeInOpfs(bytes: Uint8Array): Promise<void> {
+async function placeInOpfs(bytes: Uint8Array, olderCopies: number[]): Promise<void> {
   const root = await navigator.storage.getDirectory();
   for (const leftover of ['mealo.sqlite3-journal', 'mealo.sqlite3-wal']) {
     await root.removeEntry(leftover).catch(() => {});
+  }
+  // Copies from earlier updates, so pruning has something to prune. Their
+  // contents are never read; only which names survive is.
+  for (const v of olderCopies) {
+    const older = await (await root.getFileHandle(snapshotName(v), { create: true }))
+      .createWritable();
+    await older.write('an older copy');
+    await older.close();
   }
   const handle = await root.getFileHandle('mealo.sqlite3', { create: true });
   const out = await handle.createWritable();
@@ -283,6 +300,43 @@ async function placeInOpfs(bytes: Uint8Array): Promise<void> {
 // ----------------------------------------------------------------- test
 
 const same = (a: unknown, b: unknown) => String(a) === String(b);
+
+type Fetch = (q: string, bind?: unknown[]) => Promise<Row[]>;
+
+/** Every way the rows in one table differ from what was written. */
+async function problemsIn(table: string, list: Row[], fetch: Fetch): Promise<string[]> {
+  const problems: string[] = [];
+  const count = await fetch(`SELECT COUNT(*) AS n FROM ${table}`);
+  if (Number(count[0]?.n) !== list.length) {
+    problems.push(`found ${String(count[0]?.n)}, expected ${list.length}`);
+  }
+  for (const w of list) {
+    const got = (await fetch(`SELECT * FROM ${table} WHERE id = ?`, [w.id]))[0];
+    if (!got) {
+      problems.push(`${String(w.id)} is gone`);
+      continue;
+    }
+    for (const [col, value] of Object.entries(w)) {
+      if (!same(got[col], value)) {
+        problems.push(`${String(w.id)}.${col} was ${String(value)}, now ${String(got[col])}`);
+      }
+    }
+  }
+  return problems;
+}
+
+const rowsIn = (n: number) => `${n} row${n === 1 ? '' : 's'}`;
+
+/** Opens a database file's bytes in memory, read for the test only. */
+function openBytes(sqlite3: Sqlite3, bytes: Uint8Array): OoDb {
+  const db = new sqlite3.oo1.DB(':memory:', 'ct');
+  const p = sqlite3.wasm.allocFromTypedArray(bytes);
+  const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, 'main', p, bytes.byteLength,
+    bytes.byteLength,
+    sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
+  if (rc !== 0) throw new Error(`sqlite3_deserialize returned ${rc}`);
+  return db;
+}
 
 export async function upgradeFromPrevious(check: Check): Promise<void> {
   const from = LATEST_VERSION - 1;
@@ -303,7 +357,10 @@ export async function upgradeFromPrevious(check: Check): Promise<void> {
   check(`fixture built at v${from}`, Number(db.selectValue('PRAGMA user_version')) === from);
   const bytes = sqlite3.capi.sqlite3_js_db_export(db.pointer);
   db.close();
-  await placeInOpfs(bytes);
+  // Three older copies; after this update only the newest of them should be
+  // left beside the one it takes.
+  const older = [from - 1, from - 2, from - 3].filter((v) => v >= 1);
+  await placeInOpfs(bytes, older);
 
   // The real path: the app's worker opens the file and runs what it finds
   // missing, exactly as it does after a deploy.
@@ -329,26 +386,41 @@ export async function upgradeFromPrevious(check: Check): Promise<void> {
   }
 
   for (const [table, list] of want) {
-    const problems: string[] = [];
-    const count = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
-    if (Number(count[0]?.n) !== list.length) {
-      problems.push(`found ${count[0]?.n}, expected ${list.length}`);
-    }
-    for (const w of list) {
-      const got = (await query<Row>(`SELECT * FROM ${table} WHERE id = ?`, [w.id]))[0];
-      if (!got) {
-        problems.push(`${String(w.id)} is gone`);
-        continue;
-      }
-      for (const [col, value] of Object.entries(w)) {
-        if (!same(got[col], value)) {
-          problems.push(`${String(w.id)}.${col} was ${String(value)}, now ${String(got[col])}`);
-        }
-      }
-    }
-    check(`${table}: ${list.length} row${list.length === 1 ? '' : 's'} survive${list.length === 1 ? 's' : ''} the update intact`,
+    const problems = await problemsIn(table, list, (q, b) => query<Row>(q, b));
+    check(`${table}: ${rowsIn(list.length)} survive the update intact`,
       problems.length === 0, problems.join('; '));
   }
+
+  // The copy taken before migrating. It has to be the database as it was —
+  // still at the old version, every row as written — or it is not the thing
+  // anyone would reach for after a bad update.
+  check(`a copy was taken before migrating from v${from}`,
+    info.snapshot.status === 'saved' && info.snapshot.version === from,
+    JSON.stringify(info.snapshot));
+  const copies = await listSnapshots();
+  check(`only the newest two copies are kept (v${from}, v${from - 1})`,
+    copies.map((c) => c.version).join(',') === [from, from - 1].join(','),
+    copies.map((c) => c.version).join(','));
+  const copy = copies.find((c) => c.version === from);
+  if (copy) {
+    const file = await snapshotFile(copy);
+    const before = openBytes(sqlite3, new Uint8Array(await file.arrayBuffer()));
+    check(`the copy is still at v${from}`,
+      Number(before.selectValue('PRAGMA user_version')) === from,
+      String(before.selectValue('PRAGMA user_version')));
+    const fetch: Fetch = async (q, b) =>
+      before.exec({ sql: q, bind: b, rowMode: 'object', returnValue: 'resultRows' }) as Row[];
+    const problems: string[] = [];
+    for (const [table, list] of want) {
+      problems.push(...(await problemsIn(table, list, fetch)).map((p) => `${table}: ${p}`));
+    }
+    before.close();
+    check('the copy holds every row as it was', problems.length === 0, problems.join('; '));
+  }
+  // The planted older copies were stand-ins; leave only the real one, so a
+  // dev origin this was opened on by hand is not left listing fake backups.
+  const root = await navigator.storage.getDirectory();
+  for (const v of older) await root.removeEntry(snapshotName(v)).catch(() => {});
 
   // Leave the database as a fresh install would, so the rest of the harness
   // starts where it always has. Raw SQL: this is test scaffolding, not an

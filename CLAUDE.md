@@ -18,7 +18,7 @@ npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + e2e
 npm run test:portions  # 370 pure-logic assertions, node, fast
-npm run test:e2e       # 139 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 143 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.json
 npx oxlint src/ scripts/
@@ -43,8 +43,11 @@ constantly. A `git commit` that collides with it leaves **the index showing ever
 tracked file as deleted**. This looks catastrophic and is not — the working tree
 is untouched, and a bare `git reset` (no flags, **never `--hard`**) rebuilds the
 index from HEAD. Prevent it by folding the clear into the front of the command,
-leaving no window: `rm -f .git/*.lock && git add -A && git commit …`. Never move a
-lock aside between `add` and `commit`; that is what corrupted the index twice.
+leaving no window: `rm -f .git/index.lock .git/HEAD.lock && git add -A && git commit …`.
+Name the two files rather than globbing `.git/*.lock`: zsh fails a glob that
+matches nothing, so with no lock present the chain stops before `git add` and
+the commit silently never happens. Never move a lock aside between `add` and
+`commit`; that is what corrupted the index twice.
 
 **Git identity.** Name `Upendra Sharma`, email
 `89166658+upendra657@users.noreply.github.com` — the same one already on every

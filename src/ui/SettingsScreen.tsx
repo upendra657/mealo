@@ -19,7 +19,9 @@ import {
 } from '../llm/adapter';
 import { describeRedactions } from '../safety/deidentify';
 import { LlmError } from '../llm/types';
-import { downloadDatabase } from '../db/client';
+import { downloadDatabase, saveFile } from '../db/client';
+import { listSnapshots, snapshotFile, type Snapshot } from '../db/snapshots';
+import { formatBytes } from '../lib/persist';
 
 type TestState =
   | { kind: 'idle' }
@@ -39,9 +41,11 @@ export function SettingsScreen({
   const [outbound, setOutbound] = useState<OutboundEntry[]>([]);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [copies, setCopies] = useState<Snapshot[]>([]);
 
   useEffect(() => {
     loadSettings().then(setS);
+    listSnapshots().then(setCopies).catch(() => {});
   }, []);
 
   if (!s) return <p className="muted">Loading settings…</p>;
@@ -320,8 +324,41 @@ export function SettingsScreen({
             Download database
           </button>
         </div>
+        {copies.length > 0 && (
+          <>
+            <p className="muted small">
+              Kept automatically, just before an update changed how the
+              database is laid out — the data exactly as it was, in case an
+              update ever gets something wrong.
+            </p>
+            {copies.map((c) => (
+              <div className="row" key={c.name}>
+                <button onClick={() => void downloadCopy(c)}>
+                  Before v{c.version + 1}
+                </button>
+                <span className="muted small">
+                  {new Date(c.takenAt).toLocaleDateString(undefined, {
+                    day: 'numeric',
+                    month: 'short',
+                  })}{' '}
+                  · {formatBytes(c.bytes)}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
       </section>
     </div>
     </>
   );
+}
+
+/**
+ * Named for what it holds, so a file sitting in Downloads next to the regular
+ * export says which one is the pre-update copy without being opened.
+ */
+async function downloadCopy(c: Snapshot): Promise<void> {
+  const file = await snapshotFile(c);
+  const day = new Date(c.takenAt).toISOString().slice(0, 10);
+  saveFile(file, `mealo-before-v${c.version + 1}-${day}.sqlite3`);
 }

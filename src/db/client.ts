@@ -8,13 +8,19 @@
  */
 
 import { newId, now } from '../lib/device';
+import type { SnapshotOutcome } from './snapshots';
 
 type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
 };
 
-export type DbInfo = { mode: 'opfs' | 'memory'; version: number };
+export type DbInfo = {
+  mode: 'opfs' | 'memory';
+  version: number;
+  /** What happened to the pre-update copy on this launch; see snapshots.ts. */
+  snapshot: SnapshotOutcome;
+};
 
 let worker: Worker | null = null;
 let seq = 0;
@@ -135,13 +141,18 @@ export async function exportDatabase(): Promise<Uint8Array> {
 export async function downloadDatabase(): Promise<void> {
   const bytes = await exportDatabase();
   const stamp = new Date().toISOString().slice(0, 10);
-  const blob = new Blob([bytes as BlobPart], {
-    type: 'application/vnd.sqlite3',
-  });
+  saveFile(
+    new Blob([bytes as BlobPart], { type: 'application/vnd.sqlite3' }),
+    `mealo-${stamp}.sqlite3`,
+  );
+}
+
+/** Hands a blob to the browser as a download. */
+export function saveFile(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `mealo-${stamp}.sqlite3`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
