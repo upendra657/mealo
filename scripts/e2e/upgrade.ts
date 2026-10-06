@@ -168,7 +168,7 @@ const SEEDS: Seed[] = [
   ] },
   { version: 10, table: 'med_product_doses', rows: [
     { id: 'fx-pdose-1', product_id: 'fx-prod-1', position: 1, amount: 1, unit: 'tablet',
-      time_of_day: 'morning', meal: 'after', freq: 'weekdays', freq_days: '0,3', updated_at: T },
+      time_of_day: 'morning', meal: 'after', updated_at: T },
     { id: 'fx-pdose-2', product_id: 'fx-prod-1', position: 2, updated_at: T,
       deleted_at: T + 1 },
   ] },
@@ -186,10 +186,18 @@ const SEEDS: Seed[] = [
   ] },
   { version: 10, table: 'med_doses', rows: [
     { id: 'fx-dose-1', profile_id: 'primary', medication_id: 'fx-med-3', position: 1,
-      amount: 0.5, unit: 'tablet', time_of_day: 'night', meal: 'before', freq: 'alternate',
-      freq_days: '15', freq_from: '2026-10-04', from_day: '2026-10-04', updated_at: T },
+      amount: 0.5, unit: 'tablet', time_of_day: 'night', meal: 'before', updated_at: T },
     { id: 'fx-dose-2', profile_id: 'primary', medication_id: 'fx-med-3', position: 2,
       updated_at: T, deleted_at: T + 1 },
+  ] },
+  { version: 11, table: 'med_product_doses', rows: [
+    { id: 'fx-pdose-3', product_id: 'fx-prod-1', position: 3, amount: 1, unit: 'tablet',
+      time_of_day: 'night', meal: 'after', freq: 'weekdays', freq_days: '0,3', updated_at: T },
+  ] },
+  { version: 11, table: 'med_doses', rows: [
+    { id: 'fx-dose-3', profile_id: 'primary', medication_id: 'fx-med-3', position: 3,
+      amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after', freq: 'alternate',
+      freq_days: '15', freq_from: '2026-10-04', from_day: '2026-10-04', updated_at: T },
   ] },
   { version: 10, table: 'intake_events', rows: [
     { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,

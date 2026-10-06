@@ -547,14 +547,9 @@ MIGRATIONS.push({
       product_id   TEXT NOT NULL,
       position     INTEGER NOT NULL,
       amount       REAL,
-      unit         TEXT,                -- 'tablet' | 'ml' | 'scoop' | 'g' | 'drop'
+      unit         TEXT,                -- 'tablet' | 'ml' | 'scoop' | 'g'
       time_of_day  TEXT,                -- 'morning' | 'afternoon' | 'evening' | 'night'
       meal         TEXT,                -- 'before' | 'after'
-      -- How often, so a weekly medicine arrives weekly. Same meaning as on
-      -- med_doses; freq_from is not carried, since an alternate-day rhythm
-      -- starts when the person taking it starts.
-      freq         TEXT,
-      freq_days    TEXT,
       updated_at   INTEGER NOT NULL,
       deleted_at   INTEGER
     );
@@ -575,21 +570,6 @@ MIGRATIONS.push({
       unit           TEXT,
       time_of_day    TEXT,
       meal           TEXT,
-      -- Which days the dose is due. NULL or 'daily'; 'alternate', every second
-      -- day counted from freq_from; 'weekdays', with freq_days the days as 0-6
-      -- from Sunday ("0,3"); 'monthly', with freq_days the date ("15"), held
-      -- at the last day of a shorter month.
-      --
-      -- On the dose rather than the medicine on purpose. A schedule change
-      -- soft-deletes the rows and writes new ones, and the old rows keep the
-      -- old rule — which is what lets the log judge last month by last
-      -- month's schedule instead of today's.
-      freq           TEXT,
-      freq_days      TEXT,
-      freq_from      TEXT,              -- local ISO date
-      -- The local day this row became the schedule. With deleted_at it is the
-      -- span the row was in force; NULL means from the medicine's start.
-      from_day       TEXT,
       updated_at     INTEGER NOT NULL,
       deleted_at     INTEGER
     );
@@ -655,6 +635,43 @@ MIGRATIONS.push({
     -- under the next day and show last night's Night as never taken.
     ALTER TABLE intake_events ADD COLUMN for_day TEXT;
     CREATE INDEX IF NOT EXISTS idx_intake_day ON intake_events(profile_id, for_day);
+  `,
+});
+
+MIGRATIONS.push({
+  version: 11,
+  name: 'how often, and when a schedule took effect',
+  sql: `
+    -- Its own migration because v10 had already run when these were written.
+    -- They were first added to v10 in place, on the reasoning that it had not
+    -- reached a phone; but it had run on a development database, which
+    -- recorded v10 as done, never re-ran it, and then failed every save with
+    -- "table med_doses has no column named freq". A migration has shipped
+    -- the moment any database has run it.
+    --
+    -- Which days a dose is due. NULL or 'daily'; 'alternate', every second
+    -- day counted from freq_from; 'weekdays', with freq_days the days as 0-6
+    -- from Sunday ("0,3"); 'monthly', with freq_days the date ("15"), held at
+    -- the last day of a shorter month.
+    --
+    -- On the dose rather than the medicine on purpose. A schedule change
+    -- soft-deletes the rows and writes new ones, and the old rows keep the old
+    -- rule — which is what lets the log judge last month by last month's
+    -- schedule instead of today's.
+    ALTER TABLE med_doses ADD COLUMN freq TEXT;
+    ALTER TABLE med_doses ADD COLUMN freq_days TEXT;
+    ALTER TABLE med_doses ADD COLUMN freq_from TEXT;       -- local ISO date
+
+    -- The local day this row became the schedule. With deleted_at it is the
+    -- span the row was in force; NULL means from the medicine's start, which
+    -- is what every row written before this column existed is taken to mean.
+    ALTER TABLE med_doses ADD COLUMN from_day TEXT;
+
+    -- How often, on the library's starting schedule, so a weekly medicine
+    -- arrives weekly. freq_from is not carried: an alternate-day rhythm starts
+    -- when the person taking it starts.
+    ALTER TABLE med_product_doses ADD COLUMN freq TEXT;
+    ALTER TABLE med_product_doses ADD COLUMN freq_days TEXT;
   `,
 });
 

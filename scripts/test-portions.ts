@@ -1122,7 +1122,8 @@ const SHIPPED: Record<number, string> = {
   7: '38e1614eef705c52',
   8: 'c77a06d22d3e2df7',
   9: '0d8a642f53260b28',
-  10: '06185f929bc55d00',
+  10: 'f43590523ac269c1',
+  11: '67e1fd8a3fbb5520',
 };
 
 /**
