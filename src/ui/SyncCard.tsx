@@ -106,15 +106,16 @@ export function SyncCard() {
 
   return (
     <section className="card">
-      <h2>Shared food library</h2>
+      <h2>Shared library</h2>
 
       {phase === 'alone' ? (
         <>
           <p className="small muted">
             One of you creates the household and shows the code; the other
-            enters it. From then on a dish either of you adds shows up for
-            both. Only the food library travels — meals, medications and
-            weights stay on the phone they were logged on.
+            enters it. From then on a dish or a medicine either of you adds
+            shows up for both. Only the libraries travel — meals, doses taken,
+            sicknesses and weights stay on the phone they were logged on, and
+            a medicine marked Keep private never leaves its phone.
           </p>
 
           <button className="primary" onClick={() => void start()} disabled={busy}>
@@ -162,7 +163,8 @@ export function SyncCard() {
               {/* Said plainly, because it is true: this string is the key. */}
               <p className="small keywarn">
                 This code is the key to your library. Anyone who has it can read
-                every dish in it. Hand it to the other phone and nowhere else.
+                every dish and medicine in it. Hand it to the other phone and
+                nowhere else.
               </p>
               <p className="paircode" onClick={() => void copy(code, toast)}>
                 {code}
@@ -181,8 +183,8 @@ export function SyncCard() {
             </button>
           </div>
           <p className="small muted">
-            Unpairing stops the exchange. It deletes nothing — every dish you
-            already have stays where it is.
+            Unpairing stops the exchange. It deletes nothing — every dish and
+            medicine you already have stays where it is.
           </p>
         </>
       )}
