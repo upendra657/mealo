@@ -1124,11 +1124,19 @@ async function main() {
     await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, updated_at) VALUES ('stale', 'Half', 'X', 0, 'importing', 0, 0, 1)");
     await sql("INSERT INTO med_ref_items (id, set_id, name, name_norm, ingredients, discontinued, updated_at) VALUES ('stale.1', 'stale', 'Halfway Tablet', 'halfway tablet', '[]', 0, 1)");
     check('a half-finished list is never searched', (await searchReference('halfway')).length === 0);
-    check('and is cleared on the next start', (await clearStaleImports()) === 1 &&
+    // A live import elsewhere — another tab, or React running an effect twice
+    // — is not stale: its set row was touched a moment ago.
+    await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, updated_at) VALUES ('live', 'Live', 'X', 0, 'importing', 0, 0, ?)", [Date.now()]);
+    check('an import still writing is left alone', (await clearStaleImports()) === 1 &&
+      Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM med_ref_sets WHERE id = 'live'"))[0].n) === 1);
+    await sql("DELETE FROM med_ref_sets WHERE id = 'live'");
+    check('and the abandoned one is cleared on the next start',
       Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM med_ref_items WHERE set_id = 'stale'"))[0].n) === 0);
 
     // The bundled HSA register.
-    await ensureBuiltins();
+    // Twice at once, the way React's development effects and two open tabs
+    // call it: one HSA list either way.
+    await Promise.all([ensureBuiltins(), ensureBuiltins()]);
     const hsaSets = (await listSets()).filter((x) => x.builtin === 1);
     check('the HSA register loads on start', hsaSets.length === 1 && hsaSets[0].tag === 'HSA' && hsaSets[0].row_count > 5000,
       JSON.stringify(hsaSets.map((x) => [x.tag, x.row_count])));

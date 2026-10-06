@@ -91,10 +91,19 @@ async function removeSet(id: string): Promise<void> {
   await db.run('DELETE FROM med_ref_sets WHERE id = ?', [id]);
 }
 
+/**
+ * How long an import may go without a sign of life before it counts as
+ * abandoned. Every batch an import writes touches its set row (see flush), so
+ * a live import — in this tab, another tab, or the second run of a React
+ * StrictMode effect — is never mistaken for a dead one.
+ */
+const STALE_AFTER = 2 * 60_000;
+
 /** Lists an earlier start left 'importing' — the app closed mid-import. */
-export async function clearStaleImports(): Promise<number> {
+export async function clearStaleImports(now = Date.now()): Promise<number> {
   const stale = await db.query<{ id: string }>(
-    "SELECT id FROM med_ref_sets WHERE status = 'importing'",
+    "SELECT id FROM med_ref_sets WHERE status = 'importing' AND updated_at < ?",
+    [now - STALE_AFTER],
   );
   for (const s of stale) await removeSet(s.id);
   return stale.length;
@@ -198,6 +207,8 @@ export async function importList(
     if (!pending.length) return;
     imported += await db.bulkInsert('med_ref_items', COLUMNS, pending);
     pending = [];
+    // A sign of life for clearStaleImports, and a running count.
+    await db.update('med_ref_sets', id, { row_count: imported });
   };
   const toRow = (it: RefItem): unknown[] => [
     `${id}.${(n++).toString(36)}`,
@@ -305,8 +316,20 @@ export async function searchReference(q: string, limit = 8): Promise<RefHit[]> {
  * The lists that ship with the app — the Singapore HSA register — loaded into
  * the same tables on first start and again whenever the bundled copy changes.
  * Not awaited by the shell: search simply has no HSA rows until it is done.
+ *
+ * Once per page, whoever calls. React runs a development effect twice; the
+ * first build of this started two loads side by side, neither saw the other's
+ * list, and Singapore was in search twice.
  */
-export async function ensureBuiltins(): Promise<void> {
+let builtins: Promise<void> | null = null;
+export function ensureBuiltins(): Promise<void> {
+  builtins ??= loadBuiltins().finally(() => {
+    builtins = null;
+  });
+  return builtins;
+}
+
+async function loadBuiltins(): Promise<void> {
   const { default: hsa } = await import('../data/hsa.json');
   const current = await db.query<RefSet>(
     "SELECT * FROM med_ref_sets WHERE builtin = 1 AND tag = 'HSA' AND status = 'ready' AND deleted_at IS NULL",
@@ -321,5 +344,17 @@ export async function ensureBuiltins(): Promise<void> {
     undefined,
     current[0]?.id ?? null,
   );
-  for (const old of current.slice(1)) await removeSet(old.id);
+  // Any other copy — another tab loading at the same moment — goes, so the
+  // phone settles on exactly one whatever raced.
+  const now = await db.query<RefSet>(
+    "SELECT * FROM med_ref_sets WHERE builtin = 1 AND tag = 'HSA' ORDER BY imported_at DESC",
+  );
+  for (const old of now.slice(1)) await removeSet(old.id);
+}
+
+/** Start-up work for the lists, once per page: clear the abandoned, load the bundled. */
+let startup: Promise<void> | null = null;
+export function startLists(): Promise<void> {
+  startup ??= clearStaleImports().then(() => ensureBuiltins());
+  return startup;
 }

@@ -17,8 +17,8 @@ work, not every session. This file is what you need every time.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + e2e
-npm run test:portions  # 485 pure-logic assertions, node, fast
-npm run test:e2e       # 227 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 548 pure-logic assertions, node, fast
+npm run test:e2e       # 257 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -117,6 +117,15 @@ pointing at rows that do not exist, silently. A medicine marked Keep private
 never leaves its phone; who takes what — doses, ticks, sicknesses — never
 travels at all.
 
+**Medicine lists are the device's, not anyone's record.** `med_ref_sets` and
+`med_ref_items` hold the bundled HSA Singapore register (`scripts/import-hsa.mjs`
+→ `src/data/hsa.json`; re-run when HSA refreshes, about every six months) and
+any list imported in Dev from CSV or Excel. Never synced, never in the shared
+library; only a medicine someone saves from a suggestion becomes a library
+entry. Imports are staged ('importing' until complete, invisible to search,
+cleared if abandoned) and written through the worker's bulk path, which
+refuses every table but `med_ref_items` — an import cannot reach meals.
+
 **Medicines split the way food does.** What a medicine *is* (`med_products`,
 its ingredients, a starting schedule) is the household library; what a person
 *takes* (`medications`, `med_doses`, `intake_events`, `sick_episodes`) is per
@@ -178,7 +187,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v11**. **Shipped means any database has run it — a dev browser included.**
+at **v12**. **Shipped means any database has run it — a dev browser included.**
 v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
 database never re-ran it, and every medicine save failed with "no column named
 freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum

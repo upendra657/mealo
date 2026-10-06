@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { SyncCard } from './SyncCard';
+import { MedListsCard } from './MedListsCard';
 import { Chevron } from './bits';
 import { StatusBar } from './StatusBar';
 import type { Screen } from '../App';
@@ -257,6 +258,8 @@ export function SettingsScreen({
       </section>
 
       <SyncCard />
+
+      <MedListsCard />
 
       {/* R5's verification view. It used to live in Playground.tsx, which
           nothing imports — a check nobody can reach is not a check. */}

@@ -51,7 +51,10 @@ import {
   shortfalls,
   situationOf,
   weightTrend,
+  deck,
+  medsCard,
   type BannerCtx,
+  type MedsGlance,
 } from '../src/domain/banner';
 import type { Macros } from '../src/domain/day';
 import {
@@ -1558,6 +1561,30 @@ section('Importing a medicine list: Excel');
   let refused = '';
   try { readXlsx(enc('not a zip at all')); } catch (e) { refused = (e as Error).message; }
   check('an old .xls or anything else is refused in words', refused.includes('.xlsx'), true);
+}
+
+section('The banner: one medicines card');
+{
+  const g = (o: Partial<MedsGlance>): MedsGlance =>
+    ({ due: 0, later: 0, done: 0, dueNames: [], sick: null, ...o });
+  check('nothing to take, no card', medsCard(g({})), null);
+  check('one due, named', medsCard(g({ due: 1, later: 1, dueNames: ['Thyronorm'] }))?.text, 'Thyronorm is due now.');
+  check('two due, both named', medsCard(g({ due: 2, dueNames: ['Thyronorm', 'Calcium + D3'] }))?.text,
+    '2 doses due now: Thyronorm and Calcium + D3.');
+  check('more than two, the rest counted', medsCard(g({ due: 4, dueNames: ['A', 'B', 'C', 'D'] }))?.text,
+    '4 doses due now: A, B and 2 more.');
+  check('all answered, skipped included', medsCard(g({ done: 3 }))?.text, 'Every dose today is ticked off.');
+  check('only later doses left', medsCard(g({ done: 2, later: 1 }))?.text, 'Nothing due right now — one more later today.');
+  check('a running sickness comes first', medsCard(g({ due: 1, dueNames: ['Cough syrup'], sick: { name: 'Viral fever', day: 3, of: 7 } }))?.text,
+    'Viral fever, day 3 of 7. Cough syrup is due now.');
+  const card = medsCard(g({ due: 1, dueNames: ['Thyronorm'] }))!;
+  check('it is the Pharmacist speaking, in violet', [card.who, card.hue], ['Pharmacist', 'violet']);
+  check('it never states an amount', [card, medsCard(g({ done: 1 }))!].every((c) => !/\d\s*(mg|mcg|ml|g|tablet)/i.test(c.text)), true);
+  const base = { now: new Date(2026, 9, 6, 9).getTime(), totals: [0, 0, 0, 0, 0] as Macros, itemCount: 0,
+    targets: { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null } as never, lookingBack: false };
+  check('it joins the deck even when the food card is the only one', deck({ ...base, meds: g({ done: 1 }) }).map((c) => c.situation),
+    ['no-targets', 'meds']);
+  check('and the deck without medicines is as it was', deck(base).map((c) => c.situation), ['no-targets']);
 }
 
 section('Medicines: how often');

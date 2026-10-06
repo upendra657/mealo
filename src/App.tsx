@@ -21,6 +21,7 @@ import {
 import { AvatarMenu } from './ui/AvatarMenu';
 import { initFoodLibrary } from './domain/foods';
 import { syncLibrary } from './domain/relay';
+import { startLists } from './domain/refdata';
 import { BurnScreen } from './ui/BurnScreen';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
@@ -74,6 +75,12 @@ export default function App() {
         // signal, so a relay that cannot be reached is a line in Settings
         // rather than anything the home screen waits for or reports.
         void syncLibrary().catch(() => {});
+
+        // Medicine lists: clear an import the app was closed during, then
+        // load the bundled HSA register if this build's copy is new. Neither
+        // is awaited — search simply has fewer suggestions until they finish
+        // — and neither can stop the app opening.
+        void startLists().catch((e) => console.warn('[meds] reference lists:', e));
       } catch (e) {
         setFailed(e instanceof Error ? e.message : String(e));
       }

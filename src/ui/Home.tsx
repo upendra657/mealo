@@ -7,13 +7,38 @@
  */
 
 import { useEffect, useState } from 'react';
-import { deck, focusDay, greeting, type Phrase } from '../domain/banner';
+import { deck, focusDay, greeting, type MedsGlance, type Phrase } from '../domain/banner';
+import { progress } from '../domain/doses';
+import { readMedsDay } from '../domain/medications';
 import { readDay, type DayView } from '../domain/day';
 import { loadTargets, standing, type Targets } from '../domain/targets';
 import { weightsSince, byDay } from '../domain/weight';
 import { Banner } from './Banner';
 import { Code, Cutlery, Flame, Pill, Scale, Stethoscope } from './bits';
 import type { Screen } from '../App';
+
+/**
+ * Today's medicines in four numbers and a few names, for the banner. From the
+ * Meds screen's own plan, so the card and the screen cannot disagree. A
+ * failure here costs the card, never the home screen.
+ */
+async function medsGlance(): Promise<MedsGlance | null> {
+  const plan = await readMedsDay();
+  const doses = plan.groups.flatMap((g) => g.doses);
+  if (doses.length === 0 && !plan.episode) return null;
+  const dueNames = doses
+    .filter((p) => p.state === 'due')
+    .map((p) => p.med.name)
+    .filter((n, i, all) => all.indexOf(n) === i);
+  const sick = plan.episode ? progress(plan.episode, plan.day) : null;
+  return {
+    due: doses.filter((p) => p.state === 'due').length,
+    later: doses.filter((p) => p.state === 'later').length,
+    done: doses.filter((p) => p.state === 'taken' || p.state === 'skipped').length,
+    dueNames,
+    sick: plan.episode && sick ? { name: plan.episode.name, day: sick.day, of: sick.total } : null,
+  };
+}
 
 export function Home({
   go,
@@ -49,6 +74,7 @@ export function Home({
       const focus = focusDay(now, todayView.items.length);
       const view = focus.lookingBack ? await readDay(focus.dayStart) : todayView;
       const recent = byDay(await weightsSince(now - 30 * 86_400_000));
+      const meds = await medsGlance().catch(() => null);
 
       setCards(
         deck({
@@ -58,6 +84,7 @@ export function Home({
           targets: t,
           lookingBack: focus.lookingBack,
           weights: [...recent].reverse().map((p) => ({ kg: p.kg, measured_at: p.t })),
+          meds,
         }),
       );
     })();

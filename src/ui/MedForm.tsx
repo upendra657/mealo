@@ -41,6 +41,9 @@ import {
   type Schedule,
   type Unit,
 } from '../domain/doses';
+import { searchReference, type RefHit } from '../domain/refdata';
+import { searchFda, searchNih, type OnlineHit } from '../data/drugs';
+import { formFromText, PRESETS, type RefIngredient } from '../lib/tabular';
 import {
   draftFromLibrary,
   searchLibrary,
@@ -176,7 +179,62 @@ export function MedFormScreen({
     const filled = { ...d, long_term: false, private: false, doses: d.doses.length ? d.doses : f.doses };
     setF(filled);
     setPicked(filled);
+    setFilledFrom(null);
     setQuery('');
+  };
+
+  // Reference lists on this device — HSA, and whatever has been imported —
+  // searched as you type, a moment after the typing stops.
+  const [refFound, setRefHits] = useState<RefHit[]>([]);
+  // Hidden rather than cleared when the query is too short, so the effect
+  // only ever sets state from the search it ran.
+  const refHits = mode === 'add' && query.trim().length >= 2 ? refFound : [];
+  useEffect(() => {
+    if (mode !== 'add' || query.trim().length < 2) return;
+    let live = true;
+    const t = window.setTimeout(() => {
+      void searchReference(query, 8).then((h) => live && setRefHits(h)).catch(() => live && setRefHits([]));
+    }, 150);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [query, mode]);
+
+  // FDA and NIH, only when asked: the name being typed leaves the phone on
+  // that tap and not before.
+  const [online, setOnline] = useState<{ q: string; hits: OnlineHit[]; failed: string[] } | null>(null);
+  const [searching, setSearching] = useState(false);
+  const searchOnline = async () => {
+    const q = query.trim();
+    setSearching(true);
+    const [fda, nih] = await Promise.allSettled([searchFda(q), searchNih(q)]);
+    setOnline({
+      q,
+      hits: [...(fda.status === 'fulfilled' ? fda.value : []), ...(nih.status === 'fulfilled' ? nih.value : [])],
+      failed: [fda.status === 'rejected' ? 'FDA' : '', nih.status === 'rejected' ? 'NIH' : ''].filter(Boolean),
+    });
+    setSearching(false);
+  };
+
+  /** Where the form was filled from, when it was a list or an online source. */
+  const [filledFrom, setFilledFrom] = useState<{ label: string; capped: boolean } | null>(null);
+  const fillFrom = (hit: { name: string; ingredients: RefIngredient[]; form: string | null }, label: string, capped = false) => {
+    const form = (hit.form && isFormId(hit.form) ? hit.form : formFromText(hit.form)) ?? f.form;
+    setF((x) => ({
+      ...x,
+      name: hit.name,
+      form,
+      // A product's strength is its one ingredient's; a combination's lives
+      // with each ingredient, not in one field.
+      strength: hit.ingredients.length === 1 ? (hit.ingredients[0].strength ?? '') : '',
+      ingredients: hit.ingredients.map((i) => ({ name: i.name, strength_text: i.strength })),
+      doses: form ? x.doses.map((d) => ({ ...d, unit: unitFor(form, d.unit) })) : x.doses,
+    }));
+    setPicked(null);
+    setFilledFrom({ label, capped });
+    setQuery('');
+    setOnline(null);
   };
 
   // What Save will do to the shared library, worked out the way the domain
@@ -244,39 +302,62 @@ export function MedFormScreen({
         </div>
       )}
 
-      {mode === 'add' && library.length > 0 && (
+      {mode === 'add' && (
         <>
-          <div className="field-lbl">From your household</div>
+          <div className="field-lbl">Find a medicine</div>
           <label className="search">
             <SearchIcon />
             <input
-              placeholder="Search medicines already added"
+              placeholder="Search by name"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setOnline(null);
+              }}
             />
           </label>
-          {results.length > 0 && (
+          {(results.length > 0 || refHits.length > 0 || (online && online.q === query.trim())) && (
             <div className="libres">
               {results.map((p) => (
-                <div className="row linkrow" key={p.id}>
-                  <button className="row-tap" onClick={() => void pick(p)}>
-                    <span className="grow">
-                      <span className="nm">
-                        {p.name}
-                        {p.strength_text && <span className="muted"> {p.strength_text}</span>}
-                      </span>
-                      <span className="amt">
-                        {FORMS.find((x) => x.id === p.form)?.label ?? 'Type not set'}
-                      </span>
-                    </span>
-                    <Chevron dir="right" />
-                  </button>
-                </div>
+                <Hit
+                  key={p.id}
+                  name={p.name}
+                  line={[p.strength_text, FORMS.find((x) => x.id === p.form)?.label].filter(Boolean).join(' · ') || 'Type not set'}
+                  tag="Household"
+                  onPick={() => void pick(p)}
+                />
               ))}
+              {refHits.map((h, i) => (
+                <Hit
+                  key={`r${i}`}
+                  name={h.name}
+                  line={describeIngredients(h.ingredients)}
+                  tag={h.tag}
+                  onPick={() => fillFrom(h, h.setName, h.setName === AZ_INDIA && h.ingredients.length === 2)}
+                />
+              ))}
+              {online && online.q === query.trim() &&
+                online.hits.map((h, i) => (
+                  <Hit
+                    key={`o${i}`}
+                    name={h.name}
+                    line={describeIngredients(h.ingredients)}
+                    tag={h.source}
+                    onPick={() => fillFrom(h, h.source === 'FDA' ? 'the US FDA product directory' : 'NIH RxNorm')}
+                  />
+                ))}
             </div>
           )}
-          {query.trim() && results.length === 0 && (
-            <p className="empty-note">Nothing by that name yet — fill it in below.</p>
+          {query.trim().length >= 2 && (!online || online.q !== query.trim()) && (
+            <button className="wfix" style={{ marginTop: 8 }} disabled={searching} onClick={() => void searchOnline()}>
+              {searching ? 'Searching FDA / NIH…' : 'Search FDA / NIH'}
+            </button>
+          )}
+          {online && online.q === query.trim() && online.hits.length === 0 && online.failed.length === 0 && (
+            <p className="empty-note">Nothing found at the FDA or NIH by that name.</p>
+          )}
+          {online && online.q === query.trim() && online.failed.length > 0 && (
+            <p className="empty-note">{online.failed.join(' and ')} could not be reached just now.</p>
           )}
         </>
       )}
@@ -290,6 +371,12 @@ export function MedFormScreen({
           onChange={(e) => patch({ name: e.target.value })}
         />
       </div>
+      {filledFrom && (
+        <p className="mnote">
+          Filled from {filledFrom.label}. Check it against the strip before saving.
+          {filledFrom.capped && ' This list records at most two ingredients.'}
+        </p>
+      )}
 
       <div className="field-lbl">Type</div>
       <div className="chips chips--meds">
@@ -608,6 +695,32 @@ export function MedFormScreen({
         )}
       </Sheet>
     </>
+  );
+}
+
+const AZ_INDIA = PRESETS.find((p) => p.id === 'az-india')!.name;
+
+function isFormId(v: string): v is Form {
+  return FORMS.some((x) => x.id === v);
+}
+
+/** "Paracetamol 650mg + Caffeine 32mg". */
+function describeIngredients(list: RefIngredient[]): string {
+  return list.map((i) => (i.strength ? `${i.name} ${i.strength}` : i.name)).join(' + ');
+}
+
+/** One search result with the source it came from, as a pill. */
+function Hit({ name, line, tag, onPick }: { name: string; line: string; tag: string; onPick: () => void }) {
+  return (
+    <div className="row linkrow">
+      <button className="row-tap" onClick={onPick}>
+        <span className="grow">
+          <span className="nm" style={{ display: 'block' }}>{name}</span>
+          <span className="amt">{line}</span>
+        </span>
+        <span className="srctag" data-src={tag}>{tag}</span>
+      </button>
+    </div>
   );
 }
 

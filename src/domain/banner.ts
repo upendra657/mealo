@@ -51,7 +51,9 @@ export type Situation =
   /** Logging, nothing notable either way. */
   | 'steady'
   /** A weight trend worth mentioning instead. */
-  | 'weight';
+  | 'weight'
+  /** Today's medicines: what is due, or that it is all done. */
+  | 'meds';
 
 export type Tone = 'neutral' | 'nudge' | 'good';
 
@@ -98,6 +100,24 @@ export type BannerCtx = {
    * Optional: the banner works fine for someone who never logs a weight.
    */
   weights?: { kg: number; measured_at: number }[];
+  /**
+   * Today's medicines at a glance, from the Meds screen's own plan. Optional,
+   * and absent for someone who takes nothing: the card only appears once
+   * there are medicines to speak of.
+   */
+  meds?: MedsGlance | null;
+};
+
+export type MedsGlance = {
+  /** Due now and not yet answered. */
+  due: number;
+  /** Still to come later today. */
+  later: number;
+  /** Answered: taken, or skipped on purpose — either way, ticked off. */
+  done: number;
+  /** Names of the medicines due now, in day order. */
+  dueNames: string[];
+  sick: { name: string; day: number; of: number } | null;
 };
 
 // ------------------------------------------------------------------ time
@@ -336,6 +356,9 @@ const BANK: Record<Situation, Candidate[]> = {
     { say: () => 'Holding steady. Nothing needs chasing.', tone: 'good' },
     { bands: ['morning'], say: () => 'Off to a tidy start.', tone: 'good' },
   ],
+  // Written by medsCard instead: it speaks from today's medicine plan, not
+  // from the food context these lines are built from.
+  meds: [],
 };
 
 /**
@@ -364,6 +387,7 @@ const HUE: Record<Situation, Hue> = {
   'all-hit': 'teal',
   weight: 'cyan',
   steady: 'blue',
+  meds: 'violet',
 };
 
 const WHO: Record<Situation, string> = {
@@ -375,6 +399,7 @@ const WHO: Record<Situation, string> = {
   'all-hit': 'Nutritionist',
   weight: 'Weight',
   steady: 'Nutritionist',
+  meds: 'Pharmacist',
 };
 
 /**
@@ -449,7 +474,62 @@ export function banner(ctx: BannerCtx): Phrase {
  * Never empty. When nothing is notable it still says something, because a
  * blank panel under the grid reads as broken rather than as calm.
  */
+/** "Thyronorm", "Thyronorm and Calcium + D3", "Thyronorm, Calcium + D3 and one more". */
+function namesOf(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  const more = names.length - 2;
+  return `${names[0]}, ${names[1]} and ${more === 1 ? 'one more' : `${more} more`}`;
+}
+
+/**
+ * The one medicines card, or none.
+ *
+ * One card and one thing on it, by priority: a running sickness, else what is
+ * due now, else that everything is done, else that the rest comes later. It
+ * names medicines and never an amount — the banner is not where a dose gets
+ * said (R2) — and it says nothing about a dose that was missed: whether to
+ * take one late is the doctor's question, not the home screen's.
+ */
+export function medsCard(g: MedsGlance | null | undefined): Phrase | null {
+  if (!g) return null;
+  const total = g.due + g.later + g.done;
+  if (total === 0 && !g.sick) return null;
+  const card = (text: string, tone: Tone, kind: string): Phrase => ({
+    text,
+    tone,
+    situation: 'meds',
+    hue: HUE.meds,
+    who: WHO.meds,
+    tpl: `meds:${kind}`,
+  });
+  const dueLine =
+    g.due === 1 ? `${g.dueNames[0]} is due now.` : `${g.due} doses due now: ${namesOf(g.dueNames)}.`;
+
+  if (g.sick) {
+    const head = `${g.sick.name}, day ${g.sick.day} of ${g.sick.of}.`;
+    if (g.due > 0) return card(`${head} ${dueLine}`, 'nudge', 'sick-due');
+    if (total > 0 && g.done === total) return card(`${head} Today's doses are all ticked off.`, 'good', 'sick-done');
+    return card(head, 'neutral', 'sick');
+  }
+  if (g.due > 0) return card(dueLine, 'nudge', 'due');
+  if (g.done === total) return card('Every dose today is ticked off.', 'good', 'done');
+  return card(
+    `Nothing due right now — ${g.later} more later today.`.replace('— 1 more', '— one more'),
+    'neutral',
+    'later',
+  );
+}
+
 export function deck(ctx: BannerCtx): Phrase[] {
+  const meds = medsCard(ctx.meds);
+  // Food first, the way the home screen reads; the medicines card last, and
+  // inside the four the banner holds.
+  const food = foodDeck(ctx).slice(0, meds ? 3 : 4);
+  return meds ? [...food, meds] : food;
+}
+
+function foodDeck(ctx: BannerCtx): Phrase[] {
   const situation = situationOf(ctx);
   if (situation === 'no-targets' || situation === 'empty') {
     return [phraseFor(situation, ctx, null)];
