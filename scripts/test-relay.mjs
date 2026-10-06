@@ -57,8 +57,24 @@ const pull = (household, device, since) =>
     .then((r) => r.json().then((j) => ({ s: r.status, j })));
 
 // Schema first. Idempotent, so re-running the suite is free.
-execFileSync('npx', ['--yes', 'wrangler@4', 'd1', 'execute', 'mealo-sync', '--local',
-  '--file=migrations/0001_batches.sql'], { stdio: 'ignore' });
+//
+// Bounded, and its output kept. On 6 Oct 2026 this step hung three times —
+// no output, no CPU, for minutes — and afterwards could not be made to hang
+// again, with its output piped or discarded, so the cause is not known. What
+// is fixable is that it hung silently: the suite sat there looking like it was
+// working. Now it gets two minutes and, failing that, the run stops and shows
+// what wrangler last said.
+try {
+  execFileSync('npx', ['--yes', 'wrangler@4', 'd1', 'execute', 'mealo-sync', '--local',
+    '--file=migrations/0001_batches.sql'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+} catch (e) {
+  const said = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim().slice(-600) || '(nothing)';
+  console.error(
+    `wrangler d1 execute did not finish${e.signal ? ` — stopped after 2 minutes (${e.signal})` : ''}.\n` +
+      `It last said:\n${said}`,
+  );
+  process.exit(1);
+}
 
 const dev = spawn('npx', ['--yes', 'wrangler@4', 'dev', '--local', '--port', String(PORT),
   '--ip', '127.0.0.1'], { stdio: ['ignore', 'pipe', 'pipe'] });

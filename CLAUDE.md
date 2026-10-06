@@ -17,12 +17,25 @@ work, not every session. This file is what you need every time.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + e2e
-npm run test:portions  # 370 pure-logic assertions, node, fast
-npm run test:e2e       # 143 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 485 pure-logic assertions, node, fast
+npm run test:e2e       # 227 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
-npx tsc --noEmit -p tsconfig.json
+npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
 ```
+
+**`tsc -p tsconfig.json` checks nothing.** That file has no files of its own,
+only references, so it reports success having read nothing. `tsconfig.app.json`
+covers all of `src/`; `npm run build` (`tsc -b`) follows the references. The
+test scripts are under no tsconfig at all — esbuild and vite strip their types
+unchecked — so a type error in a test only shows up as a wrong result.
+
+**`test:e2e` needs a Chromium.** If Playwright's own build is missing, point it
+at Chrome: `CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:e2e`.
+
+**`test:relay`'s schema step** hung three times on 6 Oct 2026 and could not be
+made to hang again. It now stops after two minutes and prints what wrangler
+said, rather than sitting silent.
 
 **Deploying always builds first.** `wrangler deploy` ships whatever is sitting in
 `dist/` — it does not build. This has already caused one silent non-deploy where
@@ -93,12 +106,27 @@ with macros per 100 g; other measures derive through implied density. A
 **measured** portion always beats a **derived** one, including across sync —
 the app's arithmetic must never bury a scale reading.
 
-**Sync carries the food library only.** The kitchen is shared; a body is not.
-Row ids are globally unique (`newId()` is a device prefix plus a uuid), but a
-dish two phones added independently has two ids — so dishes merge on `slug`,
-and portions travel as `(food_slug, measure)` and resolve on receipt. Shipping
-a local foreign key produces anchors pointing at dishes that do not exist,
-silently.
+**Sync carries the libraries only — food, and since v10 medicines.** The
+kitchen and the medicine cupboard are shared; a body is not. Row ids are
+globally unique (`newId()` is a device prefix plus a uuid), but a dish two
+phones added independently has two ids — so dishes merge on `slug`, and
+portions travel as `(food_slug, measure)` and resolve on receipt. Medicines
+merge on `medSlug(name, strength)`, with ingredients and starting schedules as
+`(product_slug, position)`. Shipping a local foreign key produces anchors
+pointing at rows that do not exist, silently. A medicine marked Keep private
+never leaves its phone; who takes what — doses, ticks, sicknesses — never
+travels at all.
+
+**Medicines split the way food does.** What a medicine *is* (`med_products`,
+its ingredients, a starting schedule) is the household library; what a person
+*takes* (`medications`, `med_doses`, `intake_events`, `sick_episodes`) is per
+person. A changed name or strength makes a new product — never edit a
+product's identity in place, someone else may be taking the old one.
+`planDay` in `domain/doses.ts` is the one place that decides what is due on a
+day; the Meds screen, the medicine log and the Doctor's slice all call it.
+Sick mode and paused medicines are worked out from dates, never written.
+Every dose amount is one a person entered or confirmed — the app never fills
+one in (R2).
 
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.
@@ -150,12 +178,19 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v10**. A new one ships with two additions or the tests fail: its checksum
+at **v11**. **Shipped means any database has run it — a dev browser included.**
+v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
+database never re-ran it, and every medicine save failed with "no column named
+freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum
 pinned in `SHIPPED` (`test-portions.ts`), and rows in `SEEDS`
 (`scripts/e2e/upgrade.ts`) for every table and column it adds. The e2e run
 then upgrades a populated database from the previous version through the real
 worker and checks every value survived. A statement that deletes or rewrites
 rows fails the lint unless it is in `SANCTIONED`, with its reason.
+
+**Real data exists from v11 on.** Every change from here must assume real meal
+data and real medication data on both phones, and keep both intact. Upendra
+will say when he starts logging medications.
 
 **CSS is one dark theme.** Tokens in `:root` at the top of `styles.css`. No light
 mode — the app is opened at the table, often at night.
@@ -193,11 +228,15 @@ right about his own kitchen.
 ## Status
 
 Phases 0–4 complete, including R5. Phase 4.5 (two people) done. **Phase 5 ~30%** —
-encrypted delta sync works for the food library; passphrase, encrypted export,
+encrypted delta sync works for the food and medicine libraries; passphrase, encrypted export,
 health-table sync and web push are open. **Phase 6 not started** — no LICENSE, no
 CONTRIBUTING, no CI, and `README.md` still opens with "Status: Phase 0. No agents
 yet." See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
 rough edges.
 
-Not yet written into any phase: the medication definition/regimen split (shared
-definitions, per-person regimens), and the remaining Doctor and Pharmacist work.
+Track meds was rebuilt in v10–v11: the medicine definition/regimen split (shared
+library, per-person regimens), sick mode, non-daily schedules and the medicine
+log. Parked, to discuss: reading a prescription from an image or PDF (needs a
+decision on whether an image may leave the phone — P2), and a meds summary on
+the Home tile. Not yet written into any phase: the remaining Doctor and
+Pharmacist work.
