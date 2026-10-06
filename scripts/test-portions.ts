@@ -25,6 +25,7 @@ import {
   toMeasure,
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
+import { settledValue } from '../src/lib/wheel';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
   deidentify,
@@ -51,6 +52,14 @@ import type { Macros } from '../src/domain/day';
 import {
   addDays,
   amountsSet,
+  buildLog,
+  daysBetweenInclusive,
+  describeSchedule,
+  dueOn,
+  EVERY_DAY,
+  nextDue,
+  scheduleColumns,
+  scheduleOf,
   daysFrom,
   describeDose,
   durationLabel,
@@ -1113,7 +1122,7 @@ const SHIPPED: Record<number, string> = {
   7: '38e1614eef705c52',
   8: 'c77a06d22d3e2df7',
   9: '0d8a642f53260b28',
-  10: 'f43590523ac269c1',
+  10: '06185f929bc55d00',
 };
 
 /**
@@ -1355,9 +1364,99 @@ section('Medicines: what is due on a day');
   const ticked = planDay(day, meds, doses, [], ticks, at2pm);
   const thy = ticked.groups.flatMap((g) => g.doses).find((p) => p.dose.id === 'd-thy')!;
   check('the newest answer for a dose wins', [thy.state, thy.eventId], ['skipped', 't2']);
-  check('a past day leaves nothing "later"',
+  check('a past day\'s unticked doses are missed, not due',
     planDay('2026-10-01', meds, doses, [], [], at2pm).groups.flatMap((g) => g.doses)
-      .every((p) => p.state === 'due'), true);
+      .every((p) => p.state === 'missed'), true);
+}
+
+section('The scroll wheel reports only a real choice');
+{
+  const days = Array.from({ length: 31 }, (_, i) => i + 1);
+  check('scrolled from the 6th to the 15th, it reports 15', settledValue(days, 6, 14 * 40, 40, true), 15);
+  check('resting where it already was, it reports nothing', settledValue(days, 6, 5 * 40, 40, true), null);
+  check('parking itself is never a choice (Sunday = 0 parked at "1st")',
+    settledValue(days, 0, 0, 40, false), null);
+  check('nor is following a typed value', settledValue(days, 6, 14 * 40, 40, false), null);
+  check('but a person scrolling off a value the list lacks is',
+    settledValue(['katori', 'bowl'], 'old-unit', 40, 40, true), 'bowl');
+  check('a scroll past the end clamps to the last row', settledValue(days, 6, 99 * 40, 40, true), 31);
+}
+
+section('Medicines: how often');
+{
+  const sun = scheduleOf('weekdays', '0', null);
+  check('weekly on Sunday is due on a Sunday', dueOn(sun, '2026-10-04'), true);
+  check('and not on the Monday', dueOn(sun, '2026-10-05'), false);
+  check('Sunday is 0, the way Date counts', sun.days, [0]);
+  check('it reads as a sentence', describeSchedule(sun), 'Every Sunday');
+  check('two days read as a list', describeSchedule(scheduleOf('weekdays', '3,0', null)), 'Sun, Wed');
+  const alt = scheduleOf('alternate', null, '2026-10-04');
+  check('alternate days are due on the start', dueOn(alt, '2026-10-04'), true);
+  check('not the day after', dueOn(alt, '2026-10-05'), false);
+  check('and the day after that', dueOn(alt, '2026-10-06'), true);
+  check('counted from the start, not shifted by a gap', dueOn(alt, '2026-11-01'), daysFrom('2026-10-04', '2026-11-01') % 2 === 0);
+  check('nothing before it began', dueOn(alt, '2026-10-02'), false);
+  const m31 = scheduleOf('monthly', '31', null);
+  check('monthly on the 31st is due on the 31st', dueOn(m31, '2026-10-31'), true);
+  check('and on the 30th of a 30-day month', dueOn(m31, '2026-11-30'), true);
+  check('and the 28th of a short February', dueOn(m31, '2026-02-28'), true);
+  check('but not the 30th of a 31-day month', dueOn(m31, '2026-10-30'), false);
+  check('it reads as a sentence', describeSchedule(scheduleOf('monthly', '15', null)), 'Monthly, on the 15th');
+  check('next Sunday from a Tuesday', nextDue(sun, '2026-10-06'), '2026-10-11');
+  check('unreadable columns mean every day', scheduleOf('weekdays', 'x', null), EVERY_DAY);
+  check('nothing stored means every day', scheduleOf(null, null, null), EVERY_DAY);
+  check('round trip through the columns', scheduleColumns(scheduleOf('weekdays', '0,3', null)),
+    { freq: 'weekdays', freq_days: '0,3', freq_from: null });
+  check('an alternate rhythm keeps its anchor', scheduleColumns(alt).freq_from, '2026-10-04');
+}
+
+section('Medicines: the schedule a day had');
+{
+  const day = (d: number) => `2026-10-${String(d).padStart(2, '0')}`;
+  const noon = (d: number) => new Date(2026, 9, d, 12, 0);
+  const med = { id: 'vitd', name: 'Vitamin D3', dose_text: null, schedule: null, long_term: 1,
+    episode_id: null, started_on: day(1), ended_on: null };
+  // Daily from the 1st; on the 8th it was changed to Sundays only.
+  const daily = { id: 'old', medication_id: 'vitd', position: 1, amount: 1, unit: 'tablet' as const,
+    time_of_day: 'morning' as const, meal: 'after' as const, freq: 'daily', from_day: day(1),
+    deleted_at: noon(8).getTime() };
+  const weekly = { ...daily, id: 'new', freq: 'weekdays', freq_days: '0', from_day: day(8),
+    deleted_at: null };
+  const due = (d: number) => planDay(day(d), [med], [daily, weekly], [], [], noon(20))
+    .groups.flatMap((g) => g.doses).map((p) => p.dose.id);
+  check('before the change, the daily row', due(7), ['old']);
+  check('from the change, the new row, on its day only', [due(8), due(11)], [[], ['new']]);
+  check('a Monday under the new schedule has nothing', due(12), []);
+  check('nothing before it started', planDay('2026-09-30', [med], [daily], [], [], noon(20)).groups, []);
+  check('nothing from the day it stopped',
+    planDay(day(9), [{ ...med, ended_on: day(9) }], [daily, weekly], [], [], noon(20)).groups.length, 0);
+
+  // A tick made against the old row the morning it was replaced still counts.
+  const tick = { id: 't', dose_id: 'old', status: 'taken' as const, updated_at: 1,
+    taken_at: new Date(2026, 9, 11, 8).getTime(), medication_id: 'vitd', time_of_day: 'morning' as const };
+  const kept = planDay(day(11), [med], [daily, weekly], [], [tick], noon(11)).groups[0].doses[0];
+  check('a tick survives its dose row being replaced the same day', [kept.dose.id, kept.state], ['new', 'taken']);
+  check('on time is not late', kept.late, false);
+  const lateTick = { ...tick, taken_at: new Date(2026, 9, 13, 9).getTime() };
+  check('ticked two days on is marked late',
+    planDay(day(11), [med], [daily, weekly], [], [lateTick], noon(20)).groups[0].doses[0].late, true);
+  const halfPast = { ...tick, taken_at: new Date(2026, 9, 12, 0, 30).getTime() };
+  check('but half past midnight still belongs to the night before',
+    planDay(day(11), [med], [daily, weekly], [], [halfPast], noon(20)).groups[0].doses[0].late, false);
+
+  // The log over the fortnight, from the same planDay.
+  const log = buildLog(daysBetweenInclusive(day(1), day(14)), [med], [daily, weekly], [],
+    [{ ...tick, for_day: day(11) }, { ...tick, id: 'u', dose_id: 'old', status: 'skipped' as const,
+      time_of_day: 'morning' as const, for_day: day(3) }], noon(14));
+  check('the log counts what was due: 7 daily, then Sunday the 11th',
+    log.total.taken + log.total.skipped + log.total.missed + log.total.pending, 8);
+  check('one taken, one skipped, the rest missed',
+    [log.total.taken, log.total.skipped, log.total.missed], [1, 1, 6]);
+  check('a day nothing was due is blank in the row', log.meds[0].days.find((x) => x.day === day(9))?.state, null);
+  check('and the skipped day says so', log.meds[0].days.find((x) => x.day === day(3))?.state, 'skipped');
+  check('a day with two doses answered differently is partial',
+    buildLog([day(5)], [med], [daily, { ...daily, id: 'n2', time_of_day: 'night' as const }], [],
+      [{ ...tick, dose_id: 'old', for_day: day(5) }], noon(14)).meds[0].days[0].state, 'partial');
 }
 
 // ------------------------------------------------------------------ done

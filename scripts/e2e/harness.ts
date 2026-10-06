@@ -53,6 +53,8 @@ import {
 import {
   addMedication,
   addMedicine,
+  cycleDose,
+  readLog,
   draftFromLibrary,
   draftFromMedicine,
   editMedicine,
@@ -71,7 +73,7 @@ import {
   unaskedLongTerm,
   type MedForm,
 } from '../../src/domain/medications';
-import { addDays, medDay } from '../../src/domain/doses';
+import { addDays, dateOf, EVERY_DAY, medDay, scheduleOf } from '../../src/domain/doses';
 import { applyMeds, collectMeds } from '../../src/domain/medsync';
 import { upgradeFromPrevious } from './upgrade';
 
@@ -677,6 +679,7 @@ async function main() {
         { amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after' },
         { amount: 1, unit: 'tablet', time_of_day: 'night', meal: 'after' },
       ],
+      schedule: EVERY_DAY,
       long_term: false,
       private: false,
     };
@@ -687,7 +690,10 @@ async function main() {
 
     await setActiveProfile(partner);
     const found = await searchLibrary('calcium');
-    check('the other person finds it there', found.map((p) => p.name).join(), 'Calcium + D3');
+    // (name, passed, detail): a string in the middle slot is always truthy, so
+    // this once passed whatever the search returned.
+    check('the other person finds it there', found.map((p) => p.name).join() === 'Calcium + D3',
+      JSON.stringify(found.map((p) => p.name)));
     check('"1250 mg" finds what was typed "1250mg"',
       (await searchLibrary('calcium 1250 mg')).length === 1);
     const herDraft = (await draftFromLibrary(found[0].id))!;
@@ -767,7 +773,7 @@ async function main() {
     check('so does the never-asked one', plan.paused.some((p) => p.med.id === legacy));
 
     const syrup = await addMedicine({ name: 'Cough syrup', form: 'syrup', strength: null,
-      ingredients: [], long_term: true, private: false,
+      ingredients: [], long_term: true, private: false, schedule: EVERY_DAY,
       doses: [{ amount: 10, unit: 'ml', time_of_day: 'morning', meal: 'after' }] }, fever);
     check('a sickness medicine is never long-term, whatever the switch said',
       (await medicineDetail(syrup))!.med.long_term === 0);
@@ -906,6 +912,98 @@ async function main() {
     const orphan = await applyMeds([{ t: 'med_product_doses', k: 'nothing here|1', at: far, del: null,
       f: { product_slug: 'nothing here', position: 1, amount: 1, unit: 'tablet', time_of_day: 'night', meal: 'after' } }]);
     check('a dose for a medicine not here yet waits', orphan.skipped === 1, JSON.stringify(orphan));
+  }
+
+  // ---- v10: how often, the tap, and the log --------------------------------
+  step('schedules');
+  {
+    await setActiveProfile(PRIMARY_PROFILE);
+    const day = medDay();
+    const weekday = dateOf(day).getDay();
+    const dueIds = (plan: Awaited<ReturnType<typeof readMedsDay>>) =>
+      plan.groups.flatMap((g) => g.doses.map((p) => p.med.id));
+    const base: MedForm = {
+      name: 'Vitamin D3', form: 'tablet', strength: '60000 IU', ingredients: [],
+      doses: [{ amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after' }],
+      schedule: scheduleOf('weekdays', String(weekday), null), long_term: true, private: false,
+    };
+
+    const vit = await addMedicine(base);
+    check('a weekly medicine is there on its day', dueIds(await readMedsDay(day)).includes(vit));
+    const vitDetail = (await medicineDetail(vit))!;
+    await editMedicine(vit, { ...draftFromMedicine(vitDetail),
+      schedule: scheduleOf('weekdays', String((weekday + 1) % 7), null) });
+    let plan = await readMedsDay(day);
+    check('and not there on a day it is not', !dueIds(plan).includes(vit));
+    check('while still counted as being taken', plan.notToday.some((n) => n.med.id === vit));
+    check('rather than as "times not set"', !plan.unscheduled.some((m) => m.id === vit));
+    const slice = renderSlice(await collectFacts());
+    check('the Doctor hears it is weekly', /Vitamin D3 60000 IU \(every \w+day;/.test(slice), slice);
+
+    const wire = (await collectMeds(0)).find((r) => r.k === 'vitamin d3 60000 iu|1');
+    check('the library sends its frequency', wire?.f.freq === 'weekdays', JSON.stringify(wire?.f));
+    await setActiveProfile(partner);
+    const vEntry = (await searchLibrary('vitamin d3'))[0];
+    const vDraft = vEntry ? await draftFromLibrary(vEntry.id) : null;
+    check('and hands it to the next person', vDraft?.schedule.freq === 'weekdays',
+      JSON.stringify(vDraft?.schedule));
+    await setActiveProfile(PRIMARY_PROFILE);
+
+    // The tap: empty, taken, skipped, empty.
+    const daily = await addMedicine({ ...base, name: 'Daily tablet', strength: null, schedule: EVERY_DAY });
+    const find = async () =>
+      (await readMedsDay(day)).groups.flatMap((g) => g.doses).find((p) => p.med.id === daily)!;
+    await cycleDose(await find(), day);
+    check('one tap is taken', (await find()).state === 'taken');
+    await cycleDose(await find(), day);
+    check('a second is skipped', (await find()).state === 'skipped');
+    await cycleDose(await find(), day);
+    const cleared = await find();
+    check('a third clears it', cleared.state === 'due' || cleared.state === 'later', cleared.state);
+    const answers = await query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM intake_events
+        WHERE profile_id = ? AND medication_id = ? AND for_day = ? AND deleted_at IS NULL`,
+      [PRIMARY_PROFILE, daily, day]);
+    check('leaving no live answer behind', Number(answers[0].n) === 0, String(answers[0].n));
+
+    // The log, judged by the schedule each day had. Backdated by hand: five
+    // days of a daily schedule nobody ticked, one of them fixed from the log.
+    const back = addDays(day, -5);
+    const hist = await addMedicine({ ...base, name: 'Backdated', strength: null, schedule: EVERY_DAY });
+    await sql('UPDATE medications SET started_on = ? WHERE id = ?', [back, hist]);
+    await sql('UPDATE med_doses SET from_day = ? WHERE medication_id = ?', [back, hist]);
+    const twoAgo = addDays(day, -2);
+    const thatDay = (await readLog(twoAgo, twoAgo)).plans[0].groups.flatMap((g) => g.doses)
+      .find((p) => p.med.id === hist)!;
+    check('a past day\'s dose reads as missed', thatDay?.state === 'missed', thatDay?.state);
+    await cycleDose(thatDay, twoAgo);
+
+    const log = await readLog(back, addDays(day, -1));
+    const mine = log.meds.find((m) => m.med.id === hist)!;
+    check('five past days were due', mine.tally.taken + mine.tally.skipped + mine.tally.missed === 5,
+      JSON.stringify(mine.tally));
+    check('one fixed from the log, four missed', mine.tally.taken === 1 && mine.tally.missed === 4,
+      JSON.stringify(mine.tally));
+    const fixed = log.plans.find((p) => p.day === twoAgo)!.groups.flatMap((g) => g.doses)
+      .find((p) => p.med.id === hist)!;
+    check('and the fixed one is marked as entered later', fixed.late);
+
+    const histDetail = (await medicineDetail(hist))!;
+    await editMedicine(hist, { ...draftFromMedicine(histDetail),
+      schedule: { freq: 'alternate', days: [], from: null } });
+    const after = (await readLog(back, addDays(day, -1))).meds.find((m) => m.med.id === hist)!;
+    check('changing the schedule does not rewrite the past',
+      JSON.stringify(after.tally) === JSON.stringify(mine.tally), JSON.stringify(after.tally));
+    const altRows = await query<{ freq_from: string }>(
+      'SELECT freq_from FROM med_doses WHERE medication_id = ? AND deleted_at IS NULL', [hist]);
+    check('an alternate rhythm starts the day it was set', altRows[0]?.freq_from === day,
+      JSON.stringify(altRows));
+    const reTick = (await readMedsDay(day)).groups.flatMap((g) => g.doses).find((p) => p.med.id === hist);
+    check('and is due on that first day', reTick !== undefined);
+
+    const weekSlice = renderSlice(await collectFacts());
+    check('the Doctor hears what was missed', /Last 7 days: \d+ doses taken, \d+ skipped, [1-9]\d* missed\./
+      .test(weekSlice), weekSlice);
   }
 }
 

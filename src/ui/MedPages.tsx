@@ -10,6 +10,10 @@ import { useEffect, useState } from 'react';
 import {
   FORMS,
   describeDose,
+  describeSchedule,
+  medDay,
+  nextDue,
+  scheduleOfDose,
   durationLabel,
   endedOn,
   fmtDay as shortDay,
@@ -121,6 +125,22 @@ export function MedDetailPage({
       {doses.length > 0 ? (
         <div className="readout dt">
           <div className="mlist">
+            <div className="mrow">
+              <span className="k">How often</span>
+              <span className="v">
+                {describeSchedule(scheduleOfDose(doses[0]))}
+                {scheduleOfDose(doses[0]).freq !== 'daily' && med.ended_on === null && (() => {
+                  const next = nextDue(scheduleOfDose(doses[0]), medDay());
+                  if (!next) return null;
+                  return (
+                    <span className="muted">
+                      {' · '}
+                      {next === medDay() ? 'due today' : `next ${shortDay(next)}`}
+                    </span>
+                  );
+                })()}
+              </span>
+            </div>
             {doses.map((x) => (
               <div className="mrow" key={x.id}>
                 <span className="k ic">

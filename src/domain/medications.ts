@@ -22,6 +22,9 @@ import { activeProfile } from '../lib/active-profile';
 import {
   addDays,
   amountsSet,
+  buildLog,
+  daysBetweenInclusive,
+  EVERY_DAY,
   isForm,
   isRunning,
   lastDayOf,
@@ -38,6 +41,12 @@ import {
   type PlanDose,
   type PlanIntake,
   type PlannedDose,
+  type Log,
+  type Schedule,
+  sameSchedule,
+  scheduleColumns,
+  scheduleOf,
+  scheduleOfDose,
 } from './doses';
 import { normalise } from './foods';
 import { extractJson } from '../llm/extract';
@@ -185,9 +194,12 @@ export async function editMedication(
   await db.update('medications', id, values);
 }
 
-/** Stopping keeps the history. Only an explicit delete removes it. */
+/**
+ * Stopping keeps the history. Only an explicit delete removes it. Dated by the
+ * Meds day, so stopping at 1 am stops from the day the screen was showing.
+ */
 export async function stopMedication(id: string): Promise<void> {
-  await db.update('medications', id, { ended_on: todayIso() });
+  await db.update('medications', id, { ended_on: medDay() });
 }
 
 export async function resumeMedication(id: string): Promise<void> {
@@ -239,6 +251,8 @@ export type MedForm = {
   strength: string | null;
   ingredients: Ingredient[];
   doses: DoseSlot[];
+  /** How often, for every dose of it. */
+  schedule: Schedule;
   long_term: boolean;
   /** Only read when Save creates a new library entry. */
   private: boolean;
@@ -252,6 +266,7 @@ export function blankMedForm(): MedForm {
     strength: '',
     ingredients: [],
     doses: resizeDoses([], 1, 'tablet'),
+    schedule: EVERY_DAY,
     long_term: false,
     private: false,
   };
@@ -297,9 +312,11 @@ export async function ingredientsOf(productId: string): Promise<Ingredient[]> {
   );
 }
 
-async function templateOf(productId: string): Promise<DoseSlot[]> {
-  return db.query<DoseSlot>(
-    `SELECT amount, unit, time_of_day, meal FROM med_product_doses
+async function templateOf(
+  productId: string,
+): Promise<(DoseSlot & { freq: string | null; freq_days: string | null })[]> {
+  return db.query(
+    `SELECT amount, unit, time_of_day, meal, freq, freq_days FROM med_product_doses
       WHERE product_id = ? AND deleted_at IS NULL ORDER BY position`,
     [productId],
   );
@@ -312,12 +329,16 @@ async function templateOf(productId: string): Promise<DoseSlot[]> {
 export async function draftFromLibrary(productId: string): Promise<MedForm | null> {
   const p = (await db.query<Product>('SELECT * FROM med_products WHERE id = ?', [productId]))[0];
   if (!p) return null;
+  const template = await templateOf(p.id);
   return {
     name: p.name,
     form: isForm(p.form) ? p.form : null,
     strength: p.strength_text,
     ingredients: await ingredientsOf(p.id),
-    doses: sortByTime(await templateOf(p.id)),
+    doses: sortByTime(template.map(({ amount, unit, time_of_day, meal }) => ({ amount, unit, time_of_day, meal }))),
+    // An alternate-day rhythm starts when this person starts, not when the
+    // first person did, so it travels without its anchor.
+    schedule: template[0] ? scheduleOf(template[0].freq, template[0].freq_days, null) : EVERY_DAY,
     long_term: false,
     private: p.private === 1,
   };
@@ -376,8 +397,19 @@ async function libraryEntryFor(f: MedForm): Promise<string> {
     });
     await writeIngredients(id, ingredients);
     // Whoever adds a medicine first gives the library their schedule.
+    const { freq, freq_days } = scheduleColumns(f.schedule);
     for (const [i, d] of f.doses.entries()) {
-      await db.insert('med_product_doses', { product_id: id, position: i + 1, ...d, deleted_at: null });
+      await db.insert('med_product_doses', {
+        product_id: id,
+        position: i + 1,
+        amount: d.amount,
+        unit: d.unit,
+        time_of_day: d.time_of_day,
+        meal: d.meal,
+        freq,
+        freq_days,
+        deleted_at: null,
+      });
     }
     return id;
   }
@@ -401,7 +433,16 @@ function checkForm(f: MedForm) {
   if (!amountsSet(f.doses)) throw new Error('Every dose needs an amount.');
 }
 
-async function writeDoses(medicationId: string, doses: DoseSlot[]): Promise<void> {
+/**
+ * Write a medicine's schedule as rows in force from today. An alternate-day
+ * rhythm with no anchor yet starts today too; one carried over from an edit
+ * keeps its own, so changing an amount does not shift which days are due.
+ */
+async function writeDoses(medicationId: string, doses: DoseSlot[], schedule: Schedule): Promise<void> {
+  const today = medDay();
+  const cols = scheduleColumns(
+    schedule.freq === 'alternate' && !schedule.from ? { ...schedule, from: today } : schedule,
+  );
   for (const [i, d] of sortByTime(doses).entries()) {
     await db.insert('med_doses', {
       medication_id: medicationId,
@@ -410,6 +451,8 @@ async function writeDoses(medicationId: string, doses: DoseSlot[]): Promise<void
       unit: d.unit,
       time_of_day: d.time_of_day,
       meal: d.meal,
+      ...cols,
+      from_day: today,
       deleted_at: null,
     });
   }
@@ -438,7 +481,7 @@ export async function addMedicine(f: MedForm, episodeId: string | null = null): 
     episode_id: episodeId,
     deleted_at: null,
   });
-  await writeDoses(id, f.doses);
+  await writeDoses(id, f.doses, f.schedule);
   return id;
 }
 
@@ -486,6 +529,7 @@ export function draftFromMedicine(d: MedDetail): MedForm {
     strength: d.med.dose_text,
     ingredients: d.ingredients,
     doses: d.doses.map(({ amount, unit, time_of_day, meal }) => ({ amount, unit, time_of_day, meal })),
+    schedule: d.doses[0] ? scheduleOfDose(d.doses[0]) : EVERY_DAY,
     long_term: d.med.long_term === 1,
     private: d.product?.private === 1,
   };
@@ -512,9 +556,10 @@ export async function editMedicine(id: string, f: MedForm): Promise<void> {
 
   const key = (l: DoseSlot[]) =>
     JSON.stringify(sortByTime(l).map((d) => [d.amount, d.unit, d.time_of_day, d.meal]));
-  if (key(before.doses) !== key(f.doses)) {
+  const was = before.doses[0] ? scheduleOfDose(before.doses[0]) : EVERY_DAY;
+  if (key(before.doses) !== key(f.doses) || !sameSchedule(was, f.schedule)) {
     for (const d of before.doses) await db.softDelete('med_doses', d.id);
-    await writeDoses(id, f.doses);
+    await writeDoses(id, f.doses, f.schedule);
   }
 }
 
@@ -546,13 +591,56 @@ export async function readMedsDay(day = medDay(), now = new Date()): Promise<Med
       [me],
     ),
     listEpisodes(),
-    db.query<PlanIntake>(
-      `SELECT id, dose_id, status, updated_at FROM intake_events
-        WHERE profile_id = ? AND for_day = ? AND deleted_at IS NULL`,
-      [me, day],
-    ),
+    db.query<PlanIntake>(`${TICKS} AND e.for_day = ?`, [me, day]),
   ]);
   return planDay(day, meds, doses, episodes, intake, now);
+}
+
+/**
+ * Ticks with what they were for. The dose row's time comes along — replaced
+ * rows included — so planDay can still match a tick to its dose after an edit
+ * that same day swapped the row out from under it.
+ */
+const TICKS = `SELECT e.id, e.dose_id, e.status, e.updated_at, e.taken_at, e.for_day,
+         e.medication_id, d.time_of_day
+    FROM intake_events e LEFT JOIN med_doses d ON d.id = e.dose_id
+   WHERE e.profile_id = ? AND e.deleted_at IS NULL`;
+
+/**
+ * The tap on a dose's circle: empty, then taken, then skipped, then empty.
+ *
+ * Taken is the common case and stays one tap; skipping is deliberate enough to
+ * be worth a second. Every step is a fresh row or a soft delete, so the day
+ * never holds two answers for one dose and nothing is overwritten.
+ */
+export async function cycleDose(p: PlannedDose<Medication>, day: string): Promise<void> {
+  if (p.state === 'taken') await markDose(p, day, 'skipped');
+  else if (p.state === 'skipped' && p.eventId) await db.softDelete('intake_events', p.eventId);
+  else await markDose(p, day, 'taken');
+}
+
+/**
+ * The log from `from` through `to`, judged by the schedule each day had.
+ *
+ * Every medicine not deleted, stopped ones included, and every dose row
+ * including the replaced ones, because on the days before an edit those rows
+ * were the schedule. planDay holds each to its dates.
+ */
+export async function readLog(from: string, to: string, now = new Date()): Promise<Log<Medication>> {
+  const me = activeProfile();
+  const [meds, doses, episodes, intake] = await Promise.all([
+    db.query<Medication>(
+      'SELECT * FROM medications WHERE profile_id = ? AND deleted_at IS NULL',
+      [me],
+    ),
+    db.query<PlanDose>('SELECT * FROM med_doses WHERE profile_id = ?', [me]),
+    listEpisodes(),
+    db.query<PlanIntake & { for_day: string }>(
+      `${TICKS} AND e.for_day >= ? AND e.for_day <= ?`,
+      [me, from, to],
+    ),
+  ]);
+  return buildLog(daysBetweenInclusive(from, to), meds, doses, episodes, intake, now);
 }
 
 /**

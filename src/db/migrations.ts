@@ -547,9 +547,14 @@ MIGRATIONS.push({
       product_id   TEXT NOT NULL,
       position     INTEGER NOT NULL,
       amount       REAL,
-      unit         TEXT,                -- 'tablet' | 'ml' | 'scoop' | 'g'
+      unit         TEXT,                -- 'tablet' | 'ml' | 'scoop' | 'g' | 'drop'
       time_of_day  TEXT,                -- 'morning' | 'afternoon' | 'evening' | 'night'
       meal         TEXT,                -- 'before' | 'after'
+      -- How often, so a weekly medicine arrives weekly. Same meaning as on
+      -- med_doses; freq_from is not carried, since an alternate-day rhythm
+      -- starts when the person taking it starts.
+      freq         TEXT,
+      freq_days    TEXT,
       updated_at   INTEGER NOT NULL,
       deleted_at   INTEGER
     );
@@ -570,6 +575,21 @@ MIGRATIONS.push({
       unit           TEXT,
       time_of_day    TEXT,
       meal           TEXT,
+      -- Which days the dose is due. NULL or 'daily'; 'alternate', every second
+      -- day counted from freq_from; 'weekdays', with freq_days the days as 0-6
+      -- from Sunday ("0,3"); 'monthly', with freq_days the date ("15"), held
+      -- at the last day of a shorter month.
+      --
+      -- On the dose rather than the medicine on purpose. A schedule change
+      -- soft-deletes the rows and writes new ones, and the old rows keep the
+      -- old rule — which is what lets the log judge last month by last
+      -- month's schedule instead of today's.
+      freq           TEXT,
+      freq_days      TEXT,
+      freq_from      TEXT,              -- local ISO date
+      -- The local day this row became the schedule. With deleted_at it is the
+      -- span the row was in force; NULL means from the medicine's start.
+      from_day       TEXT,
       updated_at     INTEGER NOT NULL,
       deleted_at     INTEGER
     );

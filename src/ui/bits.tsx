@@ -14,6 +14,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { settledValue } from '../lib/wheel';
 
 /* ------------------------------------------------------------------ icons */
 
@@ -227,6 +228,8 @@ export function Wheel({
   const timer = useRef<number | undefined>(undefined);
   /** The last value this wheel itself reported, so it does not chase its own tail. */
   const mine = useRef<string | number | null>(null);
+  /** Set while a scroll is one this wheel made itself. See settledValue. */
+  const moving = useRef(false);
   const ROW = 40;
 
   // Follow the value when something else changes it — typing 37 in the box
@@ -235,7 +238,14 @@ export function Wheel({
   useEffect(() => {
     if (mine.current === value) return;
     const i = Math.max(0, values.indexOf(value));
-    if (ref.current) ref.current.scrollTop = i * ROW;
+    const el = ref.current;
+    // Only flagged when it will actually move: an assignment to where it
+    // already is fires no scroll event, and a flag left up would swallow the
+    // next real one.
+    if (el && el.scrollTop !== i * ROW) {
+      moving.current = true;
+      el.scrollTop = i * ROW;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
@@ -244,10 +254,12 @@ export function Wheel({
     if (!el) return;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      const i = Math.max(0, Math.min(values.length - 1, Math.round(el.scrollTop / ROW)));
-      if (values[i] !== value) {
-        mine.current = values[i];
-        onChange(values[i]);
+      const byUser = !moving.current;
+      moving.current = false;
+      const next = settledValue(values, value, el.scrollTop, ROW, byUser);
+      if (next !== null) {
+        mine.current = next;
+        onChange(next);
       }
     }, 90);
   };

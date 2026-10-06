@@ -42,20 +42,18 @@ import {
   extendSickness,
   listEpisodes,
   listStopped,
-  markDose,
   medicineDetail,
   readMedsDay,
   recoverSickness,
   setLongTerm,
   startSickness,
   unaskedLongTerm,
-  undoIntake,
   type MedDetail,
   type MedForm,
   type Medication,
   type MedsDay,
 } from '../domain/medications';
-import { Chevron, Plus, Sheet, Tick, useToast, Wheel } from './bits';
+import { Chevron, Plus, Sheet, useToast, Wheel } from './bits';
 import { MedFormScreen, Toggle } from './MedForm';
 import {
   EpisodePage,
@@ -64,7 +62,7 @@ import {
   MedDetailPage,
   StoppedPage,
 } from './MedPages';
-import { SlotIcon } from './SlotIcon';
+import { DayLogPage, DoseGroups, LogPage } from './MedLog';
 
 type View =
   | { kind: 'main' }
@@ -74,7 +72,9 @@ type View =
   | { kind: 'history' }
   | { kind: 'episode'; episode: Episode }
   | { kind: 'labels' }
-  | { kind: 'stopped' };
+  | { kind: 'stopped' }
+  | { kind: 'log' }
+  | { kind: 'logday'; day: string };
 
 export function Medications({
   go,
@@ -171,6 +171,12 @@ export function Medications({
     return <EpisodePage episode={view.episode} onBack={() => open({ kind: 'history' })} />;
   }
   if (view.kind === 'labels') return <LabelCheckPage onBack={home} />;
+  if (view.kind === 'log') {
+    return <LogPage onBack={home} onDay={(day) => open({ kind: 'logday', day })} />;
+  }
+  if (view.kind === 'logday') {
+    return <DayLogPage day={view.day} onBack={() => open({ kind: 'log' })} />;
+  }
   if (view.kind === 'stopped') return <StoppedPage onBack={home} />;
 
   return (
@@ -211,13 +217,6 @@ function MainView({
   const episode = plan?.episode ?? null;
   const all = useMemo(() => plan?.groups.flatMap((g) => g.doses) ?? [], [plan]);
   const taken = all.filter((p) => p.state === 'taken').length;
-
-  const tick = async (p: (typeof all)[number]) => {
-    if (!plan) return;
-    if (p.state === 'taken' && p.eventId) await undoIntake(p.eventId);
-    else await markDose(p, plan.day, 'taken');
-    await refresh();
-  };
 
   return (
     <>
@@ -275,48 +274,9 @@ function MainView({
         </>
       )}
 
-      {plan?.groups.map((g) => {
-        const t = TIMES.find((x) => x.id === g.time)!;
-        const done = g.doses.filter((p) => p.state === 'taken').length;
-        return (
-          <div key={g.time}>
-            <div className="section-h">
-              <SlotIcon slot={t.slot} size={18} />
-              {t.label}
-              <span className="k num">
-                {done} of {g.doses.length}
-              </span>
-            </div>
-            {g.doses.map((p) => (
-              <div className="row dose" data-state={p.state} key={p.dose.id}>
-                <button className="row-tap" onClick={() => open({ kind: 'detail', id: p.med.id })}>
-                  <span className="grow">
-                    <span className="nm" style={{ display: 'block' }}>
-                      {p.med.name}
-                      {p.med.dose_text && <span className="str num">{p.med.dose_text}</span>}
-                    </span>
-                    <span className="amt">{describeDose(p.dose)}</span>
-                  </span>
-                  {p.med.long_term === 1 && <span className="tag tag--life">Long-Term</span>}
-                </button>
-                <button
-                  className="tickb"
-                  data-state={p.state}
-                  aria-pressed={p.state === 'taken'}
-                  aria-label={
-                    p.state === 'taken'
-                      ? `Undo: ${p.med.name} taken`
-                      : `Mark ${p.med.name} taken, ${t.label.toLowerCase()}`
-                  }
-                  onClick={() => void tick(p)}
-                >
-                  {p.state === 'skipped' ? '–' : <Tick size={15} />}
-                </button>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {plan && (
+        <DoseGroups plan={plan} onOpen={(id) => open({ kind: 'detail', id })} onChanged={refresh} />
+      )}
 
       {plan && plan.unscheduled.length > 0 && (
         <>
@@ -357,6 +317,7 @@ function MainView({
       </button>
 
       <div className="linkrows">
+        <LinkRow name="Medicine log" note="taken · skipped · missed" onClick={() => open({ kind: 'log' })} />
         <LinkRow name="Label check" note="FDA labels" onClick={() => open({ kind: 'labels' })} />
         <LinkRow
           name="Sickness history"

@@ -145,7 +145,8 @@ export async function collectMeds(cursor: number): Promise<WireRow[]> {
 
   const doses = await db.query<ChildRow>(
     `SELECT p.slug AS product_slug, p.name AS product_name, p.strength_text AS product_strength,
-            c.position, c.amount, c.unit, c.time_of_day, c.meal, c.updated_at, c.deleted_at
+            c.position, c.amount, c.unit, c.time_of_day, c.meal, c.freq, c.freq_days,
+            c.updated_at, c.deleted_at
        FROM med_product_doses c
        JOIN med_products p ON p.id = c.product_id
       WHERE p.private = 0 AND ${changedSlots.replace('%T', 'med_product_doses')}`,
@@ -156,6 +157,10 @@ export async function collectMeds(cursor: number): Promise<WireRow[]> {
     unit: (r.unit as string | null) ?? null,
     time_of_day: (r.time_of_day as string | null) ?? null,
     meal: (r.meal as string | null) ?? null,
+    // So a weekly medicine arrives weekly. A batch from before this was added
+    // has no freq, which reads as every day — what it was.
+    freq: (r.freq as string | null) ?? null,
+    freq_days: (r.freq_days as string | null) ?? null,
   })));
 
   return out;
@@ -246,7 +251,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
     table === 'med_product_ingredients'
       ? { name: r.f.name ?? '', strength_text: r.f.strength_text ?? null }
       : { amount: r.f.amount ?? null, unit: r.f.unit ?? null,
-          time_of_day: r.f.time_of_day ?? null, meal: r.f.meal ?? null };
+          time_of_day: r.f.time_of_day ?? null, meal: r.f.meal ?? null,
+          freq: r.f.freq ?? null, freq_days: r.f.freq_days ?? null };
   const cols = Object.keys(values);
 
   if (!local[0]) {

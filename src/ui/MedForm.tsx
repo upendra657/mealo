@@ -14,9 +14,17 @@
 
 import { useEffect, useState } from 'react';
 import {
+  EVERY_DAY,
   FORMS,
+  FREQS,
   MAX_DOSES,
+  WEEKDAYS,
   amountsSet,
+  dateOf,
+  fmtDay,
+  medDay,
+  nextDue,
+  ordinal,
   MEALS,
   TIMES,
   UNITS_FOR,
@@ -29,6 +37,8 @@ import {
   type DoseSlot,
   type Episode,
   type Form,
+  type Freq,
+  type Schedule,
   type Unit,
 } from '../domain/doses';
 import {
@@ -62,7 +72,23 @@ const UNIT_LABEL: Record<Unit, string> = {
   drop: 'drops',
 };
 
-type Picker = { kind: 'amount' | 'time' | 'meal'; i: number } | null;
+type Picker = { kind: 'amount' | 'time' | 'meal' | 'mday'; i: number } | null;
+
+/**
+ * The line under How often: when it is next due, so a schedule picked on a
+ * Tuesday says "Next: Sun 11 Oct" and can be checked against the prescription
+ * before Save.
+ */
+function nextLine(s: Schedule): string {
+  if (s.freq === 'daily') return '';
+  if (s.freq === 'weekdays' && s.days.length === 0) return 'Pick at least one day.';
+  const today = medDay();
+  // An alternate rhythm with no anchor yet starts the day it is saved.
+  const from = s.freq === 'alternate' && !s.from ? { ...s, from: today } : s;
+  const next = nextDue(from, today);
+  if (!next) return '';
+  return next === today ? 'Due today.' : `Next: ${fmtDay(next)}.`;
+}
 
 export function MedFormScreen({
   mode,
@@ -85,6 +111,7 @@ export function MedFormScreen({
 }) {
   const [f, setF] = useState<MedForm>(() => ({
     ...initial,
+    schedule: initial.schedule ?? EVERY_DAY,
     doses: initial.doses.length ? sortByTime(initial.doses) : resizeDoses([], 1, initial.form),
   }));
   const [library, setLibrary] = useState<Product[]>([]);
@@ -102,6 +129,31 @@ export function MedFormScreen({
   }, [mode]);
 
   const patch = (p: Partial<MedForm>) => setF((x) => ({ ...x, ...p }));
+  /**
+   * Switching frequency starts from today: a weekly medicine set up on a
+   * Tuesday defaults to Tuesdays, a monthly one to today's date. An alternate
+   * rhythm keeps its old anchor if it already had one, so editing an amount
+   * does not move which days are due.
+   */
+  const setFreq = (freq: Freq) => {
+    const today = dateOf(medDay());
+    const next: Schedule =
+      freq === 'daily' ? EVERY_DAY
+      : freq === 'weekdays' ? { freq, days: f.schedule.freq === 'weekdays' ? f.schedule.days : [today.getDay()], from: null }
+      : freq === 'monthly' ? { freq, days: f.schedule.freq === 'monthly' ? f.schedule.days : [today.getDate()], from: null }
+      : { freq, days: [], from: f.schedule.freq === 'alternate' ? f.schedule.from : null };
+    patch({ schedule: next });
+  };
+  const toggleDay = (d: number) => {
+    const has = f.schedule.days.includes(d);
+    patch({
+      schedule: {
+        ...f.schedule,
+        days: (has ? f.schedule.days.filter((x) => x !== d) : [...f.schedule.days, d]).sort(),
+      },
+    });
+  };
+  const scheduleOk = f.schedule.freq !== 'weekdays' || f.schedule.days.length > 0;
   const setDose = (i: number, p: Partial<DoseSlot>) =>
     setF((x) => ({ ...x, doses: x.doses.map((d, j) => (j === i ? { ...d, ...p } : d)) }));
 
@@ -314,6 +366,46 @@ export function MedFormScreen({
         <p className="mnote">Changes the ingredients in the household library, for both of you.</p>
       )}
 
+      <div className="field-lbl">How often</div>
+      <div className="chips chips--meds">
+        {FREQS.map((x) => (
+          <button
+            key={x.id}
+            className="chip"
+            aria-pressed={f.schedule.freq === x.id}
+            onClick={() => setFreq(x.id)}
+          >
+            {x.label}
+          </button>
+        ))}
+      </div>
+      {f.schedule.freq === 'weekdays' && (
+        // Monday first, the way a week is read; stored Sunday-first, the way
+        // Date counts.
+        <div className="wdays">
+          {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+            <button
+              key={d}
+              aria-pressed={f.schedule.days.includes(d)}
+              aria-label={WEEKDAYS[d]}
+              onClick={() => toggleDay(d)}
+            >
+              {WEEKDAYS[d].charAt(0)}
+            </button>
+          ))}
+        </div>
+      )}
+      {f.schedule.freq === 'monthly' && (
+        <div className="mday">
+          <PickField
+            k="Day of the month"
+            v={ordinal(f.schedule.days[0] ?? 1)}
+            onClick={() => setPicker({ kind: 'mday', i: 0 })}
+          />
+        </div>
+      )}
+      {nextLine(f.schedule) && <p className="mnote">{nextLine(f.schedule)}</p>}
+
       <div className="field-lbl">Times a day</div>
       <div className="times">
         {Array.from({ length: MAX_DOSES }, (_, i) => i + 1).map((n) => (
@@ -373,7 +465,7 @@ export function MedFormScreen({
 
       <button
         className="cta cta--meds"
-        disabled={busy || !f.name.trim() || !amountsSet(f.doses)}
+        disabled={busy || !f.name.trim() || !amountsSet(f.doses) || !scheduleOk}
         onClick={() => void save()}
       >
         Save
@@ -397,7 +489,7 @@ export function MedFormScreen({
             ))}
           </div>
         )}
-        {current && (
+        {picker?.kind === 'amount' && current && (
           <Wheel
             values={ladder.includes(amount) ? ladder : [...ladder, amount].sort((a, b) => a - b)}
             value={amount}
@@ -441,7 +533,7 @@ export function MedFormScreen({
 
       <Sheet open={picker?.kind === 'time'} onClose={() => setPicker(null)} label="Time of day">
         <h3>Time of day</h3>
-        {current && (
+        {picker?.kind === 'time' && current && (
           <Wheel
             values={TIMES.map((t) => t.id)}
             value={current.time_of_day ?? 'morning'}
@@ -457,6 +549,31 @@ export function MedFormScreen({
             setPicker(null);
           }}
         >
+          Done
+        </button>
+      </Sheet>
+
+      <Sheet open={picker?.kind === 'mday'} onClose={() => setPicker(null)} label="Day of the month">
+        <h3>Day of the month</h3>
+        {/* Mounted only while open. Sheets stay mounted when closed, and a
+            wheel reports whatever row it settles on: fed the weekday list
+            (Sunday is 0, which 1-31 does not have), this one scrolled to
+            "1st" behind a closed sheet and quietly made a weekly medicine
+            monthly. Every wheel on this form is gated the same way. */}
+        {picker?.kind === 'mday' && f.schedule.freq === 'monthly' && (
+          <Wheel
+            values={Array.from({ length: 31 }, (_, i) => i + 1)}
+            value={f.schedule.days[0] ?? 1}
+            render={(v) => ordinal(v as number)}
+            onChange={(v) => patch({ schedule: { freq: 'monthly', days: [v as number], from: null } })}
+          />
+        )}
+        {(f.schedule.days[0] ?? 1) > 28 && (
+          <p className="sk-note" style={{ textAlign: 'center' }}>
+            In shorter months, the last day of the month.
+          </p>
+        )}
+        <button className="done" onClick={() => setPicker(null)}>
           Done
         </button>
       </Sheet>

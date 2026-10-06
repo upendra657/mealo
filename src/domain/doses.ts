@@ -310,6 +310,120 @@ export function durationLabel(n: number, unit: string): string {
   return `${n} ${n === 1 ? unit.replace(/s$/, '') : unit}`;
 }
 
+// --------------------------------------------------------------- how often
+
+export const FREQS = [
+  { id: 'daily', label: 'Every day' },
+  { id: 'alternate', label: 'Alternate days' },
+  { id: 'weekdays', label: 'Days of the week' },
+  { id: 'monthly', label: 'Once a month' },
+] as const;
+export type Freq = (typeof FREQS)[number]['id'];
+
+/** Sunday first, matching Date.getDay(). */
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Which days a medicine is due. `days` is weekdays (0-6 from Sunday) for
+ * 'weekdays' and the one date of the month for 'monthly'; `from` is the day an
+ * alternate-day rhythm counts from.
+ */
+export type Schedule = { freq: Freq; days: number[]; from: string | null };
+
+export const EVERY_DAY: Schedule = { freq: 'daily', days: [], from: null };
+
+/** From the three columns v10 stores it in. Anything unreadable is daily. */
+export function scheduleOf(freq: string | null, freqDays: string | null, from: string | null): Schedule {
+  const days = (freqDays ?? '')
+    .split(',')
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isInteger(n));
+  switch (freq) {
+    case 'alternate':
+      return { freq, days: [], from };
+    case 'weekdays':
+      return days.some((d) => d >= 0 && d <= 6)
+        ? { freq, days: [...new Set(days.filter((d) => d >= 0 && d <= 6))].sort(), from: null }
+        : EVERY_DAY;
+    case 'monthly':
+      return days[0] >= 1 && days[0] <= 31 ? { freq, days: [days[0]], from: null } : EVERY_DAY;
+    default:
+      return EVERY_DAY;
+  }
+}
+
+export function scheduleColumns(s: Schedule): {
+  freq: Freq;
+  freq_days: string | null;
+  freq_from: string | null;
+} {
+  return {
+    freq: s.freq,
+    freq_days: s.freq === 'weekdays' || s.freq === 'monthly' ? s.days.join(',') : null,
+    freq_from: s.freq === 'alternate' ? s.from : null,
+  };
+}
+
+/**
+ * Is a medicine on this schedule due on `day`?
+ *
+ * Alternate days count from `from`, so the rhythm is fixed to the calendar
+ * and a missed day does not shift it: due on the 4th, 6th, 8th whatever was
+ * ticked. A monthly date the month does not have is held at its last day, so
+ * "the 31st" means the 30th in November and the 28th in a short February.
+ */
+export function dueOn(s: Schedule, day: string): boolean {
+  switch (s.freq) {
+    case 'daily':
+      return true;
+    case 'alternate': {
+      if (!s.from) return true;
+      const n = daysFrom(s.from, day);
+      return n >= 0 && n % 2 === 0;
+    }
+    case 'weekdays':
+      return s.days.includes(dateOf(day).getDay());
+    case 'monthly': {
+      const d = dateOf(day);
+      const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      return d.getDate() === Math.min(s.days[0] ?? 1, last);
+    }
+  }
+}
+
+/** The next day on or after `from` it is due, within two months, or null. */
+export function nextDue(s: Schedule, from: string): string | null {
+  for (let i = 0; i < 62; i++) {
+    const day = addDays(from, i);
+    if (dueOn(s, day)) return day;
+  }
+  return null;
+}
+
+export const ordinal = (n: number) =>
+  `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+
+/** "Every day", "Alternate days", "Sun, Wed", "Every Sunday", "Monthly, on the 15th". */
+export function describeSchedule(s: Schedule): string {
+  switch (s.freq) {
+    case 'daily':
+      return 'Every day';
+    case 'alternate':
+      return 'Alternate days';
+    case 'weekdays':
+      if (s.days.length === 7) return 'Every day';
+      if (s.days.length === 1) return `Every ${WEEKDAYS_LONG[s.days[0]]}`;
+      return s.days.map((d) => WEEKDAYS[d]).join(', ');
+    case 'monthly':
+      return `Monthly, on the ${ordinal(s.days[0] ?? 1)}`;
+  }
+}
+
+export function sameSchedule(a: Schedule, b: Schedule): boolean {
+  return JSON.stringify(scheduleColumns(a)) === JSON.stringify(scheduleColumns(b));
+}
+
 // ------------------------------------------------------- the day's plan
 
 export type PlanMed = {
@@ -319,50 +433,97 @@ export type PlanMed = {
   schedule: string | null;
   long_term: number | null;
   episode_id: string | null;
+  /** Local dates. A medicine is not due before it started or once stopped. */
+  started_on?: string | null;
+  ended_on?: string | null;
 };
 
-export type PlanDose = DoseSlot & { id: string; medication_id: string; position: number };
+export type PlanDose = DoseSlot & {
+  id: string;
+  medication_id: string;
+  position: number;
+  freq?: string | null;
+  freq_days?: string | null;
+  freq_from?: string | null;
+  /** The local day this row became the schedule; null for "from the start". */
+  from_day?: string | null;
+  /** ms. Set once the row was replaced; it stopped being the schedule that day. */
+  deleted_at?: number | null;
+};
 
 export type PlanIntake = {
   id: string;
   dose_id: string | null;
   status: 'taken' | 'skipped';
   updated_at: number;
+  /** When the tick was made, ms — later than its day means entered after. */
+  taken_at?: number;
+  /** The tick's medicine and its dose's time, so a tick survives the dose
+      row it was made against being replaced by an edit the same day. */
+  medication_id?: string;
+  time_of_day?: TimeOfDay | null;
 };
 
-export type DoseState = 'taken' | 'skipped' | 'due' | 'later';
+/**
+ * taken and skipped are what someone said. missed is a past dose nobody
+ * ticked either way — worked out, never stored. due is today and its time has
+ * come; later is today and it has not.
+ */
+export type DoseState = 'taken' | 'skipped' | 'missed' | 'due' | 'later';
 
 export type PlannedDose<M extends PlanMed> = {
   med: M;
   dose: PlanDose;
   state: DoseState;
-  /** The tick behind a taken or skipped state, so it can be undone. */
+  /** The tick behind a taken or skipped state, so it can be changed. */
   eventId: string | null;
+  /** Ticked on a later day than the one it was for. */
+  late: boolean;
 };
 
 export type DayPlan<M extends PlanMed> = {
   day: string;
   /** The sickness running on this day, if any. */
   episode: Episode | null;
-  /** Doses to take, grouped by time of day, in day order. */
+  /** Doses due, grouped by time of day, in day order. */
   groups: { time: TimeOfDay; doses: PlannedDose<M>[] }[];
   /** Regular medicines set aside while a sickness runs. */
   paused: { med: M; doses: PlanDose[] }[];
   /** Medicines from before dose slots, shown as written until given some. */
   unscheduled: M[];
+  /** Being taken, but not due on this day — a weekly medicine on a Tuesday.
+      Not on the screen, which shows only what is due; the Doctor still needs
+      to know it is being taken. */
+  notToday: { med: M; doses: PlanDose[] }[];
 };
+
+/** The schedule a dose row carries. */
+export function scheduleOfDose(d: PlanDose): Schedule {
+  return scheduleOf(d.freq ?? null, d.freq_days ?? null, d.freq_from ?? null);
+}
+
+/** Was this row the schedule on `day`? */
+export function liveOn(d: PlanDose, day: string): boolean {
+  if (d.from_day && d.from_day > day) return false;
+  // Replaced on day X means the new rows are the schedule from X on. X by the
+  // Meds day, the same clock from_day is written by.
+  if (d.deleted_at != null && medDay(new Date(d.deleted_at)) <= day) return false;
+  return true;
+}
 
 /**
  * What one person takes on one day.
  *
- * `meds` are medicines not stopped; `episodes` every sickness on record. A
- * medicine belonging to a sickness is due only while that sickness runs — once
- * it ends, the course is history, not something still being taken. A regular
- * medicine is set aside while any sickness runs unless it is long-term; one
- * nobody was ever asked about (long_term NULL) is set aside too, which is why
- * the start-sick sheet asks before it starts.
+ * `meds` may include stopped ones and `doses` replaced rows: each is held to
+ * the dates it was in force, which is what lets the same function answer for
+ * today and for any day in the log. A medicine belonging to a sickness is due
+ * only while that sickness runs — once it ends, the course is history. A
+ * regular medicine is set aside while any sickness runs unless it is
+ * long-term; one nobody was ever asked about (long_term NULL) is set aside
+ * too, which is why the start-sick sheet asks first. A dose not due on the
+ * day by its schedule is not on the day at all.
  *
- * `now` only decides due versus later, and only when `day` is today.
+ * `now` decides due versus later today, and which days are past.
  */
 export function planDay<M extends PlanMed>(
   day: string,
@@ -376,24 +537,32 @@ export function planDay<M extends PlanMed>(
 
   const byMed = new Map<string, PlanDose[]>();
   for (const d of doses) {
+    if (!liveOn(d, day)) continue;
     byMed.set(d.medication_id, [...(byMed.get(d.medication_id) ?? []), d]);
   }
 
-  // The newest tick per dose wins, so undo-then-redo reads as the redo.
-  const tick = new Map<string, PlanIntake>();
+  // The newest tick per dose wins. Keyed twice: by the row it was made
+  // against, and by medicine and time, so editing a schedule after ticking
+  // this morning's dose does not untick it.
+  const byDose = new Map<string, PlanIntake>();
+  const byTime = new Map<string, PlanIntake>();
+  const newer = (a: PlanIntake | undefined, b: PlanIntake) => !a || b.updated_at >= a.updated_at;
   for (const e of intake) {
-    if (!e.dose_id) continue;
-    const prev = tick.get(e.dose_id);
-    if (!prev || e.updated_at >= prev.updated_at) tick.set(e.dose_id, e);
+    if (e.dose_id && newer(byDose.get(e.dose_id), e)) byDose.set(e.dose_id, e);
+    if (e.medication_id && e.time_of_day) {
+      const k = `${e.medication_id}|${e.time_of_day}`;
+      if (newer(byTime.get(k), e)) byTime.set(k, e);
+    }
   }
+  const tickFor = (d: PlanDose) =>
+    byDose.get(d.id) ?? (d.time_of_day ? byTime.get(`${d.medication_id}|${d.time_of_day}`) : undefined);
 
-  const isToday = day === medDay(now);
+  const today = medDay(now);
   const nowRank = TIMES.findIndex((t) => t.id === partOfDay(now));
-  const stateOf = (d: PlanDose): DoseState => {
-    const t = tick.get(d.id);
+  const stateOf = (d: PlanDose, t: PlanIntake | undefined): DoseState => {
     if (t) return t.status;
-    // A past day has nothing still to come; a future one has nothing due yet.
-    if (!isToday) return day < medDay(now) ? 'due' : 'later';
+    if (day < today) return 'missed';
+    if (day > today) return 'later';
     const rank = d.time_of_day ? TIMES.findIndex((x) => x.id === d.time_of_day) : 0;
     return rank <= nowRank ? 'due' : 'later';
   };
@@ -401,8 +570,14 @@ export function planDay<M extends PlanMed>(
   const taking: PlannedDose<M>[] = [];
   const paused: DayPlan<M>['paused'] = [];
   const unscheduled: M[] = [];
+  const notToday: DayPlan<M>['notToday'] = [];
 
   for (const med of meds) {
+    if (med.started_on && med.started_on > day) continue;
+    // Stopped on X: not due from X on. The doses ticked before stopping that
+    // day stay in the record; they are just not expected of the day.
+    if (med.ended_on && med.ended_on <= day) continue;
+
     if (med.episode_id !== null) {
       if (med.episode_id !== episode?.id) continue;
     } else if (episode && med.long_term !== 1) {
@@ -415,8 +590,22 @@ export function planDay<M extends PlanMed>(
       unscheduled.push(med);
       continue;
     }
+    if (!mine.some((d) => dueOn(scheduleOfDose(d), day))) {
+      notToday.push({ med, doses: sortByTime(mine) });
+      continue;
+    }
     for (const dose of mine) {
-      taking.push({ med, dose, state: stateOf(dose), eventId: tick.get(dose.id)?.id ?? null });
+      if (!dueOn(scheduleOfDose(dose), day)) continue;
+      const t = tickFor(dose);
+      taking.push({
+        med,
+        dose,
+        state: stateOf(dose, t),
+        eventId: t?.id ?? null,
+        // Late by the Meds day, not the calendar: last night's dose ticked at
+        // half past midnight was on time.
+        late: !!t?.taken_at && medDay(new Date(t.taken_at)) > day,
+      });
     }
   }
 
@@ -427,5 +616,106 @@ export function planDay<M extends PlanMed>(
       .sort((a, b) => a.med.name.localeCompare(b.med.name) || a.dose.position - b.dose.position),
   })).filter((g) => g.doses.length > 0);
 
-  return { day, episode, groups, paused, unscheduled };
+  return { day, episode, groups, paused, unscheduled, notToday };
+}
+
+// --------------------------------------------------------------- the log
+
+export type Tally = { taken: number; skipped: number; missed: number; pending: number };
+
+export const NO_TALLY: Tally = { taken: 0, skipped: 0, missed: 0, pending: 0 };
+
+/** How a day went, counted. pending is today's doses not yet answered. */
+export function tallyOf<M extends PlanMed>(plan: DayPlan<M>): Tally {
+  const t = { ...NO_TALLY };
+  for (const g of plan.groups) {
+    for (const p of g.doses) {
+      if (p.state === 'taken') t.taken++;
+      else if (p.state === 'skipped') t.skipped++;
+      else if (p.state === 'missed') t.missed++;
+      else t.pending++;
+    }
+  }
+  return t;
+}
+
+export function addTally(a: Tally, b: Tally): Tally {
+  return {
+    taken: a.taken + b.taken,
+    skipped: a.skipped + b.skipped,
+    missed: a.missed + b.missed,
+    pending: a.pending + b.pending,
+  };
+}
+
+/** Every local day from `from` through `to`, inclusive. */
+export function daysBetweenInclusive(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+
+export type MedLog<M extends PlanMed> = {
+  med: M;
+  tally: Tally;
+  /** One entry per day of the range: how that day went for this medicine. */
+  days: { day: string; state: DoseState | 'partial' | null }[];
+};
+
+export type Log<M extends PlanMed> = {
+  plans: DayPlan<M>[];
+  total: Tally;
+  meds: MedLog<M>[];
+};
+
+/**
+ * The log over a run of days, from the same planDay the screen uses — so a
+ * dose counts as missed in the log exactly when it would have shown unticked
+ * on its day, and not on a day its schedule, a sickness or a stop left it off.
+ */
+export function buildLog<M extends PlanMed>(
+  days: string[],
+  meds: M[],
+  doses: PlanDose[],
+  episodes: Episode[],
+  intake: (PlanIntake & { for_day: string })[],
+  now = new Date(),
+): Log<M> {
+  const byDay = new Map<string, PlanIntake[]>();
+  for (const e of intake) byDay.set(e.for_day, [...(byDay.get(e.for_day) ?? []), e]);
+
+  const plans = days.map((d) => planDay(d, meds, doses, episodes, byDay.get(d) ?? [], now));
+  const total = plans.map(tallyOf).reduce(addTally, NO_TALLY);
+
+  const perMed = new Map<string, MedLog<M>>();
+  for (const plan of plans) {
+    const seen = new Map<string, DoseState[]>();
+    for (const g of plan.groups) {
+      for (const p of g.doses) {
+        seen.set(p.med.id, [...(seen.get(p.med.id) ?? []), p.state]);
+        if (!perMed.has(p.med.id)) perMed.set(p.med.id, { med: p.med, tally: { ...NO_TALLY }, days: [] });
+      }
+    }
+    for (const [id, states] of seen) {
+      const m = perMed.get(id)!;
+      for (const st of states) {
+        if (st === 'taken') m.tally.taken++;
+        else if (st === 'skipped') m.tally.skipped++;
+        else if (st === 'missed') m.tally.missed++;
+        else m.tally.pending++;
+      }
+    }
+  }
+  // A cell per day for every medicine, so the rows line up as columns.
+  for (const m of perMed.values()) {
+    m.days = plans.map((plan) => {
+      const states = plan.groups.flatMap((g) => g.doses).filter((p) => p.med.id === m.med.id)
+        .map((p) => p.state);
+      if (states.length === 0) return { day: plan.day, state: null };
+      const first = states[0];
+      return { day: plan.day, state: states.every((x) => x === first) ? first : 'partial' };
+    });
+  }
+  const meds_ = [...perMed.values()].sort((a, b) => a.med.name.localeCompare(b.med.name));
+  return { plans, total, meds: meds_ };
 }

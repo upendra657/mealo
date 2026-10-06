@@ -21,10 +21,15 @@
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import {
+  addDays,
+  buildLog,
+  daysBetweenInclusive,
   describeDose,
+  describeSchedule,
   medDay,
   planDay,
   progress,
+  scheduleOfDose,
   timeLabel,
   type Episode,
   type PlanDose,
@@ -58,7 +63,9 @@ export type StateFacts = {
   sickness: { name: string; day: number; of: number } | null;
   /** Regular medicines set aside while that sickness runs. */
   paused: string[];
-  adherence7d: { taken: number; skipped: number };
+  /** Over the seven days before today, judged by what each day had due:
+      missed is a due dose nobody ticked either way. */
+  adherence7d: { taken: number; skipped: number; missed: number };
   /** Per-medication status today — "taken at 08:15" beats "9 doses this week". */
   dosesToday: { name: string; status: string; time: string }[];
   /** What was actually eaten today, by name. Averages cannot answer
@@ -87,54 +94,62 @@ export async function collectFacts(): Promise<StateFacts> {
   // "every row not stopped": a finished course of antibiotics is not stopped,
   // it is over, and a regular supplement paused for a fever is not being taken.
   const today = medDay();
+  const weekFrom = addDays(today, -7);
+  // Stopped medicines and replaced dose rows too: the week behind today is
+  // judged by what each of its days had, and planDay holds each row to its
+  // dates. Today's plan drops anything stopped on its own.
   const [medRows, doseRows, episodes, ticks] = await Promise.all([
     db.query<PlanMed>(
-      `SELECT id, name, dose_text, schedule, long_term, episode_id FROM medications
-        WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NULL
+      `SELECT id, name, dose_text, schedule, long_term, episode_id, started_on, ended_on
+         FROM medications WHERE profile_id = ? AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE`,
       [me],
     ),
-    db.query<PlanDose>(
-      'SELECT * FROM med_doses WHERE profile_id = ? AND deleted_at IS NULL ORDER BY position',
-      [me],
-    ),
+    db.query<PlanDose>('SELECT * FROM med_doses WHERE profile_id = ? ORDER BY position', [me]),
     db.query<Episode>(
       'SELECT * FROM sick_episodes WHERE profile_id = ? AND deleted_at IS NULL',
       [me],
     ),
-    db.query<PlanIntake>(
-      `SELECT id, dose_id, status, updated_at FROM intake_events
-        WHERE profile_id = ? AND for_day = ? AND deleted_at IS NULL`,
-      [me, today],
+    db.query<PlanIntake & { for_day: string }>(
+      `SELECT e.id, e.dose_id, e.status, e.updated_at, e.taken_at, e.for_day,
+              e.medication_id, d.time_of_day
+         FROM intake_events e LEFT JOIN med_doses d ON d.id = e.dose_id
+        WHERE e.profile_id = ? AND e.deleted_at IS NULL AND e.for_day >= ? AND e.for_day <= ?`,
+      [me, weekFrom, today],
     ),
   ]);
-  const plan = planDay(today, medRows, doseRows, episodes, ticks);
+  const plan = planDay(today, medRows, doseRows, episodes, ticks.filter((t) => t.for_day === today));
+  const week = buildLog(daysBetweenInclusive(weekFrom, addDays(today, -1)), medRows, doseRows,
+    episodes, ticks);
 
-  const scheduled = new Map<string, { med: PlanMed; parts: string[] }>();
+  // Everything being taken, due today or not: a weekly tablet on a Tuesday is
+  // still part of what this person takes, and its schedule says when.
+  const scheduled = new Map<string, { med: PlanMed; doses: PlanDose[] }>();
   for (const g of plan.groups) {
     for (const p of g.doses) {
-      const entry = scheduled.get(p.med.id) ?? { med: p.med, parts: [] };
-      entry.parts.push(`${timeLabel(p.dose.time_of_day).toLowerCase()}: ${describeDose(p.dose)}`);
+      const entry = scheduled.get(p.med.id) ?? { med: p.med, doses: [] };
+      entry.doses.push(p.dose);
       scheduled.set(p.med.id, entry);
     }
   }
+  for (const n of plan.notToday) scheduled.set(n.med.id, { med: n.med, doses: n.doses });
   const meds = [
-    ...[...scheduled.values()].map(({ med, parts }) => ({
-      name: med.name,
-      dose_text: med.dose_text,
-      schedule: parts.join(', '),
-    })),
+    ...[...scheduled.values()].map(({ med, doses }) => {
+      const how = doses[0] ? scheduleOfDose(doses[0]) : null;
+      const when = doses
+        .map((d) => `${timeLabel(d.time_of_day).toLowerCase()}: ${describeDose(d)}`)
+        .join(', ');
+      return {
+        name: med.name,
+        dose_text: med.dose_text,
+        schedule: how && how.freq !== 'daily' ? `${describeSchedule(how).toLowerCase()}; ${when}` : when,
+      };
+    }),
     // From before dose slots: the schedule exactly as it was typed.
     ...plan.unscheduled.map((m) => ({ name: m.name, dose_text: m.dose_text, schedule: m.schedule })),
   ].sort((a, b) => a.name.localeCompare(b.name));
   const sick = plan.episode ? progress(plan.episode, today) : null;
 
-  const intake = await db.query<{ status: string; n: number }>(
-    `SELECT status, COUNT(*) AS n FROM intake_events
-      WHERE profile_id = ? AND deleted_at IS NULL AND taken_at >= ?
-      GROUP BY status`,
-    [me, weekAgo],
-  );
 
   const symptoms = await db.query<{
     label: string | null;
@@ -268,8 +283,9 @@ export async function collectFacts(): Promise<StateFacts> {
       plan.episode && sick ? { name: plan.episode.name, day: sick.day, of: sick.total } : null,
     paused: plan.paused.map((p) => p.med.name),
     adherence7d: {
-      taken: Number(intake.find((r) => r.status === 'taken')?.n ?? 0),
-      skipped: Number(intake.find((r) => r.status === 'skipped')?.n ?? 0),
+      taken: week.total.taken,
+      skipped: week.total.skipped,
+      missed: week.total.missed,
     },
     dosesToday: dosesToday.map((d) => ({
       name: d.name,
@@ -337,9 +353,9 @@ export function renderSlice(facts: StateFacts): string {
     lines.push('Doses today: nothing logged yet.');
   }
 
-  const { taken, skipped } = facts.adherence7d;
-  if (taken + skipped > 0) {
-    lines.push(`Last 7 days: ${taken} doses taken, ${skipped} skipped.`);
+  const { taken, skipped, missed } = facts.adherence7d;
+  if (taken + skipped + missed > 0) {
+    lines.push(`Last 7 days: ${taken} doses taken, ${skipped} skipped, ${missed} missed.`);
   }
 
   if (facts.mealsToday.length) {

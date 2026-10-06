@@ -2293,7 +2293,8 @@ textarea {
 
 /* ---- dose rows ---- */
 .section-h svg { color: var(--ink-text); opacity: 0.75; flex: none; }
-.dose .nm .str {
+.dose .nm .str,
+.lmed .nm .str {
   font-size: 12.5px;
   color: var(--muted);
   margin-left: 6px;
@@ -2545,3 +2546,118 @@ textarea {
 .mrow .ic svg { color: var(--ink-text); opacity: 0.75; }
 .mrow .v { text-align: right; }
 .cta.stop { margin-top: 26px; }
+
+/* ---- the medicine log --------------------------------------------------
+   Three states, each with a colour and a shape so neither carries it alone:
+   taken is a purple fill, skipped a grey dash, missed an amber ring. Amber
+   rather than red because red is Sick mode on these screens, and a missed
+   dose is a fact to see, not an alarm. Validated against --surface: worst
+   colour-blind pair ΔE 18.4, all three above 3:1. */
+.tickb .dash {
+  display: block;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--muted);
+}
+.tickb[data-state='skipped'] { border-color: var(--muted); }
+.tickb[data-state='missed'] { border-color: var(--warn); }
+.dose .late { color: var(--meds-muted); }
+
+.lcard { margin-top: 4px; }
+.lnum { color: var(--ink-text) !important; }
+.lbar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin-top: 12px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--empty);
+}
+.lbar i { display: block; height: 100%; flex-basis: 0; }
+.lbar i[data-k='taken'] { background: var(--meds); }
+.lbar i[data-k='skipped'] { background: var(--muted); }
+.lbar i[data-k='missed'] { background: var(--warn); }
+.lmed .lbar { height: 4px; margin-top: 8px; }
+
+.lleg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 11px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.lleg span { display: flex; align-items: center; gap: 6px; }
+.lleg b { color: var(--ink-text); font-weight: 500; }
+.lleg i,
+.lcell i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+.mk-taken { background: var(--meds); }
+.mk-skipped { height: 2px !important; border-radius: 1px !important; background: var(--muted); }
+.mk-missed { border: 2px solid var(--warn); }
+
+.lgrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.lwd {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.lcell {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.lcell span { font-size: 10.5px; color: var(--muted); line-height: 1; }
+.lcell i { width: 12px; height: 12px; }
+.lcell[data-mark='none'] i { width: 4px; height: 4px; background: var(--empty); }
+.lcell[data-mark='taken'] i { background: var(--meds); }
+.lcell[data-mark='skipped'] i { width: 12px; height: 2px; border-radius: 1px; background: var(--muted); }
+.lcell[data-mark='missed'] i { border: 2px solid var(--warn); }
+/* Some answered and some not yet, or taken and skipped: a ring in purple. */
+.lcell[data-mark='partial'] i { border: 2px solid var(--meds); }
+.lcell[data-mark='due'] i { border: 2px dashed var(--meds-line); }
+.lcell[data-today='1'] { border-color: var(--meds-line); }
+.lcell[data-today='1'] span { color: var(--ink-text); }
+
+/* How often: seven day toggles, Monday first, and a full-width month day. */
+.wdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+.wdays button {
+  aspect-ratio: 1;
+  max-height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--muted);
+}
+.wdays button[aria-pressed='true'] {
+  background: var(--meds);
+  border-color: var(--meds);
+  color: var(--meds-ink);
+  font-weight: 500;
+}
+.mday { margin-top: 10px; }
+.mday .afield { width: 100%; }
