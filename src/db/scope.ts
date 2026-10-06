@@ -27,6 +27,11 @@ type Scope = { read: readonly string[]; write: readonly string[] };
 const ALL_TABLES = [
   'medications',
   'intake_events',
+  'med_doses',
+  'sick_episodes',
+  'med_products',
+  'med_product_ingredients',
+  'med_product_doses',
   'meals',
   'meal_items',
   'foods',
@@ -55,10 +60,17 @@ const ALL_TABLES = [
  * `current_state` and `conversation_summaries` are absent because they encode
  * the profile in their primary key instead: one row per profile, and
  * "<profile>:<agent>" respectively.
+ *
+ * The three `med_product` tables are absent for the reason `custom_foods` is:
+ * they are the household's medicine library, what a medicine is rather than
+ * who takes it. Who takes it, how much and when is `medications` and
+ * `med_doses`, and those are here.
  */
 const PROFILE_SCOPED = [
   'medications',
   'intake_events',
+  'med_doses',
+  'sick_episodes',
   'meals',
   'meal_items',
   'symptoms',
@@ -81,6 +93,11 @@ export const SCOPES: Record<Agent, Scope> = {
     read: [
       'medications',
       'intake_events',
+      'med_doses',
+      'sick_episodes',
+      'med_products',
+      'med_product_ingredients',
+      'med_product_doses',
       'current_state',
       'citations',
       'messages',
@@ -89,6 +106,13 @@ export const SCOPES: Record<Agent, Scope> = {
     write: [
       'medications',
       'intake_events',
+      'med_doses',
+      // Which sickness is running decides which medicines are due, so the
+      // Pharmacist owns it. The Doctor still reads it, as it reads everything.
+      'sick_episodes',
+      'med_products',
+      'med_product_ingredients',
+      'med_product_doses',
       'citations',
       'messages',
       'conversation_summaries',

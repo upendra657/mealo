@@ -471,4 +471,171 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 10,
+  name: 'medicine library, dose slots and sickness',
+  sql: `
+    -- A medicine splits into two halves, along the same line v4 drew for food.
+    --
+    -- What a medicine IS — name, form, strength, active ingredients, and the
+    -- schedule people usually take it on — is a fact about a product, like a
+    -- dish's recipe, and the household shares it: one of you adds Paracetamol
+    -- 650 mg and the other finds it in the library instead of typing it out.
+    -- Those rows live in the three med_product tables, carry no profile_id, and
+    -- are what sync will carry.
+    --
+    -- What a person TAKES — their own amounts and times, whether it continues
+    -- through a sickness, every tick — is a record of a body. That stays in
+    -- medications, med_doses, intake_events and sick_episodes, all per person,
+    -- none of them synced.
+    --
+    -- No CHECK constraints on the vocabulary columns (form, unit, time_of_day,
+    -- meal). A CHECK cannot be widened without rebuilding the table, and with
+    -- forward-only migrations that rebuild is the expensive kind of change. A
+    -- fifth form — drops, an inhaler — should be a code change, so the lists
+    -- are enforced in domain code instead.
+
+    CREATE TABLE IF NOT EXISTS med_products (
+      id             TEXT PRIMARY KEY,
+      -- The merge key, from name AND strength, normalised in JS for the same
+      -- reasons custom_foods.slug is (v6), and not UNIQUE for the same reasons.
+      -- Strength is in it because Thyroxine 25 mcg and Thyroxine 50 mcg are
+      -- two medicines. Changing either on a product saves a new product rather
+      -- than editing this one, so a slug never changes under a row, and what
+      -- someone's record says they took cannot be rewritten by another
+      -- person's edit.
+      slug           TEXT,
+      name           TEXT NOT NULL,
+      form           TEXT,              -- 'tablet' | 'syrup' | 'powder'
+      strength_text  TEXT,              -- recorded verbatim, never computed
+      -- Never leaves this device: sync skips the row. Off by default because a
+      -- shared library is the point, but a medicine can be personal in a way a
+      -- dish is not, so it is a decision one medicine at a time.
+      private        INTEGER NOT NULL DEFAULT 0,
+      -- Removed from the library's search, and nothing more. Anyone already
+      -- taking it keeps it and their history still resolves its name, which
+      -- is why this is not deleted_at. Syncs like any other edit, so removing
+      -- it on one phone removes it from both libraries.
+      hidden         INTEGER NOT NULL DEFAULT 0,
+      updated_at     INTEGER NOT NULL,
+      deleted_at     INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_med_products_slug ON med_products(slug);
+
+    CREATE TABLE IF NOT EXISTS med_product_ingredients (
+      id             TEXT PRIMARY KEY,
+      product_id     TEXT NOT NULL,
+      position       INTEGER NOT NULL,
+      name           TEXT NOT NULL,
+      strength_text  TEXT,              -- verbatim, as printed on the strip
+      updated_at     INTEGER NOT NULL,
+      deleted_at     INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_med_ingredients_product
+      ON med_product_ingredients(product_id);
+
+    -- The schedule the library suggests. Whoever adds a medicine first gives it
+    -- theirs; the next person starts from it and edits before saving. Most
+    -- medicines are taken on much the same schedule, which is why it travels —
+    -- decided knowingly, since these amounts began as one person's doses.
+    --
+    -- A starting point only. It is copied into med_doses when someone adds the
+    -- medicine and never read by their day again, so editing it here changes
+    -- nobody's doses.
+    CREATE TABLE IF NOT EXISTS med_product_doses (
+      id           TEXT PRIMARY KEY,
+      product_id   TEXT NOT NULL,
+      position     INTEGER NOT NULL,
+      amount       REAL,
+      unit         TEXT,                -- 'tablet' | 'ml' | 'scoop' | 'g'
+      time_of_day  TEXT,                -- 'morning' | 'afternoon' | 'evening' | 'night'
+      meal         TEXT,                -- 'before' | 'after'
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_med_product_doses_product
+      ON med_product_doses(product_id);
+
+    -- ---- per person ---------------------------------------------------
+
+    -- One person's doses, 1 to 4 a medicine. Every amount here was typed by
+    -- that person, or read off their prescription and confirmed by them; the
+    -- app never fills one in on its own.
+    CREATE TABLE IF NOT EXISTS med_doses (
+      id             TEXT PRIMARY KEY,
+      profile_id     TEXT,
+      medication_id  TEXT NOT NULL,
+      position       INTEGER NOT NULL,
+      amount         REAL,
+      unit           TEXT,
+      time_of_day    TEXT,
+      meal           TEXT,
+      updated_at     INTEGER NOT NULL,
+      deleted_at     INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_med_doses_med
+      ON med_doses(profile_id, medication_id);
+
+    -- One row per sickness, kept for good: the history is the point.
+    --
+    -- There is no "active" column. A sickness is active from started_on
+    -- through last_day unless recovered_on is set, and that is computed when
+    -- it is read. So nothing is written when sick mode begins or runs out —
+    -- no flag to flip back, no midnight job to forget, no state that can be
+    -- left half-switched. Regular medicines pause the same way: by being read
+    -- against the dates, never by being edited.
+    --
+    -- last_day is stored rather than derived from the duration, so the
+    -- calendar arithmetic ("1 month" from the 31st) runs once, in local time,
+    -- in JS, and Extend has something to move. The duration as picked stays
+    -- beside it, which is what lets history say "planned 7 days, lasted 10".
+    CREATE TABLE IF NOT EXISTS sick_episodes (
+      id             TEXT PRIMARY KEY,
+      profile_id     TEXT,
+      name           TEXT NOT NULL,
+      started_on     TEXT NOT NULL,     -- local ISO date
+      last_day       TEXT NOT NULL,     -- local ISO date, inclusive
+      duration_n     INTEGER NOT NULL,  -- as picked: 7 …
+      duration_unit  TEXT NOT NULL,     -- … 'days' | 'weeks' | 'months' | 'years'
+      recovered_on   TEXT,              -- set by Recovered, and only by it
+      updated_at     INTEGER NOT NULL,
+      deleted_at     INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_sick_episodes_profile
+      ON sick_episodes(profile_id, started_on);
+
+    -- Which library product this is. NULL for every medicine added before
+    -- v10; those keep their name, dose_text and free-text schedule and are
+    -- shown as written. Nothing turns "every morning" into a dose slot,
+    -- because that would be the app interpreting a dose.
+    --
+    -- New rows still fill name and dose_text (the strength). Neither can
+    -- change under a product, so the copy cannot drift, and a person's record
+    -- does not depend on a library row someone else can hide.
+    ALTER TABLE medications ADD COLUMN product_id TEXT;
+
+    -- Keep taking through a sickness. Nullable on purpose, with no default:
+    -- NULL means nobody was ever asked, which is true of every medicine that
+    -- existed before this switch did. Defaulting those to 0 would quietly
+    -- pause a thyroid tablet the first time sick mode started. New medicines
+    -- always write 0 or 1 from the switch; NULL is left for the start-sick
+    -- sheet to ask about before it pauses anything.
+    ALTER TABLE medications ADD COLUMN long_term INTEGER;
+
+    -- NULL for a regular medicine. Set, the medicine belongs to that sickness
+    -- and is active only while it is.
+    ALTER TABLE medications ADD COLUMN episode_id TEXT;
+    CREATE INDEX IF NOT EXISTS idx_meds_episode ON medications(profile_id, episode_id);
+
+    -- Which dose slot a tick was for. NULL for ticks made before slots existed.
+    ALTER TABLE intake_events ADD COLUMN dose_id TEXT;
+
+    -- The local date the dose belonged to, set from the day on screen when the
+    -- tick is made. taken_at alone would file a night dose taken at 00:30
+    -- under the next day and show last night's Night as never taken.
+    ALTER TABLE intake_events ADD COLUMN for_day TEXT;
+    CREATE INDEX IF NOT EXISTS idx_intake_day ON intake_events(profile_id, for_day);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

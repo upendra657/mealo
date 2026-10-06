@@ -150,7 +150,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v9**. A new one ships with two additions or the tests fail: its checksum
+at **v10**. A new one ships with two additions or the tests fail: its checksum
 pinned in `SHIPPED` (`test-portions.ts`), and rows in `SEEDS`
 (`scripts/e2e/upgrade.ts`) for every table and column it adds. The e2e run
 then upgrades a populated database from the previous version through the real

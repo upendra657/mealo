@@ -577,6 +577,57 @@ async function main() {
     check('the gap between them is a day',
       daysBetween(back[1].measured_at, back[0].measured_at), 1);
   }
+
+  // ---- v10: the medicine library is shared, the doses are not ------------
+  // The split v10 draws, held by the same guard that keeps meals apart: what a
+  // medicine is reads freely, who takes it and how much does not.
+  {
+    const pharmacist = scopedDb('pharmacist');
+    const refused = async (sqlText: string) => {
+      try {
+        await pharmacist.query(sqlText);
+        return false;
+      } catch (e) {
+        return e instanceof ProfileScopeError;
+      }
+    };
+    check('an unfiltered read of med_doses throws',
+      await refused('SELECT * FROM med_doses WHERE deleted_at IS NULL'));
+    check('an unfiltered read of sick_episodes throws',
+      await refused('SELECT * FROM sick_episodes WHERE deleted_at IS NULL'));
+
+    let libraryReads = true;
+    try {
+      await pharmacist.query('SELECT id FROM med_products LIMIT 1');
+    } catch {
+      libraryReads = false;
+    }
+    check('but the medicine library reads without one', libraryReads);
+
+    // Library rows have no profile_id column at all, so a stamp would fail the
+    // insert outright. That it succeeds is the proof nothing stamped it.
+    const productId = await pharmacist.insert('med_products', { name: 'Fixture tablet' });
+    const doseId = await pharmacist.insert('med_doses', {
+      medication_id: 'fx-none', position: 1, amount: 1, unit: 'tablet',
+    });
+    const stampedDose = await query<{ profile_id: string }>(
+      'SELECT profile_id FROM med_doses WHERE id = ?', [doseId]);
+    check('a dose is stamped with whoever is logging',
+      stampedDose[0]?.profile_id === activeProfile(), String(stampedDose[0]?.profile_id));
+
+    let nutReadLibrary = false;
+    try {
+      await scopedDb('nutritionist').query('SELECT id FROM med_products LIMIT 1');
+      nutReadLibrary = true;
+    } catch (e) {
+      nutReadLibrary = !(e instanceof ScopeError);
+    }
+    check('the Nutritionist cannot read the medicine library', !nutReadLibrary);
+
+    // Raw client: scaffolding, not an agent action.
+    await sql('DELETE FROM med_products WHERE id = ?', [productId]);
+    await sql('DELETE FROM med_doses WHERE id = ?', [doseId]);
+  }
 }
 
 main()

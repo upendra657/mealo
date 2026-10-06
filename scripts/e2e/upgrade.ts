@@ -154,6 +154,46 @@ const SEEDS: Seed[] = [
   { version: 9, table: 'targets', rows: [
     { id: 'fx-later', burn_kcal: 500, updated_at: T },
   ] },
+
+  { version: 10, table: 'med_products', rows: [
+    { id: 'fx-prod-1', slug: 'calcium d3 1250 mg', name: 'Calcium + D3', form: 'tablet',
+      strength_text: '1250 mg', private: 1, hidden: 1, updated_at: T },
+    { id: 'fx-prod-2', name: 'Old Syrup', updated_at: T, deleted_at: T + 1 },
+  ] },
+  { version: 10, table: 'med_product_ingredients', rows: [
+    { id: 'fx-ingr-1', product_id: 'fx-prod-1', position: 1, name: 'Calcium carbonate',
+      strength_text: '1250 mg', updated_at: T },
+    { id: 'fx-ingr-2', product_id: 'fx-prod-1', position: 2, name: 'Cholecalciferol',
+      updated_at: T, deleted_at: T + 1 },
+  ] },
+  { version: 10, table: 'med_product_doses', rows: [
+    { id: 'fx-pdose-1', product_id: 'fx-prod-1', position: 1, amount: 1, unit: 'tablet',
+      time_of_day: 'morning', meal: 'after', updated_at: T },
+    { id: 'fx-pdose-2', product_id: 'fx-prod-1', position: 2, updated_at: T,
+      deleted_at: T + 1 },
+  ] },
+  { version: 10, table: 'sick_episodes', rows: [
+    { id: 'fx-sick-1', profile_id: 'primary', name: 'Viral fever', started_on: '2026-10-04',
+      last_day: '2026-10-13', duration_n: 7, duration_unit: 'days',
+      recovered_on: '2026-10-11', updated_at: T },
+    { id: 'fx-sick-2', profile_id: 'primary', name: 'Cold', started_on: '2026-09-01',
+      last_day: '2026-09-03', duration_n: 3, duration_unit: 'days', updated_at: T,
+      deleted_at: T + 1 },
+  ] },
+  { version: 10, table: 'medications', rows: [
+    { id: 'fx-med-3', profile_id: 'primary', name: 'Calcium + D3', dose_text: '1250 mg',
+      product_id: 'fx-prod-1', long_term: 1, episode_id: 'fx-sick-1', updated_at: T },
+  ] },
+  { version: 10, table: 'med_doses', rows: [
+    { id: 'fx-dose-1', profile_id: 'primary', medication_id: 'fx-med-3', position: 1,
+      amount: 0.5, unit: 'tablet', time_of_day: 'night', meal: 'before', updated_at: T },
+    { id: 'fx-dose-2', profile_id: 'primary', medication_id: 'fx-med-3', position: 2,
+      updated_at: T, deleted_at: T + 1 },
+  ] },
+  { version: 10, table: 'intake_events', rows: [
+    { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,
+      status: 'taken', dose_id: 'fx-dose-1', for_day: '2026-10-05', updated_at: T },
+  ] },
 ];
 
 /**
