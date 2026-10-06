@@ -199,6 +199,20 @@ const SEEDS: Seed[] = [
       amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after', freq: 'alternate',
       freq_days: '15', freq_from: '2026-10-04', from_day: '2026-10-04', updated_at: T },
   ] },
+  { version: 12, table: 'med_ref_sets', rows: [
+    { id: 'fx-set-1', name: 'Fixture list', tag: 'India', source_url: 'https://example.invalid',
+      licence: 'CC BY-SA 4.0', builtin: 1, status: 'ready', row_count: 1, skipped: 2,
+      version: '2026-08', imported_at: T, updated_at: T },
+    { id: 'fx-set-2', name: 'Gone list', tag: 'Gone', status: 'ready', updated_at: T,
+      deleted_at: T + 1 },
+  ] },
+  { version: 12, table: 'med_ref_items', rows: [
+    { id: 'fx-ref-1', set_id: 'fx-set-1', name: 'Dolo 650 Tablet', name_norm: 'dolo 650 tablet',
+      ingredients: '[{"name":"Paracetamol","strength":"650mg"}]', form: 'tablet', discontinued: 1,
+      updated_at: T },
+    { id: 'fx-ref-2', set_id: 'fx-set-1', name: 'Old', name_norm: 'old', ingredients: '[]',
+      updated_at: T, deleted_at: T + 1 },
+  ] },
   { version: 10, table: 'intake_events', rows: [
     { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,
       status: 'taken', dose_id: 'fx-dose-1', for_day: '2026-10-05', updated_at: T },

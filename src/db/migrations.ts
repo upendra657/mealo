@@ -675,4 +675,59 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 12,
+  name: 'medicine reference datasets',
+  sql: `
+    -- Lists of medicines the app can suggest from: brand to ingredients. The
+    -- Singapore HSA register ships with the app; anything else is imported on
+    -- the device by its owner from a CSV or Excel file — an Indian list, one
+    -- day a Thai one.
+    --
+    -- Reference data, not anyone's record. These tables belong to the device:
+    -- no profile_id, never synced, never part of the shared library. Each
+    -- phone imports its own copy, which is also what keeps someone else's
+    -- dataset from being redistributed by the app (a choice made deliberately
+    -- for an unofficial list). Only a medicine somebody saves from a
+    -- suggestion enters the household library, as their own entry.
+    --
+    -- Rows are written and replaced wholesale, like the bundled foods table,
+    -- so they are hard-deleted on replace: nothing here is synced, so a
+    -- tombstone would serve no one.
+    CREATE TABLE IF NOT EXISTS med_ref_sets (
+      id           TEXT PRIMARY KEY,
+      name         TEXT NOT NULL,       -- "A-Z Medicine Dataset of India"
+      tag          TEXT NOT NULL,       -- shown on every suggestion: "HSA", "India"
+      source_url   TEXT,
+      licence      TEXT,
+      builtin      INTEGER NOT NULL DEFAULT 0,  -- shipped with the app
+      -- 'importing' until every row is in, then 'ready'. Search reads ready
+      -- sets only, so a half-finished import is never visible, and one that
+      -- dies part-way leaves rows a later start can find and clear.
+      status       TEXT NOT NULL,
+      row_count    INTEGER NOT NULL DEFAULT 0,
+      skipped      INTEGER NOT NULL DEFAULT 0,
+      version      TEXT,                -- a bundled set's data version
+      imported_at  INTEGER,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS med_ref_items (
+      id           TEXT PRIMARY KEY,
+      set_id       TEXT NOT NULL,
+      name         TEXT NOT NULL,       -- as the dataset writes it
+      name_norm    TEXT NOT NULL,       -- normalised, for prefix search
+      -- [{"name": "...", "strength": "..."}], as the dataset wrote them
+      ingredients  TEXT NOT NULL,
+      form         TEXT,                -- the app's form id, when it can tell
+      discontinued INTEGER NOT NULL DEFAULT 0,
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_med_ref_items_name ON med_ref_items(name_norm);
+    CREATE INDEX IF NOT EXISTS idx_med_ref_items_set ON med_ref_items(set_id);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
