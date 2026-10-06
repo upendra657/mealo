@@ -27,7 +27,13 @@
  */
 
 import { scopedDb } from '../db/scope';
-import { fetchLabel, usIngredients, type DrugLabel, type UsIngredient } from '../data/drugs';
+import {
+  fetchLabel,
+  SourceUnreachable,
+  usIngredients,
+  type DrugLabel,
+  type UsIngredient,
+} from '../data/drugs';
 import { ingredientsOf, type Medication } from './medications';
 
 const db = scopedDb('pharmacist');
@@ -47,6 +53,8 @@ export type Substance = {
    * pigment.
    */
   byName?: boolean;
+  /** RxNorm did not answer, so nothing is known — not "not recognised". */
+  unreachable?: boolean;
 };
 
 export type MedSubstances = { med: Pick<Medication, 'id' | 'name'>; substances: Substance[] };
@@ -80,6 +88,8 @@ export type LabelStatus = {
   ingredient: string;
   meds: string[];
   label: DrugLabel | null;
+  /** openFDA did not answer for this one; it was not checked. */
+  unreachable?: boolean;
 };
 
 // ------------------------------------------------------------ the matching
@@ -181,6 +191,18 @@ export function matchLabels(items: MedSubstances[], labels: Map<string, DrugLabe
 
 // ---------------------------------------------------------------- caching
 
+/**
+ * Only answers that found something are kept. "Not recognised" and "no
+ * label" are asked again on every check: they cost a request each, and a
+ * cached no once outlived the cause of it by a month (see SourceUnreachable).
+ * Read back through the same test, so a no cached before this rule is ignored.
+ */
+export function worthKeeping(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
 /** A cached JSON value in `citations`, if one is fresh. */
 async function cached<T>(source: string, claim: string): Promise<T | undefined> {
   const rows = await db.query<{ excerpt: string; retrieved_at: number }>(
@@ -192,13 +214,15 @@ async function cached<T>(source: string, claim: string): Promise<T | undefined> 
   const row = rows[0];
   if (!row || Date.now() - row.retrieved_at > CACHE_TTL) return undefined;
   try {
-    return JSON.parse(row.excerpt) as T;
+    const v = JSON.parse(row.excerpt) as T;
+    return worthKeeping(v) ? v : undefined;
   } catch {
     return undefined;
   }
 }
 
 async function store(source: string, claim: string, url: string, value: unknown): Promise<void> {
+  if (!worthKeeping(value)) return;
   await db.insert('citations', {
     claim,
     source_name: source,
@@ -217,9 +241,7 @@ async function resolveWritten(written: string): Promise<string[]> {
   const hit = await cached<UsIngredient[]>('RxNorm', claim);
   if (hit) return hit.map((i) => i.name);
   const found = await usIngredients(written);
-  // An empty answer is cached too: "Dolo 650" will not resolve next week
-  // either, and asking again on every check would be a request for nothing.
-  await store('RxNorm', claim, 'https://rxnav.nlm.nih.gov/REST/approximateTerm.json', found);
+  await store('RxNorm', claim, 'https://rxnav.nlm.nih.gov/REST/rxcui.json', found);
   return found.map((i) => i.name);
 }
 
@@ -247,7 +269,14 @@ export async function substancesOf(meds: Medication[]): Promise<MedSubstances[]>
     const byName = listed.length === 0;
     const written = byName ? [med.name] : listed.map((i) => i.name);
     const substances: Substance[] = [];
-    for (const w of written) substances.push({ written: w, us: await resolveWritten(w), byName });
+    for (const w of written) {
+      try {
+        substances.push({ written: w, us: await resolveWritten(w), byName });
+      } catch (e) {
+        if (!(e instanceof SourceUnreachable)) throw e;
+        substances.push({ written: w, us: [], byName, unreachable: true });
+      }
+    }
     out.push({ med: { id: med.id, name: med.name }, substances });
   }
   return out;
@@ -263,6 +292,8 @@ export async function checkInteractions(meds: Medication[]): Promise<{
   statuses: LabelStatus[];
   unresolved: { med: string; written: string }[];
   byName: { med: string; us: string[] }[];
+  /** Names the sources did not answer for, this time. */
+  unreachable: string[];
 }> {
   const items = await substancesOf(meds);
 
@@ -276,18 +307,30 @@ export async function checkInteractions(meds: Medication[]): Promise<{
   const labels = new Map<string, DrugLabel | null>();
   const statuses: LabelStatus[] = [];
   for (const [ingredient, who] of users) {
-    const label = await labelForIngredient(ingredient);
-    labels.set(ingredient, label);
-    statuses.push({ ingredient, meds: [...who], label });
+    try {
+      const label = await labelForIngredient(ingredient);
+      labels.set(ingredient, label);
+      statuses.push({ ingredient, meds: [...who], label });
+    } catch (e) {
+      if (!(e instanceof SourceUnreachable)) throw e;
+      labels.set(ingredient, null);
+      statuses.push({ ingredient, meds: [...who], label: null, unreachable: true });
+    }
   }
 
   const unresolved = items.flatMap((i) =>
-    i.substances.filter((s) => s.us.length === 0).map((s) => ({ med: i.med.name, written: s.written })),
+    i.substances
+      .filter((s) => s.us.length === 0 && !s.unreachable)
+      .map((s) => ({ med: i.med.name, written: s.written })),
   );
+  const unreachable = [
+    ...items.flatMap((i) => i.substances.filter((s) => s.unreachable).map((s) => s.written)),
+    ...statuses.filter((s) => s.unreachable).map((s) => s.ingredient),
+  ];
 
   const byName = items.flatMap((i) =>
     i.substances.filter((s) => s.byName && s.us.length > 0).map((s) => ({ med: i.med.name, us: s.us })),
   );
 
-  return { findings: matchLabels(items, labels), statuses, unresolved, byName };
+  return { findings: matchLabels(items, labels), statuses, unresolved, byName, unreachable };
 }

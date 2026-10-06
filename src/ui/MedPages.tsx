@@ -384,7 +384,7 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
 
   const labelled = result?.findings.filter((f) => f.kind === 'label') ?? [];
   const shared = result?.findings.filter((f) => f.kind === 'shared') ?? [];
-  const noLabel = result?.statuses.filter((s) => s.label === null) ?? [];
+  const noLabel = result?.statuses.filter((s) => s.label === null && !s.unreachable) ?? [];
 
   return (
     <>
@@ -411,7 +411,9 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {result && labelled.length === 0 && shared.length === 0 && (
+      {/* Only when everything was checked. Beside "not checked this time" it
+          would claim a clean result the check never reached. */}
+      {result && labelled.length === 0 && shared.length === 0 && result.unreachable.length === 0 && (
         <p className="note">
           Nothing found. That is not the same as nothing existing — many products, supplements
           especially, have no FDA label, and labels often name a class of medicine rather than
@@ -456,6 +458,15 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
         </>
       )}
 
+      {result && result.unreachable.length > 0 && (
+        <div className="result result--fail" style={{ marginTop: 12 }}>
+          <strong>Not checked this time: {result.unreachable.join(', ')}</strong>
+          <p className="small muted">
+            The source did not answer — offline, or busy. Nothing about these was saved; check
+            again in a while.
+          </p>
+        </div>
+      )}
       {result && result.unresolved.length > 0 && (
         <p className="note">
           Not recognised, so not checked:{' '}

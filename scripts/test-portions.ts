@@ -26,7 +26,8 @@ import {
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import { settledValue } from '../src/lib/wheel';
-import { matchLabels, sentenceNaming } from '../src/domain/interactions';
+import { matchLabels, sentenceNaming, worthKeeping } from '../src/domain/interactions';
+import { isNoMatch } from '../src/data/drugs';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
   deidentify,
@@ -1435,6 +1436,12 @@ section('Label check: matching by ingredient');
   check('a label cached before the full text existed falls back to the clipped one',
     matchLabels(items, new Map([['levothyroxine', label(undefined, 'Fixture naming caffeine.')]])).some((f) =>
       f.kind === 'label' && f.mentions === 'Cold tablet'), true);
+  check('a found answer is kept', [worthKeeping([{ rxcui: '1', name: 'x' }]), worthKeeping({ productName: 'P' })],
+    [true, true]);
+  check('"not recognised" is never kept', worthKeeping([]), false);
+  check('"no label" is never kept', worthKeeping(null), false);
+  check('openFDA\'s 404 is "no match"', isNoMatch(404), true);
+  check('a rate limit or an outage is not', [isNoMatch(429), isNoMatch(500), isNoMatch(503)], [false, false, false]);
   check('a medicine RxNorm did not recognise is still matched by how it was written',
     matchLabels([items[0], { med: { id: 'x', name: 'Brand X' }, substances: [{ written: 'Calcium carbonate', us: [] }] }],
       labels).some((f) => f.kind === 'label' && f.mentions === 'Brand X'), true);

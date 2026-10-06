@@ -57,11 +57,41 @@ export type DrugLabel = {
 /** An ingredient as US labels name it, from RxNorm. */
 export type UsIngredient = { rxcui: string; name: string };
 
-async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
-  const res = await fetch(url, { signal });
-  if (!res.ok) {
-    throw new Error(`${res.status} from ${new URL(url).host}`);
+/**
+ * A source that did not answer: offline, a rate limit, a server error.
+ *
+ * Kept apart from "answered, and found nothing" on purpose. The label check
+ * once caught both alike and cached the result for 30 days, so one dropped
+ * request — or openFDA's rate limit, easily met by a syrup with three
+ * ingredients — read as "not recognised" or "no FDA label" for a month, and
+ * checking again only replayed it.
+ */
+export class SourceUnreachable extends Error {
+  host: string;
+  /** The HTTP status, or null when nothing came back at all. */
+  status: number | null;
+  constructor(host: string, status: number | null) {
+    super(status ? `${host} answered ${status}` : `${host} could not be reached`);
+    this.name = 'SourceUnreachable';
+    this.host = host;
+    this.status = status;
   }
+}
+
+/** openFDA says "no match" with a 404; anything else that fails is the source failing. */
+export function isNoMatch(status: number): boolean {
+  return status === 404;
+}
+
+async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
+  const host = new URL(url).host;
+  let res: Response;
+  try {
+    res = await fetch(url, { signal });
+  } catch {
+    throw new SourceUnreachable(host, null);
+  }
+  if (!res.ok) throw new SourceUnreachable(host, res.status);
   return res.json();
 }
 
@@ -150,19 +180,16 @@ export async function usIngredients(
 ): Promise<UsIngredient[]> {
   const term = name.trim();
   if (!term) return [];
-  let rxcui: string | undefined;
-  try {
-    const exact = (await getJson(
-      `${RXNAV}/rxcui.json?name=${encodeURIComponent(term)}`,
-      signal,
-    )) as { idGroup?: { rxnormId?: string[] } };
-    rxcui = exact.idGroup?.rxnormId?.[0];
-  } catch {
-    return [];
-  }
+  // RxNorm says "no match" with an empty idGroup and a 200. A failure is a
+  // SourceUnreachable, and is left to the caller rather than read as no match.
+  const exact = (await getJson(
+    `${RXNAV}/rxcui.json?name=${encodeURIComponent(term)}`,
+    signal,
+  )) as { idGroup?: { rxnormId?: string[] } };
+  const rxcui = exact.idGroup?.rxnormId?.[0];
   if (!rxcui) return [];
   const concept = { rxcui };
-  try {
+  {
     const rel = (await getJson(
       `${RXNAV}/rxcui/${encodeURIComponent(concept.rxcui)}/related.json?tty=IN`,
       signal,
@@ -173,8 +200,6 @@ export async function usIngredients(
       .flatMap((g) => g.conceptProperties ?? [])
       .map((c) => ({ rxcui: c.rxcui, name: c.name.toLowerCase() }));
     return found.filter((c, i) => found.findIndex((x) => x.name === c.name) === i);
-  } catch {
-    return [];
   }
 }
 
@@ -246,8 +271,11 @@ export async function fetchLabel(
         sourceUrl: `${OPENFDA}?search=${encodeURIComponent(q)}&limit=1`,
         retrievedAt: Date.now(),
       };
-    } catch {
-      /* try the next query shape */
+    } catch (e) {
+      // No match for this query shape: try the next. A source that did not
+      // answer is not "no label", and must not be cached as one.
+      if (e instanceof SourceUnreachable && e.status !== null && isNoMatch(e.status)) continue;
+      throw e;
     }
   }
   return null;
