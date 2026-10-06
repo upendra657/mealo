@@ -39,21 +39,36 @@ import {
   setPushCursor,
   type Applied,
 } from './librarysync';
-import type { Batch, WireRow } from './sync';
+import { applyMeds, collectMeds, medPushCursor, setMedPushCursor } from './medsync';
+import { isMedTable, READS, type Batch, type WireRow } from './sync';
+import { kvGet, kvSet } from '../lib/kv';
+
+export type Received = Applied & { medicines: number };
 
 export type SyncResult = {
   ok: boolean;
   /** Rows this device sent. */
   sent: number;
   /** What arrived and stuck. */
-  applied: Applied;
+  applied: Received;
   /** Batches that could not be opened — almost certainly not ours. */
   undecryptable: number;
   /** Set when the round failed. Safe to show. */
   error?: string;
 };
 
-const EMPTY: Applied = { dishes: 0, portions: 0, aliases: 0, skipped: 0 };
+const EMPTY: Received = { dishes: 0, portions: 0, aliases: 0, medicines: 0, skipped: 0 };
+
+/**
+ * Set once this phone has read the relay from the start under wire version 2.
+ *
+ * Until it updated, this phone dropped every version-2 batch it pulled —
+ * correctly, it could not read them — and still moved its pull cursor past
+ * them. Those batches hold the other phone's medicines. Re-reading once from
+ * zero picks up whatever the relay still has (it keeps 30 days); re-applying
+ * food rows already here is a tie and changes nothing.
+ */
+const REREAD_KV = 'sync.rereadForV2';
 
 /** Base64 for the wire. The relay stores text, not bytes. */
 function toB64(b: Uint8Array): string {
@@ -84,12 +99,13 @@ export async function syncLibrary(): Promise<SyncResult> {
 
   let sent = 0;
   let undecryptable = 0;
-  let applied: Applied = { ...EMPTY };
+  let applied: Received = { ...EMPTY };
 
   try {
     // ---- push ----
-    const cursor = await pushCursor();
-    const rows: WireRow[] = await collect(cursor);
+    const foodRows: WireRow[] = await collect(await pushCursor());
+    const medRows: WireRow[] = await collectMeds(await medPushCursor());
+    const rows = [...foodRows, ...medRows];
     if (rows.length > 0) {
       const body = toB64(await seal(household.key, JSON.stringify(batchOf(rows))));
       const res = await fetch('/sync/push', {
@@ -99,11 +115,14 @@ export async function syncLibrary(): Promise<SyncResult> {
       });
       if (!res.ok) throw new Error(`relay refused the batch (${res.status})`);
       // Only now: the relay has it.
-      await setPushCursor(rows);
+      await setPushCursor(foodRows);
+      await setMedPushCursor(medRows);
       sent = rows.length;
     }
 
     // ---- pull ----
+    const rereading = !(await kvGet<boolean>(REREAD_KV));
+    if (rereading) await setPullCursor(0);
     // Loop, because a busy household can hold more than one page.
     for (let page = 0; page < 20; page++) {
       const since = await pullCursor();
@@ -128,7 +147,7 @@ export async function syncLibrary(): Promise<SyncResult> {
         }
         try {
           const parsed = JSON.parse(text) as Batch;
-          if (parsed.v !== 1 || !Array.isArray(parsed.rows)) continue;
+          if (!READS.includes(parsed.v) || !Array.isArray(parsed.rows)) continue;
           incoming.push(...parsed.rows);
         } catch {
           undecryptable++;
@@ -136,12 +155,14 @@ export async function syncLibrary(): Promise<SyncResult> {
       }
 
       if (incoming.length > 0) {
-        const got = await apply(incoming);
+        const got = await apply(incoming.filter((r) => !isMedTable(r.t)));
+        const meds = await applyMeds(incoming.filter((r) => isMedTable(r.t)));
         applied = {
           dishes: applied.dishes + got.dishes,
           portions: applied.portions + got.portions,
           aliases: applied.aliases + got.aliases,
-          skipped: applied.skipped + got.skipped,
+          medicines: applied.medicines + meds.medicines,
+          skipped: applied.skipped + got.skipped + meds.skipped,
         };
       }
 
@@ -150,6 +171,8 @@ export async function syncLibrary(): Promise<SyncResult> {
       if (!page_.more) break;
     }
 
+    // Only after every page is in, so a round that dies halfway re-reads again.
+    if (rereading) await kvSet(REREAD_KV, true);
     await markSynced();
     return { ok: true, sent, applied, undecryptable };
   } catch (e) {
@@ -167,7 +190,7 @@ export async function syncLibrary(): Promise<SyncResult> {
 export function describe(r: SyncResult): string {
   if (!r.ok) return r.error ?? 'Sync failed.';
   const a = r.applied;
-  const got = a.dishes + a.portions + a.aliases;
+  const got = a.dishes + a.portions + a.aliases + a.medicines;
   if (r.sent === 0 && got === 0) return 'Already up to date.';
   const bits: string[] = [];
   if (r.sent > 0) bits.push(`sent ${r.sent}`);

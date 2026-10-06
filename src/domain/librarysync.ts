@@ -50,6 +50,7 @@ import {
   nextCursor,
   resolve,
   wireKey,
+  WIRE_VERSION,
   type Batch,
   type SyncTable,
   type WireRow,
@@ -391,7 +392,7 @@ export async function markSynced(): Promise<void> {
 
 /** The batch this device would send right now. */
 export function batchOf(rows: WireRow[]): Batch {
-  return { v: 1, rows };
+  return { v: WIRE_VERSION, rows };
 }
 
 /** Rows a batch carries that this device can name. Used by the tests. */

@@ -71,6 +71,9 @@ import {
 import {
   collapse,
   isAddressable,
+  isMedTable,
+  READS,
+  WIRE_VERSION,
   nextCursor,
   resolve,
   since,
@@ -715,6 +718,26 @@ section('Sync: the merge key is the only identity two devices share');
   check('addressable', isAddressable(portion), true);
   check('a portion with no dish is not', isAddressable(
     { ...portion, f: { ...portion.f, food_slug: '' }, k: '|katori' }), false);
+
+  check('a medicine keys on its slug, name and strength',
+    wireKey('med_products', { slug: 'paracetamol 650 mg' }), 'paracetamol 650 mg');
+  check('an ingredient keys on its medicine and position',
+    wireKey('med_product_ingredients', { product_slug: 'calcium d3 1250 mg', position: 2 }),
+    'calcium d3 1250 mg|2');
+  check('a starting dose the same way',
+    wireKey('med_product_doses', { product_slug: 'calcium d3 1250 mg', position: 1 }),
+    'calcium d3 1250 mg|1');
+  const ingr: WireRow = { t: 'med_product_ingredients', k: 'calcium d3 1250 mg|1', at: 5, del: null,
+    f: { product_slug: 'calcium d3 1250 mg', position: 1, name: 'Calcium carbonate', strength_text: '1250 mg' } };
+  check('an ingredient is addressable', isAddressable(ingr), true);
+  check('one with no medicine is not',
+    isAddressable({ ...ingr, f: { ...ingr.f, product_slug: '' }, k: '|1' }), false);
+  check('nor one with no position',
+    isAddressable({ ...ingr, f: { ...ingr.f, position: null }, k: 'calcium d3 1250 mg|' }), false);
+  check('medicine tables are told apart from food ones',
+    [isMedTable('med_products'), isMedTable('med_product_doses'), isMedTable('custom_foods')],
+    [true, true, false]);
+  check('batches are version 2 now, and 1 is still read', [WIRE_VERSION, READS.includes(1)], [2, true]);
 }
 
 section('Sync: who wins');

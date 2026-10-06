@@ -1,7 +1,10 @@
 /**
- * Syncing the food library between two phones.
+ * Syncing the household's libraries between two phones.
  *
- * Three tables travel: `custom_foods`, `food_portions`, `food_aliases`.
+ * Six tables travel: `custom_foods`, `food_portions`, `food_aliases`, and
+ * since v10 the medicine library — `med_products` and its ingredients and
+ * starting schedule. Nothing that records a body travels: no meal, no dose
+ * taken, no sickness.
  * `foods` does not — it ships bundled, has no `updated_at` or `deleted_at`,
  * no agent may write it, and both devices already hold byte-identical rows
  * with identical ids. Sending it would be sending a copy of the app.
@@ -56,8 +59,25 @@
  * exercised by hand with two phones.
  */
 
-export const SYNC_TABLES = ['custom_foods', 'food_portions', 'food_aliases'] as const;
+export const SYNC_TABLES = [
+  'custom_foods',
+  'food_portions',
+  'food_aliases',
+  // The medicine library (v10), on the same terms as the food one: what a
+  // medicine is travels, who takes it does not. The rows are read and written
+  // by medsync.ts, through the Pharmacist's handle.
+  'med_products',
+  'med_product_ingredients',
+  'med_product_doses',
+] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
+
+export const MED_TABLES: readonly SyncTable[] = [
+  'med_products',
+  'med_product_ingredients',
+  'med_product_doses',
+];
+export const isMedTable = (t: SyncTable) => MED_TABLES.includes(t);
 
 /**
  * A row as it crosses the wire.
@@ -80,9 +100,19 @@ export type WireRow = {
 
 export type Batch = {
   /** Wire format version, so an older phone can refuse politely. */
-  v: 1;
+  v: WireVersion;
   rows: WireRow[];
 };
+
+/**
+ * 2 since batches began carrying medicines. A phone still on the old code
+ * reads only 1, so it drops a 2 whole rather than misfiling a medicine row as
+ * a food alias — its own fallthrough branch. It does still move past the
+ * batch, which is why an updated phone re-reads the relay once (relay.ts).
+ */
+export type WireVersion = 1 | 2;
+export const WIRE_VERSION: WireVersion = 2;
+export const READS: readonly number[] = [1, 2];
 
 /** The merge key for a wire row. Same string on both devices, or nothing works. */
 export function wireKey(t: SyncTable, f: Record<string, unknown>): string {
@@ -93,6 +123,14 @@ export function wireKey(t: SyncTable, f: Record<string, unknown>): string {
       return `${String(f.food_slug ?? '')}|${String(f.measure ?? '')}`;
     case 'food_aliases':
       return String(f.alias ?? '');
+    case 'med_products':
+      return String(f.slug ?? '');
+    // Ingredients and schedule rows are numbered within their medicine and
+    // rewritten whole on every save, so the slot is the identity: whatever is
+    // live at position 2 of Calcium + D3 is "the second ingredient".
+    case 'med_product_ingredients':
+    case 'med_product_doses':
+      return `${String(f.product_slug ?? '')}|${String(f.position ?? '')}`;
   }
 }
 
@@ -101,6 +139,13 @@ export function isAddressable(r: WireRow): boolean {
   if (!r.k || r.k === '|') return false;
   if (r.t === 'food_portions' && !String(r.f.food_slug ?? '')) return false;
   if (r.t === 'food_aliases' && !String(r.f.food_slug ?? '')) return false;
+  if (r.t === 'med_product_ingredients' || r.t === 'med_product_doses') {
+    if (!String(r.f.product_slug ?? '')) return false;
+    // Positions start at 1. Number(null) is 0, which isFinite would wave
+    // through, filing a row with no position at a slot nothing else uses.
+    const pos = Number(r.f.position);
+    if (!Number.isInteger(pos) || pos < 1) return false;
+  }
   return Number.isFinite(r.at);
 }
 

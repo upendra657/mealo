@@ -72,6 +72,7 @@ import {
   type MedForm,
 } from '../../src/domain/medications';
 import { addDays, medDay } from '../../src/domain/doses';
+import { applyMeds, collectMeds } from '../../src/domain/medsync';
 import { upgradeFromPrevious } from './upgrade';
 
 type Result = { name: string; ok: boolean; detail?: string };
@@ -822,6 +823,89 @@ async function main() {
     await setActiveProfile(partner);
     check('his sickness was never hers', (await readMedsDay(day)).episode === null);
     await setActiveProfile(PRIMARY_PROFILE);
+  }
+
+  // ---- v10: the medicine library on the wire ------------------------------
+  step('medsync');
+  {
+    const pharm = scopedDb('pharmacist');
+    const rows = await collectMeds(0);
+    check('the medicine library collects as wire rows', rows.some((r) => r.t === 'med_products'));
+    check('a private medicine stays on this phone',
+      !rows.some((r) => r.f.name === 'Something private'), JSON.stringify(rows.map((r) => r.k)));
+    const leaks = rows.filter((r) => 'id' in r.f || 'product_id' in r.f || 'private' in r.f);
+    check('no local ids, and no private flag, travel', leaks.length === 0, JSON.stringify(leaks[0] ?? {}));
+    check('who takes it does not travel',
+      rows.every((r) => !('profile_id' in r.f) && !('long_term' in r.f) && !('episode_id' in r.f)));
+
+    // Calcium + D3's ingredients were rewritten in the medicines step: two
+    // tombstones and three live rows, two of them sharing positions with the
+    // tombstones. The wire must carry the three live ones.
+    const calc = rows.filter((r) => r.t === 'med_product_ingredients' && r.k.startsWith('calcium d3 1250 mg|'));
+    check('a rewritten list travels as its live rows',
+      JSON.stringify(calc.map((r) => [r.f.position, r.f.name, r.del]).sort()) ===
+        JSON.stringify([[1, 'Calcium carbonate', null], [2, 'Cholecalciferol', null], [3, 'Magnesium', null]]),
+      JSON.stringify(calc.map((r) => [r.f.position, r.f.name, r.del])));
+
+    // The ping-pong guard, for medicines.
+    const stamp = async () =>
+      (await pharm.query<{ n: number; hi: number }>(
+        'SELECT COUNT(*) AS n, MAX(updated_at) AS hi FROM med_products WHERE deleted_at IS NULL'))[0];
+    const before = await stamp();
+    await applyMeds(rows);
+    const after = await stamp();
+    check('applying our own medicine rows changes nothing',
+      after.n === before.n && after.hi === before.hi, `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+
+    // A medicine only the other phone has.
+    const far = Date.now() - 5_000;
+    const got = await applyMeds([
+      { t: 'med_product_doses', k: 'azithromycin 500 mg|1', at: far, del: null,
+        f: { product_slug: 'azithromycin 500 mg', position: 1, amount: 1, unit: 'tablet',
+             time_of_day: 'morning', meal: 'before' } },
+      { t: 'med_products', k: 'azithromycin 500 mg', at: far, del: null,
+        f: { slug: 'azithromycin 500 mg', name: 'Azithromycin', form: 'tablet',
+             strength_text: '500 mg', hidden: 0 } },
+      { t: 'med_product_ingredients', k: 'azithromycin 500 mg|1', at: far, del: null,
+        f: { product_slug: 'azithromycin 500 mg', position: 1, name: 'Azithromycin',
+             strength_text: '500 mg' } },
+    ]);
+    check('a new medicine arrives', got.medicines === 1 && got.skipped === 0, JSON.stringify(got));
+    const azi = (await searchLibrary('azithromycin'))[0];
+    check('into the library, with the sender\'s timestamp', azi?.updated_at === far,
+      `${azi?.updated_at} vs ${far}`);
+    const aziDraft = azi ? await draftFromLibrary(azi.id) : null;
+    check('with its ingredient and starting dose, even sent ahead of it',
+      aziDraft?.ingredients.length === 1 && aziDraft?.doses[0]?.meal === 'before',
+      JSON.stringify(aziDraft));
+
+    // The list got shorter on the other phone.
+    await applyMeds([{ t: 'med_product_ingredients', k: 'azithromycin 500 mg|1', at: far + 1,
+      del: far + 1, f: { product_slug: 'azithromycin 500 mg', position: 1, name: 'Azithromycin',
+      strength_text: '500 mg' } }]);
+    check('a removed ingredient is removed here', (await ingredientsOf(azi!.id)).length === 0);
+
+    // An older edit does not win.
+    await applyMeds([{ t: 'med_products', k: 'azithromycin 500 mg', at: far - 10_000, del: null,
+      f: { slug: 'azithromycin 500 mg', name: 'WRONG', form: 'tablet', strength_text: '500 mg', hidden: 0 } }]);
+    check('an older medicine row does not overwrite a newer one',
+      (await searchLibrary('azithromycin'))[0]?.name === 'Azithromycin');
+
+    // His shared entry meets her private one of the same strip.
+    await applyMeds([{ t: 'med_products', k: 'something private', at: Date.now() + 1_000, del: null,
+      f: { slug: 'something private', name: 'Something private', form: 'tablet',
+           strength_text: null, hidden: 0 } }]);
+    const still = await pharm.query<{ private: number; n: number }>(
+      "SELECT MAX(private) AS private, COUNT(*) AS n FROM med_products WHERE slug = 'something private'");
+    check('the same strip merges into one entry', Number(still[0].n) === 1, String(still[0].n));
+    check('and a private one stays private', Number(still[0].private) === 1);
+    check('so it still does not travel',
+      !(await collectMeds(0)).some((r) => r.f.name === 'Something private'));
+
+    // A child whose medicine has not arrived is skipped, not guessed at.
+    const orphan = await applyMeds([{ t: 'med_product_doses', k: 'nothing here|1', at: far, del: null,
+      f: { product_slug: 'nothing here', position: 1, amount: 1, unit: 'tablet', time_of_day: 'night', meal: 'after' } }]);
+    check('a dose for a medicine not here yet waits', orphan.skipped === 1, JSON.stringify(orphan));
   }
 }
 
