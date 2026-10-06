@@ -50,6 +50,7 @@ import {
 import type { Macros } from '../src/domain/day';
 import {
   addDays,
+  amountsSet,
   daysFrom,
   describeDose,
   durationLabel,
@@ -1251,8 +1252,11 @@ section('Medicines: changing "times a day"');
   const one = [{ amount: 2, unit: 'tablet' as const, time_of_day: 'morning' as const, meal: 'before' as const }];
   const two = resizeDoses(one, 2, 'tablet');
   check('2 keeps the first row as typed', two[0], one[0]);
-  check('and adds night, copying its amount', [two[1].time_of_day, two[1].amount, two[1].meal],
-    ['night', 2, 'before']);
+  check('and adds night with its unit and meal, but no amount', [two[1].time_of_day,
+    two[1].unit, two[1].meal, two[1].amount], ['night', 'tablet', 'before', null]);
+  check('a fresh form has no amount either', resizeDoses([], 1, 'tablet')[0].amount, null);
+  check('so it cannot be saved yet', amountsSet(resizeDoses([], 1, 'tablet')), false);
+  check('until every dose has one', amountsSet(one), true);
   const three = resizeDoses(two, 3, 'tablet');
   check('3 adds the afternoon, in day order', three.map((d) => d.time_of_day),
     ['morning', 'afternoon', 'night']);

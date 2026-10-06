@@ -21,12 +21,14 @@ import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import {
   addDays,
+  amountsSet,
   isForm,
   isRunning,
   lastDayOf,
   medDay,
   medSlug,
   planDay,
+  resizeDoses,
   sortByTime,
   type DayPlan,
   type DoseSlot,
@@ -242,6 +244,19 @@ export type MedForm = {
   private: boolean;
 };
 
+/** An empty Add meds form: one tablet, in the morning, after a meal. */
+export function blankMedForm(): MedForm {
+  return {
+    name: '',
+    form: 'tablet',
+    strength: '',
+    ingredients: [],
+    doses: resizeDoses([], 1, 'tablet'),
+    long_term: false,
+    private: false,
+  };
+}
+
 const clean = (s: string | null | undefined) => s?.trim() || null;
 
 function cleanIngredients(list: Ingredient[]): Ingredient[] {
@@ -383,6 +398,7 @@ function checkForm(f: MedForm) {
   if (f.doses.length < 1 || f.doses.length > 4) {
     throw new Error('A medicine is taken between one and four times a day.');
   }
+  if (!amountsSet(f.doses)) throw new Error('Every dose needs an amount.');
 }
 
 async function writeDoses(medicationId: string, doses: DoseSlot[]): Promise<void> {

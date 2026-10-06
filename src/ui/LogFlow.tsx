@@ -12,7 +12,7 @@
  * a wrong day you have to find and undo.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   guessMealType,
   repriceItem,
@@ -35,7 +35,7 @@ import { saveDishFromPortion } from '../domain/import';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
 import { MealDial } from './MealDial';
-import { Chevron, fmtQty, Plus, SearchIcon, Sheet, useToast } from './bits';
+import { Chevron, fmtQty, Plus, SearchIcon, Sheet, useToast, Wheel } from './bits';
 import type { Screen } from '../App';
 
 /** Over this in one item, the app asks before writing it. */
@@ -794,74 +794,6 @@ function DishStep({
         </button>
       </Sheet>
     </>
-  );
-}
-
-/* ---------------------------------------------------------------- wheel */
-
-/**
- * The scroll picker.
- *
- * Snap points at a fixed row height, the live value read back from
- * scrollTop. Deliberately not a <select>: on a phone this is the control
- * people already know from every other tracker, and it shows neighbouring
- * values, which a native picker on desktop does not.
- */
-function Wheel({
-  values,
-  value,
-  render,
-  onChange,
-}: {
-  values: (string | number)[];
-  value: string | number;
-  render: (v: string | number) => string;
-  onChange: (v: string | number) => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const timer = useRef<number | undefined>(undefined);
-  /** The last value this wheel itself reported, so it does not chase its own tail. */
-  const mine = useRef<string | number | null>(null);
-  const ROW = 40;
-
-  // Follow the value when something else changes it — typing 37 in the box
-  // should move the wheel to 37. A change this wheel produced is ignored:
-  // scrolling to where the finger already is fights the scroll in progress.
-  useEffect(() => {
-    if (mine.current === value) return;
-    const i = Math.max(0, values.indexOf(value));
-    if (ref.current) ref.current.scrollTop = i * ROW;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  const onScroll = () => {
-    const el = ref.current;
-    if (!el) return;
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      const i = Math.max(0, Math.min(values.length - 1, Math.round(el.scrollTop / ROW)));
-      if (values[i] !== value) {
-        mine.current = values[i];
-        onChange(values[i]);
-      }
-    }, 90);
-  };
-
-  const selected = Math.max(0, values.indexOf(value));
-
-  return (
-    <div className="wheel-hold">
-      <div className="wheel-rail" />
-      <div className="wheel" ref={ref} onScroll={onScroll}>
-        <ul>
-          {values.map((v, i) => (
-            <li key={String(v)} aria-selected={i === selected}>
-              {render(v)}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
   );
 }
 

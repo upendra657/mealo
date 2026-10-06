@@ -1,5 +1,5 @@
 /**
- * The small shared pieces: icons, a toast, a bottom sheet, a status bar.
+ * The small shared pieces: icons, a toast, a bottom sheet, the scroll wheel.
  *
  * Kept in one file because each is a dozen lines and splitting them would
  * mean six imports at the top of every screen to say "back arrow".
@@ -199,6 +199,74 @@ export function Sheet({
         {children}
       </div>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ wheel */
+
+/**
+ * The scroll picker.
+ *
+ * Snap points at a fixed row height, the live value read back from
+ * scrollTop. Deliberately not a <select>: on a phone this is the control
+ * people already know from every other tracker, and it shows neighbouring
+ * values, which a native picker on desktop does not.
+ */
+export function Wheel({
+  values,
+  value,
+  render,
+  onChange,
+}: {
+  values: (string | number)[];
+  value: string | number;
+  render: (v: string | number) => string;
+  onChange: (v: string | number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const timer = useRef<number | undefined>(undefined);
+  /** The last value this wheel itself reported, so it does not chase its own tail. */
+  const mine = useRef<string | number | null>(null);
+  const ROW = 40;
+
+  // Follow the value when something else changes it — typing 37 in the box
+  // should move the wheel to 37. A change this wheel produced is ignored:
+  // scrolling to where the finger already is fights the scroll in progress.
+  useEffect(() => {
+    if (mine.current === value) return;
+    const i = Math.max(0, values.indexOf(value));
+    if (ref.current) ref.current.scrollTop = i * ROW;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      const i = Math.max(0, Math.min(values.length - 1, Math.round(el.scrollTop / ROW)));
+      if (values[i] !== value) {
+        mine.current = values[i];
+        onChange(values[i]);
+      }
+    }, 90);
+  };
+
+  const selected = Math.max(0, values.indexOf(value));
+
+  return (
+    <div className="wheel-hold">
+      <div className="wheel-rail" />
+      <div className="wheel" ref={ref} onScroll={onScroll}>
+        <ul>
+          {values.map((v, i) => (
+            <li key={String(v)} aria-selected={i === selected}>
+              {render(v)}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 

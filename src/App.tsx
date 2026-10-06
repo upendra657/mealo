@@ -148,7 +148,7 @@ export default function App() {
 
         {screen === 'doctor' && <Doctor go={go} />}
 
-        {screen === 'meds' && <Medications go={go} />}
+        {screen === 'meds' && <Medications go={go} avatar={avatar} />}
 
         {screen === 'dev' && <SettingsScreen go={go} />}
         {screen === 'weight' && <WeightScreen onBack={() => go('home')} />}

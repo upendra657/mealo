@@ -65,6 +65,28 @@
   --hue-burn: 255, 70, 53;
   --hue-burn-2: 255, 197, 61;
 
+  /* Meds has its own identity, deep purple, the way weight has orange and
+     burn has red. The ground and the mode card take the deep shades; the
+     lighter one is for marks that must read on them — a taken dose, the add
+     button, a chosen chip.
+
+     On these screens teal and red take one job each: Regular mode and Sick
+     mode. They are the app's own --accent and --bad rather than new colours,
+     chosen side by side against a true green and red and kept. That is also
+     why a taken tick is purple and not teal: in sick mode a teal tick would
+     read as "regular", and a red one as an error. */
+  --meds: #a58cf5;
+  --meds-ink: #160e2c;
+  --meds-deep: #251a44;
+  --meds-deep-2: #17112a;
+  --meds-line: #3a2c63;
+  --meds-muted: #9a8fbd;
+  --hue-meds: 165, 140, 245;
+  --reg: var(--accent);
+  --hue-reg: 79, 209, 169;
+  --sick: var(--bad);
+  --hue-sick: 240, 113, 103;
+
   --cyan: #3fc4d8;
   --hue-teal: 79, 209, 169;
   --hue-amber: 232, 180, 74;
@@ -2139,3 +2161,387 @@ textarea {
   word-break: break-word;
   color: var(--muted);
 }
+
+/* ---- meds -------------------------------------------------------------
+   The purple ground rises from the top of the screen only, like the status
+   hue on insights: it tints the background and never a control. */
+.mwash {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(120% 45% at 50% 0%, rgba(var(--hue-meds), 0.13), transparent 70%);
+}
+
+/* The mode card. data-mode picks the hue; everything else is shared, so the
+   two modes are one card changing its mind rather than two designs. */
+.mcard {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid var(--meds-line);
+  background: linear-gradient(160deg, var(--meds-deep), var(--meds-deep-2));
+  padding: 14px 16px 16px;
+}
+.mcard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(90% 80% at 100% 0%, rgba(var(--mode-hue), 0.2), transparent 65%);
+}
+.mcard[data-mode='regular'] { --mode: var(--reg); --mode-hue: var(--hue-reg); }
+.mcard[data-mode='sick'] { --mode: var(--sick); --mode-hue: var(--hue-sick); }
+.mcard > * { position: relative; }
+
+.mswitch {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--meds-line);
+  margin-bottom: 16px;
+}
+.mswitch button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.mswitch button i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+.mswitch button[aria-pressed='true'] {
+  background: var(--mode);
+  color: var(--meds-ink);
+  font-weight: 500;
+}
+.mswitch button[aria-pressed='true'] i { opacity: 1; }
+
+.mk {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--meds-muted);
+}
+.mname {
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 2px 0 10px;
+}
+.mbig {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 4px;
+}
+.mbig .n {
+  font-size: 35px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--mode);
+}
+.mbig .of { font-size: 14px; color: #b9b0d6; }
+.mmeter {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-top: 12px;
+}
+.mmeter i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--mode);
+  transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.mdates {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--meds-muted);
+  margin-top: 7px;
+}
+.macts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 14px;
+}
+.macts button {
+  padding: 11px;
+  border-radius: 12px;
+  font-size: 14.5px;
+  font-weight: 500;
+  border: 1px solid var(--meds-line);
+  background: rgba(0, 0, 0, 0.22);
+}
+/* Recovered is the way back to Regular, so it wears Regular's colour. */
+.macts .well {
+  border-color: rgba(var(--hue-reg), 0.5);
+  color: var(--reg);
+}
+
+/* ---- dose rows ---- */
+.section-h svg { color: var(--ink-text); opacity: 0.75; flex: none; }
+.dose .nm .str {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-left: 6px;
+}
+.dose .amt { display: block; }
+.dose[data-state='paused'] { opacity: 0.45; }
+.tag--life {
+  background: rgba(var(--hue-meds), 0.16);
+  color: var(--meds);
+  flex: none;
+}
+.tickb {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid #34423c;
+  color: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tickb[data-state='taken'] {
+  background: var(--meds);
+  border-color: var(--meds);
+  color: var(--meds-ink);
+}
+/* Due now: a purple ring, not a fill. The fill is reserved for done. */
+.tickb[data-state='due'] { border-color: var(--meds); }
+.tickb[data-state='skipped'] { color: var(--muted); }
+
+.cta--meds {
+  background: var(--meds);
+  color: var(--meds-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.cta--meds small {
+  font-size: 12.5px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+.linkrow .row-tap { color: var(--ink-text); }
+.linkrow .k { color: var(--muted); font-size: 13px; }
+.linkrows { margin-top: 22px; }
+
+/* ---- the sheets: start, extend, recovered ---- */
+.sk-wheels {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 0;
+}
+.sk-ends {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.sk-ends b { color: var(--sick); font-weight: 500; }
+.sheet .done.sick { background: var(--sick); color: #2a0906; }
+.sheet .done.well { background: var(--reg); color: var(--accent-ink); }
+.sheet .done:disabled { opacity: 0.4; cursor: default; }
+.sheet .search input { padding: 11px 0; }
+.sk-ask { margin-top: 4px; }
+.sk-ask .lt { margin-top: 7px; }
+.sk-note {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 8px 2px 0;
+}
+
+/* ---- add and edit ---- */
+.addsub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.addsub i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sick);
+}
+.field-lbl.split { display: flex; align-items: baseline; }
+.field-lbl .opt {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+/* Selected is purple here, not the app's teal: on these screens teal means
+   Regular mode, and a chosen chip is not a statement about that. */
+.chips--meds .chip[aria-pressed='true'],
+.chips--meds .chip[aria-checked='true'] {
+  background: var(--meds);
+  border-color: var(--meds);
+  color: var(--meds-ink);
+}
+.libres { margin-top: 8px; }
+.libres .row-tap .amt { display: block; }
+
+.ing {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ing-row {
+  display: grid;
+  grid-template-columns: 1fr 98px 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 6px 7px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.ing-row input {
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  font-size: 15px;
+  padding: 6px 0;
+}
+.ing-row input.num {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 9px;
+  font-size: 14px;
+  text-align: right;
+}
+.ing-row input.num:focus { border-color: var(--meds); }
+.ing-row .bin { width: 32px; height: 32px; }
+.ing-add {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 14.5px;
+  color: var(--meds);
+}
+
+.times {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.times button {
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 17px;
+  color: var(--muted);
+}
+.times button[aria-pressed='true'] {
+  background: var(--meds);
+  border-color: var(--meds);
+  color: var(--meds-ink);
+  font-weight: 500;
+}
+
+.dslot { margin-top: 12px; }
+.dslot .dk {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 6px 2px;
+}
+.dgrid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 0.85fr;
+  gap: 8px;
+}
+.dgrid .afield { padding: 9px 11px; min-width: 0; }
+.dgrid .afield .v { font-size: 15.5px; }
+/* An amount nobody has chosen yet. Purple, not red: it is the next thing to
+   do, not something wrong. */
+.dgrid .afield[data-unset] { border-color: var(--meds-line); }
+.dgrid .afield[data-unset] .v { color: var(--meds); }
+
+.lt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  width: 100%;
+  text-align: left;
+}
+.lt + .lt { margin-top: 8px; }
+.lt .nm { display: block; font-size: 15px; }
+.lt .amt { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+.switch {
+  position: relative;
+  width: 46px;
+  height: 28px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--empty);
+  transition: background 0.15s;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ink-text);
+  transition: transform 0.15s;
+}
+.lt[aria-checked='true'] .switch { background: var(--meds); }
+.lt[aria-checked='true'] .switch::after { transform: translateX(18px); }
+
+/* The line under a field that says what Save will do to the shared library —
+   a new entry, or a change both phones see. Same job as the burn sheet's
+   .wnote: the behaviour is only safe because it is stated. */
+.mnote {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--meds-muted);
+  margin: 7px 2px 0;
+}
+.unit-chips { justify-content: center; margin: 4px 0 10px; }
+
+/* ---- one medicine ---- */
+.edit-btn {
+  font-size: 14.5px;
+  color: var(--meds);
+  padding: 6px 2px;
+}
+.readout.dt { margin-top: 0; }
+.readout.dt .mlist { border-top: 0; }
+.mrow .ic {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.mrow .ic svg { color: var(--ink-text); opacity: 0.75; }
+.mrow .v { text-align: right; }
+.cta.stop { margin-top: 26px; }

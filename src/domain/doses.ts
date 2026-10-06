@@ -121,22 +121,32 @@ export function medSlug(name: string, strength: string | null): string {
  * you typed — and a new row takes the first time of day nobody has yet, in the
  * order people actually add them: morning, then night, then the middle of the
  * day. Rows come back sorted by the time they are taken.
+ *
+ * A new row's amount is always empty, never 1 and never a copy of the row
+ * above. Either would be the app filling in a dose: the first build did both,
+ * and a cough syrup was saved as "1 ml" that nobody typed. The unit and the
+ * meal carry over, because those are how the medicine is taken, not how much.
  */
 export function resizeDoses(slots: DoseSlot[], n: number, form: Form | null): DoseSlot[] {
   const count = Math.max(1, Math.min(MAX_DOSES, n));
   const kept = slots.slice(0, count);
   const order: TimeOfDay[] = ['morning', 'night', 'afternoon', 'evening'];
-  const template: DoseSlot = kept[0] ?? {
-    amount: 1,
-    unit: form ? UNITS_FOR[form][0] : null,
-    time_of_day: null,
-    meal: 'after',
-  };
+  const first = kept[0];
   while (kept.length < count) {
     const used = new Set(kept.map((s) => s.time_of_day));
-    kept.push({ ...template, time_of_day: order.find((t) => !used.has(t)) ?? null });
+    kept.push({
+      amount: null,
+      unit: first?.unit ?? (form ? UNITS_FOR[form][0] : null),
+      time_of_day: order.find((t) => !used.has(t)) ?? null,
+      meal: first?.meal ?? 'after',
+    });
   }
   return sortByTime(kept);
+}
+
+/** Every dose has an amount someone chose. Save waits for this. */
+export function amountsSet(slots: DoseSlot[]): boolean {
+  return slots.every((d) => d.amount !== null && Number.isFinite(d.amount) && d.amount > 0);
 }
 
 export function sortByTime<T extends { time_of_day: TimeOfDay | null }>(rows: T[]): T[] {
@@ -171,6 +181,16 @@ export function addDays(iso: string, n: number): string {
   const d = dateOf(iso);
   d.setDate(d.getDate() + n);
   return isoOf(d);
+}
+
+/** "4 Oct", or "4 Oct 2025" when it is not this year. */
+export function fmtDay(iso: string, now = new Date()): string {
+  const d = dateOf(iso);
+  return d.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+  });
 }
 
 /** Whole days from a to b. Through UTC so a clock change cannot shave an hour. */
