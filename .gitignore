@@ -37,5 +37,11 @@ FoodData_Central_*
 # code, and it names the two of us. Hand it over as a file.
 HANDOFF.md
 
+# Working notes for the next Claude session (where things stand, what is
+# next, how we work) and the per-push development report. Local for the same
+# reason as HANDOFF.md.
+Claude_memory.md
+Development_report.md
+
 # wrangler dev --local keeps its miniflare state (the local D1) here
 .wrangler

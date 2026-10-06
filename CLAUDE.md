@@ -9,6 +9,15 @@ to anyone, ever.**
 rejected alternatives, how the thinking changed. Read it once before substantial
 work, not every session. This file is what you need every time.
 
+`Claude_memory.md` (gitignored, local only) is where things stand *now*: what
+was last shipped, what is open, how Upendra works, what bit the last session.
+**Read it at the start of every session and update it at the end.**
+
+`Development_report.md` (gitignored, local only) has one entry per push, newest
+first. **Before every push, add the entry** — commit range, what changed and
+why, how it was verified, what it means for the data on the phones, what is
+left open — from the change list Upendra approves.
+
 ---
 
 ## Commands
