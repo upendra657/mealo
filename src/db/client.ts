@@ -86,6 +86,15 @@ export async function run(sql: string, bind?: unknown[]): Promise<void> {
 }
 
 /**
+ * Many rows in one transaction. The worker allows this into the medicine
+ * reference table only; see BULK_TABLES there.
+ */
+export async function bulkInsert(table: string, columns: string[], rows: unknown[][]): Promise<number> {
+  await initDb();
+  return call<number>({ type: 'bulk', table, columns, rows });
+}
+
+/**
  * Insert helper that fills in the three columns every table carries.
  * Returns the new row id.
  */

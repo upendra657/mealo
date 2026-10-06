@@ -18,7 +18,7 @@
  */
 
 import { activeProfile } from '../lib/active-profile';
-import { insert, query, run, softDelete, update } from './client';
+import { bulkInsert, insert, query, run, softDelete, update } from './client';
 
 export type Agent = 'doctor' | 'nutritionist' | 'pharmacist';
 
@@ -292,6 +292,15 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
     ): Promise<void> {
       assertAllowed(agent, table, 'write');
       return update(table, id, values);
+    },
+
+    /** Many rows at once, for the reference lists; refused for anyone's record. */
+    async bulkInsert(table: string, columns: string[], rows: unknown[][]): Promise<number> {
+      assertAllowed(agent, table, 'write');
+      if (isProfileScoped(table)) {
+        throw new Error(`bulk writes skip the profile stamp, so ${table} cannot take one`);
+      }
+      return bulkInsert(table, columns, rows);
     },
 
     async softDelete(table: string, id: string): Promise<void> {

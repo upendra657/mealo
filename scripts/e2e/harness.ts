@@ -79,6 +79,10 @@ import {
 import { addDays, dateOf, EVERY_DAY, medDay, scheduleOf } from '../../src/domain/doses';
 import { applyMeds, collectMeds } from '../../src/domain/medsync';
 import { upgradeFromPrevious } from './upgrade';
+import { clearStaleImports, ensureBuiltins, importList, listSets, searchReference } from '../../src/domain/refdata';
+import { presetFor } from '../../src/lib/tabular';
+import { bulkInsert } from '../../src/db/client';
+import { strToU8, zipSync } from 'fflate';
 
 type Result = { name: string; ok: boolean; detail?: string };
 const results: Result[] = [];
@@ -1024,6 +1028,117 @@ async function main() {
     const weekSlice = renderSlice(await collectFacts());
     check('the Doctor hears what was missed', /Last 7 days: \d+ doses taken, \d+ skipped, [1-9]\d* missed\./
       .test(weekSlice), weekSlice);
+  }
+
+  // ---- medicine reference lists: importing, and leaving everything else be --
+  step('reference lists');
+  {
+    const counts = async () => {
+      const out: Record<string, number> = {};
+      for (const t of ['meals', 'meal_items', 'custom_foods', 'food_portions', 'food_aliases', 'medications', 'med_products']) {
+        out[t] = Number((await query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`))[0].n);
+      }
+      return out;
+    };
+    const before = await counts();
+
+    // The bulk path is for the reference table and nothing else.
+    let refusedHere = false;
+    try {
+      await scopedDb('nutritionist').bulkInsert('meals', ['id'], [['x']]);
+    } catch {
+      refusedHere = true;
+    }
+    check('a bulk write into meals is refused by the scoped handle', refusedHere);
+    let refusedInWorker = '';
+    try {
+      await bulkInsert('custom_foods', ['id', 'name', 'updated_at'], [['x', 'x', 1]]);
+    } catch (e) {
+      refusedInWorker = (e as Error).message;
+    }
+    check('and by the worker itself, below every other layer', refusedInWorker.includes('not allowed'), refusedInWorker);
+
+    const header = ['name', 'Is_discontinued', 'manufacturer_name', 'type', 'pack_size_label', 'short_composition1', 'short_composition2'];
+    const rows: string[][] = [];
+    for (let i = 0; i < 5200; i++) {
+      rows.push([`Fixturol ${i} Tablet`, i % 50 === 0 ? 'TRUE' : 'FALSE', 'Maker', 'allopathy', 'strip of 10 tablets',
+        `Paracetamol (${500 + (i % 3) * 50}mg)`, i % 2 ? 'Caffeine (30mg)' : '']);
+    }
+    rows.push(['Dolo 650 Tablet', 'FALSE', 'Micro Labs', 'allopathy', 'strip of 15 tablets', 'Paracetamol (650mg)', '']);
+    const preset = presetFor(header)!;
+    const csv = [header, ...rows].map((r) => r.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\r\n');
+    let last = 0;
+    const res = await importList({ kind: 'file', file: new File([csv], 'india.csv') },
+      { name: 'Fixture India', tag: 'India' }, preset.mapping, (p) => { last = p.fraction; });
+    check('a CSV list imports every medicine it can read', res.imported === 5201 - 104, String(res.imported));
+    check('and counts the discontinued it left out', res.skips.discontinued === 104, JSON.stringify(res.skips));
+    check('progress reaches the end', last === 1, String(last));
+    check('the list is ready', res.set.status === 'ready' && res.set.row_count === res.imported);
+
+    const hits = await searchReference('dolo 6');
+    check('search finds by the start of the name', hits.length === 1 && hits[0].name === 'Dolo 650 Tablet',
+      JSON.stringify(hits));
+    check('with its ingredients and source tag',
+      hits[0]?.ingredients[0]?.name === 'Paracetamol' && hits[0]?.ingredients[0]?.strength === '650mg' && hits[0]?.tag === 'India');
+    check('a discontinued medicine is not offered', (await searchReference('fixturol 0 tablet')).length === 0);
+
+    const after = await counts();
+    check('no meal, dish, portion, alias or medicine row changed', JSON.stringify(after) === JSON.stringify(before),
+      `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+
+    // A failed import leaves nothing; a failed replace leaves the old list.
+    const sets = async () => Number((await query<{ n: number }>('SELECT COUNT(*) AS n FROM med_ref_sets'))[0].n);
+    const setsBefore = await sets();
+    let failed = '';
+    try {
+      await importList({ kind: 'rows', header: ['name', 'other'], rows: [['A', 'b']] },
+        { name: 'Broken', tag: 'X' }, preset.mapping, undefined, res.set.id);
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    check('a list missing a mapped column is refused in words', failed.includes('no column'), failed);
+    check('and leaves no list behind', (await sets()) === setsBefore);
+    check('while the list it would have replaced is untouched', (await searchReference('dolo 6')).length === 1);
+
+    const again = await importList({ kind: 'rows', header, rows: rows.slice(-1) },
+      { name: 'Fixture India', tag: 'India' }, preset.mapping, undefined, res.set.id);
+    check('a replace swaps the old list for the new', again.imported === 1 && (await searchReference('fixturol')).length === 0);
+
+    // An .xlsx goes the same way.
+    const enc = (t: string) => strToU8(t);
+    const xlsx = zipSync({
+      'xl/workbook.xml': enc('<workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>'),
+      'xl/_rels/workbook.xml.rels': enc('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+      'xl/worksheets/sheet1.xml': enc('<worksheet><sheetData>'
+        + '<row><c r="A1" t="inlineStr"><is><t>Product</t></is></c><c r="B1" t="inlineStr"><is><t>Contains</t></is></c></row>'
+        + '<row><c r="A2" t="inlineStr"><is><t>Thai Cold Syrup</t></is></c><c r="B2" t="inlineStr"><is><t>Guaifenesin (100mg/5ml) + Dextromethorphan (10mg/5ml)</t></is></c></row>'
+        + '</sheetData></worksheet>'),
+    });
+    const fromXlsx = await importList({ kind: 'file', file: new File([xlsx], 'thai.xlsx') },
+      { name: 'Fixture Thai', tag: 'Thailand' }, { name: 'Product', ingredients: ['Contains'] });
+    const thai = await searchReference('thai cold');
+    check('an .xlsx list imports too', fromXlsx.imported === 1 && thai[0]?.ingredients.length === 2 && thai[0]?.tag === 'Thailand',
+      JSON.stringify(thai));
+
+    // An import the app was closed during is cleared on the next start.
+    await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, updated_at) VALUES ('stale', 'Half', 'X', 0, 'importing', 0, 0, 1)");
+    await sql("INSERT INTO med_ref_items (id, set_id, name, name_norm, ingredients, discontinued, updated_at) VALUES ('stale.1', 'stale', 'Halfway Tablet', 'halfway tablet', '[]', 0, 1)");
+    check('a half-finished list is never searched', (await searchReference('halfway')).length === 0);
+    check('and is cleared on the next start', (await clearStaleImports()) === 1 &&
+      Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM med_ref_items WHERE set_id = 'stale'"))[0].n) === 0);
+
+    // The bundled HSA register.
+    await ensureBuiltins();
+    const hsaSets = (await listSets()).filter((x) => x.builtin === 1);
+    check('the HSA register loads on start', hsaSets.length === 1 && hsaSets[0].tag === 'HSA' && hsaSets[0].row_count > 5000,
+      JSON.stringify(hsaSets.map((x) => [x.tag, x.row_count])));
+    await ensureBuiltins();
+    check('and only once for one version', (await listSets()).filter((x) => x.builtin === 1).length === 1);
+    const panadol = await searchReference('norphen');
+    check('a Singapore product is found with its HSA tag and lined-up strengths',
+      panadol[0]?.tag === 'HSA' && panadol[0]?.ingredients.map((i) => i.strength).join() === '35 mg,450 mg',
+      JSON.stringify(panadol[0]));
+    check('and still no meal row changed', JSON.stringify(await counts()) === JSON.stringify(before));
   }
 }
 

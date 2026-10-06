@@ -296,3 +296,87 @@ export async function lookupDrug(
   );
   return { concept, label };
 }
+
+// ------------------------------------------------------- searching online
+
+/** A product found online for Add meds, with what it contains. */
+export type OnlineHit = {
+  source: 'FDA' | 'NIH';
+  name: string;
+  ingredients: { name: string; strength: string | null }[];
+  /** As the source describes it: "LIQUID", "Oral Tablet". */
+  form: string | null;
+};
+
+/**
+ * US products by brand or generic name, from the FDA's NDC directory, which
+ * lists each product's active ingredients and strengths as structured fields
+ * — no label text to pick apart. Many labellers sell the same thing, so
+ * repeats of one name and composition are kept once.
+ */
+export async function searchFda(q: string, signal?: AbortSignal): Promise<OnlineHit[]> {
+  const term = q.trim().replace(/"/g, '');
+  if (term.length < 2) return [];
+  const out: OnlineHit[] = [];
+  const seen = new Set<string>();
+  for (const field of ['brand_name', 'generic_name']) {
+    let data: { results?: { brand_name?: string; generic_name?: string; dosage_form?: string;
+      active_ingredients?: { name: string; strength?: string }[] }[] };
+    try {
+      data = (await getJson(
+        `https://api.fda.gov/drug/ndc.json?search=${field}:"${encodeURIComponent(term)}"&limit=20`,
+        signal,
+      )) as typeof data;
+    } catch (e) {
+      if (e instanceof SourceUnreachable && e.status !== null && isNoMatch(e.status)) continue;
+      throw e;
+    }
+    for (const r of data.results ?? []) {
+      const name = (r.brand_name || r.generic_name || '').trim();
+      const ingredients = (r.active_ingredients ?? []).map((a) => ({
+        name: a.name.trim(),
+        strength: a.strength?.trim() || null,
+      }));
+      if (!name || !ingredients.length) continue;
+      const key = `${name.toLowerCase()}|${ingredients.map((i) => `${i.name}${i.strength}`).join('+').toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ source: 'FDA', name, ingredients, form: r.dosage_form ?? null });
+    }
+    if (out.length >= 6) break;
+  }
+  return out.slice(0, 6);
+}
+
+/**
+ * Standard single-ingredient products for an ingredient name, from RxNorm:
+ * "paracetamol" finds acetaminophen and offers "acetaminophen 500 MG Oral
+ * Tablet". Exact name match, the same rule as the label check — the person is
+ * choosing from what comes back, but what comes back should be what they typed.
+ */
+export async function searchNih(q: string, signal?: AbortSignal): Promise<OnlineHit[]> {
+  const ings = await usIngredients(q, signal);
+  const out: OnlineHit[] = [];
+  for (const ing of ings.slice(0, 1)) {
+    const rel = (await getJson(
+      `${RXNAV}/rxcui/${encodeURIComponent(ing.rxcui)}/related.json?tty=SCD`,
+      signal,
+    )) as { relatedGroup?: { conceptGroup?: { conceptProperties?: { name: string }[] }[] } };
+    const names = (rel.relatedGroup?.conceptGroup ?? [])
+      .flatMap((g) => g.conceptProperties ?? [])
+      .map((c) => c.name)
+      // One ingredient only: a combination is a different medicine.
+      .filter((n) => !n.includes(' / '));
+    for (const n of names.slice(0, 6)) {
+      // "acetaminophen 500 MG Oral Tablet": name, strength, then the form.
+      const m = /^(.*?)\s+([\d.,]+\s*(?:MG|MCG|G|ML|UNT|%|MEQ)(?:\/(?:ML|ACTUAT|HR))?)\s+(.*)$/i.exec(n);
+      out.push({
+        source: 'NIH',
+        name: n,
+        ingredients: [{ name: m ? m[1] : ing.name, strength: m ? m[2] : null }],
+        form: m ? m[3] : null,
+      });
+    }
+  }
+  return out;
+}

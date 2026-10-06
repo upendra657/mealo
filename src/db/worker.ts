@@ -42,6 +42,7 @@ async function loadSqlite3(): Promise<unknown> {
 type Req =
   | { id: number; type: 'init' }
   | { id: number; type: 'exec'; sql: string; bind?: unknown[] }
+  | { id: number; type: 'bulk'; table: string; columns: string[]; rows: unknown[][] }
   | { id: number; type: 'export' };
 
 type Ok = { id: number; ok: true; result: unknown };
@@ -57,8 +58,15 @@ type OoDb = {
     returnValue?: string;
   }): unknown;
   selectValue(sql: string): unknown;
+  prepare(sql: string): OoStmt;
   close(): void;
   pointer: number;
+};
+
+type OoStmt = {
+  bind(values: unknown[]): OoStmt;
+  stepReset(): OoStmt;
+  finalize(): void;
 };
 
 type Capi = { sqlite3_js_db_export(ptr: number): Uint8Array };
@@ -168,6 +176,50 @@ function exec(sql: string, bind?: unknown[]): unknown[] {
 }
 
 /**
+ * The only tables a bulk write may touch. Enforced here, in the worker, below
+ * every other layer: a quarter of a million rows of an imported medicine list
+ * go through this path, and it must be impossible for any of them — or any
+ * mistake in the code that sends them — to land in meals, dishes, portions or
+ * anyone's medicines.
+ */
+const BULK_TABLES = new Set(['med_ref_items']);
+
+/**
+ * Many rows in one transaction with one prepared statement: an import of
+ * 240,000 rows one message at a time would take minutes. All of a batch goes
+ * in or none of it does.
+ */
+function bulk(table: string, columns: string[], rows: unknown[][]): number {
+  if (!db) throw new Error('database not open');
+  if (!BULK_TABLES.has(table)) throw new Error(`bulk writes are not allowed into ${table}`);
+  if (!columns.length || !columns.every((c) => /^[a-z_]+$/.test(c))) {
+    throw new Error('bulk write with an unusable column list');
+  }
+  const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
+  db.exec({ sql: 'BEGIN' });
+  let stmt: OoStmt | null = null;
+  try {
+    stmt = db.prepare(sql);
+    for (const r of rows) {
+      if (r.length !== columns.length) throw new Error('a bulk row does not match its columns');
+      stmt.bind(r).stepReset();
+    }
+    stmt.finalize();
+    stmt = null;
+    db.exec({ sql: 'COMMIT' });
+    return rows.length;
+  } catch (e) {
+    try {
+      stmt?.finalize();
+    } catch {
+      /* already gone */
+    }
+    db.exec({ sql: 'ROLLBACK' });
+    throw e;
+  }
+}
+
+/**
  * Serialise the whole database to a byte array — this is the plain, unencrypted
  * export that Phase 1 ships as a "download my data" button. Encryption and a
  * separate export password come in Phase 5; the point of having it this early
@@ -192,6 +244,9 @@ self.onmessage = async (ev: MessageEvent<Req>) => {
         break;
       case 'exec':
         reply({ id: req.id, ok: true, result: exec(req.sql, req.bind) });
+        break;
+      case 'bulk':
+        reply({ id: req.id, ok: true, result: bulk(req.table, req.columns, req.rows) });
         break;
       case 'export':
         reply({ id: req.id, ok: true, result: exportDb() });

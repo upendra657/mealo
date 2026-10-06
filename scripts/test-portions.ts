@@ -26,6 +26,9 @@ import {
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import { settledValue } from '../src/lib/wheel';
+import { CsvReader, emptySkips, formFromText, parseComposition, presetFor, rowsToItems } from '../src/lib/tabular';
+import { columnIndex, readXlsx } from '../src/lib/xlsx';
+import { strToU8, zipSync } from 'fflate';
 import { lookupNames, matchLabels, sentenceNaming, worthKeeping } from '../src/domain/interactions';
 import { isNoMatch } from '../src/data/drugs';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
@@ -1458,6 +1461,103 @@ section('Label check: matching by ingredient');
   check('a medicine RxNorm did not recognise is still matched by how it was written',
     matchLabels([items[0], { med: { id: 'x', name: 'Brand X' }, substances: [{ written: 'Calcium carbonate', us: [] }] }],
       labels).some((f) => f.kind === 'label' && f.mentions === 'Brand X'), true);
+}
+
+section('Importing a medicine list: CSV in slices');
+{
+  const all = (text: string, size: number) => {
+    const r = new CsvReader();
+    const out: string[][] = [];
+    for (let i = 0; i < text.length; i += size) out.push(...r.feed(text.slice(i, i + size)));
+    out.push(...r.end());
+    return out;
+  };
+  const q = '"';
+  const csv = '﻿name,comp\r\n' +
+    `${q}Dolo, 650${q},${q}Paracetamol (650mg)${q}\r\n` +
+    `${q}Say ${q}${q}hi${q}${q}${q},x\n` +
+    `${q}two\nlines${q},y\r` +
+    'last,z';
+  const whole = all(csv, csv.length);
+  check('one pass reads every row', whole, [['name', 'comp'], ['Dolo, 650', 'Paracetamol (650mg)'],
+    ['Say "hi"', 'x'], ['two\nlines', 'y'], ['last', 'z']]);
+  for (const size of [1, 2, 3, 7]) {
+    check(`and ${size}-character slices read exactly the same`, all(csv, size), whole);
+  }
+  check('a byte-order mark is not part of the first header', whole[0][0], 'name');
+  check('blank lines are not rows', all('a,b\n\n\nc,d\n', 4), [['a', 'b'], ['c', 'd']]);
+}
+
+section('Importing a medicine list: compositions');
+check('India: one ingredient per cell', parseComposition('Paracetamol (650mg)'),
+  [{ name: 'Paracetamol', strength: '650mg' }]);
+check('the last bracket is the strength', parseComposition('Progesterone (Natural Micronized) (25mg)'),
+  [{ name: 'Progesterone (Natural Micronized)', strength: '25mg' }]);
+check('even with no space before it', parseComposition('Thiamine(Vitamin B1) (100mg)'),
+  [{ name: 'Thiamine(Vitamin B1)', strength: '100mg' }]);
+check('one column with a plus', parseComposition('Amoxycillin (500mg) + Clavulanic Acid (125mg)'),
+  [{ name: 'Amoxycillin', strength: '500mg' }, { name: 'Clavulanic Acid', strength: '125mg' }]);
+check('HSA: && lists lined up with a strength column',
+  parseComposition('ORPHENADRINE CITRATE&&PARACETAMOL', '25 mg&&500 mg'),
+  [{ name: 'ORPHENADRINE CITRATE', strength: '25 mg' }, { name: 'PARACETAMOL', strength: '500 mg' }]);
+check('a strength column that does not line up is not guessed at',
+  parseComposition('A&&B', '5 mg'), [{ name: 'A', strength: null }, { name: 'B', strength: null }]);
+check('an empty cell is no ingredients', parseComposition('   '), []);
+check('a name with no strength keeps the name', parseComposition('Ambroxol'), [{ name: 'Ambroxol', strength: null }]);
+check('pack text to the app\'s forms',
+  ['strip of 10 tablets', 'TABLET, FILM COATED', 'bottle of 60 ml Syrup', 'SUSPENSION', 'Eye Drops',
+   'packet of 5 gm Gel', 'sachet of 4 gm Powder', 'INJECTION', 'tube of 30 gm Cream', ''].map(formFromText),
+  ['tablet', 'tablet', 'syrup', 'syrup', 'drops', 'drops', 'powder', null, null, null]);
+
+section('Importing a medicine list: presets and rows');
+{
+  const az = ['name', 'Is_discontinued', 'manufacturer_name', 'type', 'pack_size_label', 'short_composition1', 'short_composition2'];
+  const hsa = ['LicenceNo', 'Productname', 'Licenseholder', 'Approvaldate', 'Forensicclassification', 'ATCCode',
+    'Dosageform', 'RouteofAdministration', 'Manufacturer', 'Countryofmanufacturer', 'Activeingredients', 'Strength'];
+  check('the A-Z India file is recognised by its header', presetFor(az)?.id, 'az-india');
+  check('so is HSA\'s', presetFor(hsa)?.id, 'hsa-singapore');
+  check('a list sharing only a "name" column is not', presetFor(['name', 'price']), null);
+
+  const skips = emptySkips();
+  const seen = new Set<string>();
+  const rows = [
+    ['Dolo 650 Tablet', 'FALSE', 'Micro Labs', 'allopathy', 'strip of 15 tablets', 'Paracetamol (650mg)', ''],
+    ['Allegra-M Tablet', 'FALSE', 'Sanofi', 'allopathy', 'strip of 10 tablets', 'Montelukast (10mg) ', ' Fexofenadine (120mg)'],
+    ['Gone Tablet', 'TRUE', 'X', 'allopathy', 'strip of 10 tablets', 'Something (1mg)', ''],
+    ['', 'FALSE', 'X', 'allopathy', '', 'Paracetamol (500mg)', ''],
+    ['No Comp', 'FALSE', 'X', 'allopathy', '', '', ''],
+  ];
+  const first = rowsToItems(az, rows.slice(0, 3), presetFor(az)!.mapping, skips, seen);
+  const second = rowsToItems(az, [rows[0], ...rows.slice(3)], presetFor(az)!.mapping, skips, seen);
+  check('a row becomes a medicine with its ingredients and form', first[0],
+    { name: 'Dolo 650 Tablet', name_norm: 'dolo 650 tablet', ingredients: [{ name: 'Paracetamol', strength: '650mg' }],
+      form: 'tablet', discontinued: false });
+  check('two composition columns read left to right', first[1].ingredients.map((i) => i.name), ['Montelukast', 'Fexofenadine']);
+  check('every row left out is counted, with why', [first.length + second.length, skips],
+    [2, { 'no name': 1, 'no ingredients': 1, discontinued: 1, duplicate: 1 }]);
+}
+
+section('Importing a medicine list: Excel');
+{
+  // A real .xlsx, built in memory: the zip and XML parts Excel writes for a
+  // two-row table, with a shared string in two rich-text runs, an inline
+  // string, a number, a skipped (empty) cell and an escaped ampersand.
+  const enc = (t: string) => strToU8(t);
+  const bytes = zipSync({
+    'xl/workbook.xml': enc('<workbook><sheets><sheet name="Meds" sheetId="1" r:id="rId1"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': enc('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    'xl/sharedStrings.xml': enc('<sst><si><t>name</t></si><si><t>comp</t></si><si><r><t>Cold </t></r><r><t>&amp; Flu</t></r></si></sst>'),
+    'xl/worksheets/sheet1.xml': enc('<worksheet><sheetData>'
+      + '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+      + '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="C2" t="inlineStr"><is><t>Paracetamol (500mg)</t></is></c><c r="D2"><v>15</v></c></row>'
+      + '</sheetData></worksheet>'),
+  });
+  check('the first sheet reads as rows of text', readXlsx(bytes),
+    [['name', 'comp'], ['Cold & Flu', '', 'Paracetamol (500mg)', '15']]);
+  check('column letters count past Z', [columnIndex('A1'), columnIndex('Z9'), columnIndex('AA3'), columnIndex('AZ1')], [0, 25, 26, 51]);
+  let refused = '';
+  try { readXlsx(enc('not a zip at all')); } catch (e) { refused = (e as Error).message; }
+  check('an old .xls or anything else is refused in words', refused.includes('.xlsx'), true);
 }
 
 section('Medicines: how often');
