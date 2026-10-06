@@ -1,168 +1,293 @@
 /**
  * Interaction surfacing — requirement R3.
  *
- * What this does: fetches the FDA label for each thing you take, and checks
- * whether any *other* thing you take is named in its interactions section.
+ * What this does: for every ingredient of every medicine you take, fetch the
+ * FDA label and check whether any ingredient of any *other* medicine you take
+ * is named in its interactions section. Also, plainly, whether two of your
+ * medicines contain the same ingredient.
+ *
+ * By ingredient, not by name, since the app began to be used outside the US.
+ * "Dolo 650" means nothing to the FDA; "Paracetamol" does once RxNorm has
+ * turned it into acetaminophen, which is the word US labels use. The old check
+ * looked up the first word of each medicine's name and matched it with
+ * String.includes, so "Calcium + D3" was checked as "Calcium" and "iron" was
+ * found inside "environment".
  *
  * What it deliberately does not do: judge severity, rank risk, or tell you what
  * to do about it. It reports that a label names a substance, quotes the
  * sentence, and links the source. Interpreting that is a pharmacist's job, and
  * an app that assigned severity scores would be inventing a judgement no label
- * gave it.
+ * gave it. A shared ingredient is reported as a fact about your own list and
+ * nothing more — how much of it is too much is not this app's to say (R2).
  *
  * Absence of a finding is not absence of an interaction — many products have no
- * FDA label at all, supplements especially. The UI says so rather than showing
- * a reassuring empty state.
+ * FDA label at all, supplements especially, and a label often names a class
+ * ("anticoagulants") rather than each member. The UI says so rather than
+ * showing a reassuring empty state.
  */
 
 import { scopedDb } from '../db/scope';
-import { fetchLabel, resolveDrug, type DrugLabel } from '../data/drugs';
-import type { Medication } from './medications';
+import { fetchLabel, usIngredients, type DrugLabel, type UsIngredient } from '../data/drugs';
+import { ingredientsOf, type Medication } from './medications';
 
 const db = scopedDb('pharmacist');
 
-export type Finding = {
-  /** The medication whose label mentions the other. */
-  sourceMed: string;
-  /** The product the label actually describes — may be a combination. */
-  productName: string;
-  /** The medication named in that label. */
-  mentions: string;
-  /** The sentence it appeared in. */
-  excerpt: string;
-  sourceUrl: string;
-  retrievedAt: number;
+const CACHE_TTL = 30 * 86_400_000; // 30 days; labels and names change slowly
+
+/** One thing a medicine contains: as written, and as US labels name it. */
+export type Substance = {
+  /** As entered: an ingredient from the library, or the medicine's own name. */
+  written: string;
+  /** RxNorm's US ingredient names. Empty when the name did not resolve. */
+  us: string[];
+  /**
+   * Resolved from the medicine's own name because it lists no ingredients.
+   * Said on screen, because a name can resolve to the wrong thing: "Crocin"
+   * is an Indian paracetamol and, to RxNorm, exactly crocin — a saffron
+   * pigment.
+   */
+  byName?: boolean;
 };
+
+export type MedSubstances = { med: Pick<Medication, 'id' | 'name'>; substances: Substance[] };
+
+export type Finding =
+  | {
+      kind: 'label';
+      /** The medicine whose label speaks, and the ingredient it was fetched for. */
+      sourceMed: string;
+      sourceIngredient: string;
+      /** The product the label actually describes — may be a combination. */
+      productName: string;
+      /** The other medicine, and the word in the label that names it. */
+      mentions: string;
+      mentionsIngredient: string;
+      /** The sentence it appeared in. */
+      excerpt: string;
+      sourceUrl: string;
+      retrievedAt: number;
+    }
+  | {
+      kind: 'shared';
+      /** The US ingredient name both contain. */
+      ingredient: string;
+      /** How each medicine wrote it, e.g. "Paracetamol". */
+      written: string[];
+      meds: string[];
+    };
 
 export type LabelStatus = {
-  medicationId: string;
-  name: string;
-  rxcui: string | null;
-  resolvedVia: 'exact' | 'approximate' | null;
+  ingredient: string;
+  meds: string[];
   label: DrugLabel | null;
-  /** True when no FDA label exists — common for supplements. */
-  noLabel: boolean;
 };
 
-const CACHE_TTL = 30 * 86_400_000; // 30 days; labels change slowly
+// ------------------------------------------------------------ the matching
 
-/** Find the sentence containing a term, so the quote carries its context. */
-function sentenceWith(text: string, term: string): string | null {
-  const needle = term.toLowerCase();
+function escape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The sentence naming a term, as a whole word or words. Whole words because a
+ * label saying "environment" does not mention iron, and "warfarin" inside
+ * "warfarin-like" still does.
+ */
+export function sentenceNaming(text: string, term: string): string | null {
+  const t = term.trim();
+  if (t.length < 4) return null; // "iron" is the shortest worth matching
+  const word = new RegExp(`(^|[^a-z0-9])${escape(t.toLowerCase())}(?=$|[^a-z0-9])`);
   for (const s of text.split(/(?<=[.!?])\s+/)) {
-    if (s.toLowerCase().includes(needle)) {
-      return s.trim().replace(/\s+/g, ' ');
-    }
+    if (word.test(s.toLowerCase())) return s.trim().replace(/\s+/g, ' ');
   }
   return null;
 }
 
-async function cachedLabel(name: string): Promise<DrugLabel | null> {
-  const rows = await db.query<{
-    excerpt: string;
-    source_url: string;
-    retrieved_at: number;
-  }>(
-    `SELECT excerpt, source_url, retrieved_at FROM citations
-      WHERE deleted_at IS NULL AND source_name = 'openFDA' AND claim = ?
+/**
+ * Every finding in a list of medicines, given the labels already fetched.
+ *
+ * Pure — no network, no database — so it is tested directly. `labels` is keyed
+ * by US ingredient name. For each medicine's label text, every other medicine
+ * is looked for by its US ingredient names and also by how it was written,
+ * since a label occasionally uses the international name too. One finding per
+ * pair of medicines and word, however many sentences repeat it.
+ */
+export function matchLabels(items: MedSubstances[], labels: Map<string, DrugLabel | null>): Finding[] {
+  const out: Finding[] = [];
+  const seen = new Set<string>();
+
+  for (const a of items) {
+    for (const s of a.substances) {
+      for (const ing of s.us) {
+        const label = labels.get(ing);
+        if (!label) continue;
+        const text =
+          label.interactionsFull ??
+          label.sections.find((x) => x.section === 'drug_interactions')?.text;
+        if (!text) continue;
+
+        for (const b of items) {
+          if (b.med.id === a.med.id) continue;
+          for (const t of b.substances) {
+            // Never an ingredient both medicines share: a label naming its own
+            // substance is not an interaction, and the shared finding says it.
+            const terms = [...t.us, t.written.toLowerCase()].filter(
+              (w, i, all) => all.indexOf(w) === i && !s.us.includes(w),
+            );
+            for (const term of terms) {
+              const key = `${a.med.id}|${b.med.id}|${term}`;
+              if (seen.has(key)) continue;
+              const excerpt = sentenceNaming(text, term);
+              if (!excerpt) continue;
+              seen.add(key);
+              out.push({
+                kind: 'label',
+                sourceMed: a.med.name,
+                sourceIngredient: ing,
+                productName: label.productName,
+                mentions: b.med.name,
+                mentionsIngredient: term,
+                excerpt,
+                sourceUrl: label.sourceUrl,
+                retrievedAt: label.retrievedAt,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // The same ingredient in two medicines. Facts from the person's own list:
+  // Dolo 650 and a cold tablet that both say paracetamol on the strip.
+  const byIngredient = new Map<string, { meds: Set<string>; written: Set<string> }>();
+  for (const item of items) {
+    for (const s of item.substances) {
+      for (const ing of s.us) {
+        const e = byIngredient.get(ing) ?? { meds: new Set(), written: new Set() };
+        e.meds.add(item.med.name);
+        e.written.add(s.written);
+        byIngredient.set(ing, e);
+      }
+    }
+  }
+  for (const [ingredient, e] of byIngredient) {
+    if (e.meds.size < 2) continue;
+    out.push({ kind: 'shared', ingredient, written: [...e.written], meds: [...e.meds] });
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------- caching
+
+/** A cached JSON value in `citations`, if one is fresh. */
+async function cached<T>(source: string, claim: string): Promise<T | undefined> {
+  const rows = await db.query<{ excerpt: string; retrieved_at: number }>(
+    `SELECT excerpt, retrieved_at FROM citations
+      WHERE deleted_at IS NULL AND source_name = ? AND claim = ?
       ORDER BY retrieved_at DESC LIMIT 1`,
-    [`label:${name.toLowerCase()}`],
+    [source, claim],
   );
   const row = rows[0];
-  if (!row || Date.now() - row.retrieved_at > CACHE_TTL) return null;
+  if (!row || Date.now() - row.retrieved_at > CACHE_TTL) return undefined;
   try {
-    return JSON.parse(row.excerpt) as DrugLabel;
+    return JSON.parse(row.excerpt) as T;
   } catch {
-    return null;
+    return undefined;
   }
 }
 
-async function storeLabel(name: string, label: DrugLabel): Promise<void> {
+async function store(source: string, claim: string, url: string, value: unknown): Promise<void> {
   await db.insert('citations', {
-    claim: `label:${name.toLowerCase()}`,
-    source_name: 'openFDA',
-    source_url: label.sourceUrl,
-    excerpt: JSON.stringify(label),
-    retrieved_at: label.retrievedAt,
+    claim,
+    source_name: source,
+    source_url: url,
+    excerpt: JSON.stringify(value),
+    retrieved_at: Date.now(),
     deleted_at: null,
   });
 }
 
-/** Resolve and fetch a label for one medication, using the local cache first. */
-export async function labelFor(med: Medication): Promise<LabelStatus> {
-  const cached = await cachedLabel(med.name);
-  if (cached) {
-    return {
-      medicationId: med.id,
-      name: med.name,
-      rxcui: med.rxcui,
-      resolvedVia: med.rxcui ? 'exact' : null,
-      label: cached,
-      noLabel: false,
-    };
+/** US ingredient names for a written name, from RxNorm, cached. */
+async function resolveWritten(written: string): Promise<string[]> {
+  // A new key, not the old "ingredient:" one: answers cached under it may have
+  // come from the fuzzy match, which is no longer trusted (see usIngredients).
+  const claim = `ingredient-exact:${written.toLowerCase()}`;
+  const hit = await cached<UsIngredient[]>('RxNorm', claim);
+  if (hit) return hit.map((i) => i.name);
+  const found = await usIngredients(written);
+  // An empty answer is cached too: "Dolo 650" will not resolve next week
+  // either, and asking again on every check would be a request for nothing.
+  await store('RxNorm', claim, 'https://rxnav.nlm.nih.gov/REST/approximateTerm.json', found);
+  return found.map((i) => i.name);
+}
+
+/** The FDA label for one US ingredient, cached. */
+async function labelForIngredient(ingredient: string): Promise<DrugLabel | null> {
+  const claim = `label-ingredient:${ingredient}`;
+  const hit = await cached<DrugLabel | null>('openFDA', claim);
+  if (hit !== undefined) return hit;
+  const label = await fetchLabel({ ingredient });
+  await store('openFDA', claim, label?.sourceUrl ?? 'https://api.fda.gov/drug/label.json', label);
+  return label;
+}
+
+// ------------------------------------------------------------- the check
+
+/**
+ * What each medicine contains: its ingredients from the library when it has
+ * them, otherwise its own name — which RxNorm resolves for "Paracetamol" and
+ * not for "Dolo 650", and the screen says which did not.
+ */
+export async function substancesOf(meds: Medication[]): Promise<MedSubstances[]> {
+  const out: MedSubstances[] = [];
+  for (const med of meds) {
+    const listed = med.product_id ? await ingredientsOf(med.product_id) : [];
+    const byName = listed.length === 0;
+    const written = byName ? [med.name] : listed.map((i) => i.name);
+    const substances: Substance[] = [];
+    for (const w of written) substances.push({ written: w, us: await resolveWritten(w), byName });
+    out.push({ med: { id: med.id, name: med.name }, substances });
   }
-
-  const concept = await resolveDrug(med.name);
-  const label = await fetchLabel({
-    rxcui: concept?.rxcui,
-    name: concept?.name ?? med.name,
-  });
-
-  if (label) await storeLabel(med.name, label);
-  if (concept && concept.rxcui !== med.rxcui) {
-    await db.update('medications', med.id, { rxcui: concept.rxcui });
-  }
-
-  return {
-    medicationId: med.id,
-    name: med.name,
-    rxcui: concept?.rxcui ?? null,
-    resolvedVia: concept?.via ?? null,
-    label,
-    noLabel: label === null,
-  };
+  return out;
 }
 
 /**
- * Cross-check everything currently taken.
- *
- * One label fetch per medication, cached for 30 days — so this costs nothing
- * on repeat visits and never touches a model.
+ * Cross-check everything being taken. One RxNorm lookup per written name and
+ * one label per ingredient, each cached for 30 days, so a repeat visit costs
+ * nothing; no model is involved at any point.
  */
-export async function checkInteractions(
-  meds: Medication[],
-): Promise<{ findings: Finding[]; statuses: LabelStatus[] }> {
-  const statuses: LabelStatus[] = [];
-  for (const m of meds) {
-    statuses.push(await labelFor(m));
-  }
+export async function checkInteractions(meds: Medication[]): Promise<{
+  findings: Finding[];
+  statuses: LabelStatus[];
+  unresolved: { med: string; written: string }[];
+  byName: { med: string; us: string[] }[];
+}> {
+  const items = await substancesOf(meds);
 
-  const findings: Finding[] = [];
-  for (const status of statuses) {
-    const interactions = status.label?.sections.find(
-      (s) => s.section === 'drug_interactions',
-    );
-    if (!interactions) continue;
-
-    for (const other of meds) {
-      if (other.id === status.medicationId) continue;
-      // Match on the substance word, not the whole written name, so
-      // "Metformin HCl 500" still matches a label mentioning metformin.
-      const word = other.name.split(/\s+/)[0];
-      if (word.length < 4) continue;
-      const excerpt = sentenceWith(interactions.text, word);
-      if (!excerpt) continue;
-
-      findings.push({
-        sourceMed: status.name,
-        productName: status.label!.productName,
-        mentions: other.name,
-        excerpt,
-        sourceUrl: status.label!.sourceUrl,
-        retrievedAt: status.label!.retrievedAt,
-      });
+  const users = new Map<string, Set<string>>();
+  for (const item of items) {
+    for (const s of item.substances) {
+      for (const ing of s.us) users.set(ing, (users.get(ing) ?? new Set()).add(item.med.name));
     }
   }
 
-  return { findings, statuses };
+  const labels = new Map<string, DrugLabel | null>();
+  const statuses: LabelStatus[] = [];
+  for (const [ingredient, who] of users) {
+    const label = await labelForIngredient(ingredient);
+    labels.set(ingredient, label);
+    statuses.push({ ingredient, meds: [...who], label });
+  }
+
+  const unresolved = items.flatMap((i) =>
+    i.substances.filter((s) => s.us.length === 0).map((s) => ({ med: i.med.name, written: s.written })),
+  );
+
+  const byName = items.flatMap((i) =>
+    i.substances.filter((s) => s.byName && s.us.length > 0).map((s) => ({ med: i.med.name, us: s.us })),
+  );
+
+  return { findings: matchLabels(items, labels), statuses, unresolved, byName };
 }

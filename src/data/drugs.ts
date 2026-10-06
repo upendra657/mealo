@@ -42,9 +42,20 @@ export type DrugLabel = {
   productName: string;
   genericNames: string[];
   sections: LabelSection[];
+  /**
+   * The whole drug-interactions section, whitespace tidied and nothing cut.
+   * `sections` is clipped to fit a prompt; matching against that clipped copy
+   * missed every medicine a label named after its first 1,800 characters, and
+   * interaction sections often run far longer. Absent on labels cached before
+   * this field existed, which fall back to the clipped text until they expire.
+   */
+  interactionsFull?: string;
   sourceUrl: string;
   retrievedAt: number;
 };
+
+/** An ingredient as US labels name it, from RxNorm. */
+export type UsIngredient = { rxcui: string; name: string };
 
 async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
   const res = await fetch(url, { signal });
@@ -113,14 +124,79 @@ function clip(text: string, max = 1800): string {
 }
 
 /**
+ * The ingredient or ingredients a written name stands for, as US labels name
+ * them.
+ *
+ * This is what makes the label check work outside the US. India, Singapore and
+ * Thailand mostly use the international names — paracetamol, thyroxine,
+ * salbutamol, amoxycillin, frusemide — and FDA labels use the American ones:
+ * acetaminophen, levothyroxine, albuterol, amoxicillin, furosemide. RxNorm
+ * knows both. A name resolves to a concept, and its related IN (ingredient)
+ * concepts are the US names; a combination product resolves to all of them.
+ * Verified against the live API for each of those pairs.
+ *
+ * Exact matches only — never approximateTerm. Its fuzzy match always offers a
+ * best guess and its score cannot tell a good one from a bad one: measured on
+ * 6 Oct 2026, "Mystery Brand" came back as Eagle Brand Medicated Oil (methyl
+ * salicylate, menthol) scoring 10.55, while paracetamol, correctly, scored
+ * 7.07. A wrong ingredient here produces confident findings about a medicine
+ * nobody takes. The exact endpoint resolved every real ingredient tried,
+ * international names included; a misspelling now fails to resolve and the
+ * screen says so, which is the right way for this to fail (P4).
+ */
+export async function usIngredients(
+  name: string,
+  signal?: AbortSignal,
+): Promise<UsIngredient[]> {
+  const term = name.trim();
+  if (!term) return [];
+  let rxcui: string | undefined;
+  try {
+    const exact = (await getJson(
+      `${RXNAV}/rxcui.json?name=${encodeURIComponent(term)}`,
+      signal,
+    )) as { idGroup?: { rxnormId?: string[] } };
+    rxcui = exact.idGroup?.rxnormId?.[0];
+  } catch {
+    return [];
+  }
+  if (!rxcui) return [];
+  const concept = { rxcui };
+  try {
+    const rel = (await getJson(
+      `${RXNAV}/rxcui/${encodeURIComponent(concept.rxcui)}/related.json?tty=IN`,
+      signal,
+    )) as {
+      relatedGroup?: { conceptGroup?: { conceptProperties?: { rxcui: string; name: string }[] }[] };
+    };
+    const found = (rel.relatedGroup?.conceptGroup ?? [])
+      .flatMap((g) => g.conceptProperties ?? [])
+      .map((c) => ({ rxcui: c.rxcui, name: c.name.toLowerCase() }));
+    return found.filter((c, i) => found.findIndex((x) => x.name === c.name) === i);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Fetch a label. Tries the RxCUI first — it is the precise handle — then falls
  * back to the generic name.
+ *
+ * With `ingredient`, the exact generic name comes first: a label whose whole
+ * generic name is ACETAMINOPHEN describes acetaminophen. The loose search that
+ * follows can land on a combination product whose interactions belong to its
+ * other half, which is why productName travels with every finding.
  */
 export async function fetchLabel(
-  opts: { rxcui?: string; name?: string },
+  opts: { rxcui?: string; name?: string; ingredient?: string },
   signal?: AbortSignal,
 ): Promise<DrugLabel | null> {
   const queries: string[] = [];
+  if (opts.ingredient) {
+    const upper = opts.ingredient.toUpperCase();
+    queries.push(`openfda.generic_name.exact:"${upper}"`);
+    queries.push(`openfda.generic_name:"${opts.ingredient}"`);
+  }
   if (opts.rxcui) queries.push(`openfda.rxcui:"${opts.rxcui}"`);
   if (opts.name) {
     queries.push(`openfda.generic_name:"${opts.name}"`);
@@ -159,10 +235,14 @@ export async function fetchLabel(
         productName:
           r.openfda?.brand_name?.[0] ??
           r.openfda?.generic_name?.[0] ??
+          opts.ingredient ??
           opts.name ??
           'unknown product',
         genericNames: r.openfda?.generic_name ?? [],
         sections,
+        interactionsFull: r.drug_interactions?.length
+          ? r.drug_interactions.join(' ').replace(/\s+/g, ' ').trim()
+          : undefined,
         sourceUrl: `${OPENFDA}?search=${encodeURIComponent(q)}&limit=1`,
         retrievedAt: Date.now(),
       };

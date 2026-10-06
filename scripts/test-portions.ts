@@ -26,6 +26,7 @@ import {
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import { settledValue } from '../src/lib/wheel';
+import { matchLabels, sentenceNaming } from '../src/domain/interactions';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
   deidentify,
@@ -1381,6 +1382,62 @@ section('The scroll wheel reports only a real choice');
   check('but a person scrolling off a value the list lacks is',
     settledValue(['katori', 'bowl'], 'old-unit', 40, 40, true), 'bowl');
   check('a scroll past the end clamps to the last row', settledValue(days, 6, 99 * 40, 40, true), 31);
+}
+
+section('Label check: matching by ingredient');
+{
+  check('a whole word is found', sentenceNaming('Use with warfarin needs care. Other text.', 'warfarin'),
+    'Use with warfarin needs care.');
+  check('"iron" is not inside "environment"', sentenceNaming('Store in a dry environment.', 'iron'), null);
+  check('a hyphenated form still names it', sentenceNaming('Avoid warfarin-like agents.', 'warfarin') !== null, true);
+  check('case does not matter', sentenceNaming('CALCIUM CARBONATE binds it.', 'calcium carbonate') !== null, true);
+  check('three letters are too few to trust', sentenceNaming('Use with ASA.', 'asa'), null);
+
+  // Synthetic fixture text, not real label wording: only the matching is tested.
+  const label = (full: string | undefined, clipped = '') => ({
+    productName: 'FIXTURE', genericNames: [], retrievedAt: 1, sourceUrl: 'https://example.invalid',
+    sections: clipped ? [{ section: 'drug_interactions' as const, text: clipped }] : [],
+    interactionsFull: full,
+  });
+  const items = [
+    { med: { id: 't', name: 'Thyronorm' }, substances: [{ written: 'Thyroxine', us: ['levothyroxine'] }] },
+    { med: { id: 'c', name: 'Calcium + D3' }, substances: [
+      { written: 'Calcium carbonate', us: ['calcium carbonate'] },
+      { written: 'Cholecalciferol', us: ['cholecalciferol'] }] },
+    { med: { id: 'd', name: 'Dolo 650' }, substances: [{ written: 'Paracetamol', us: ['acetaminophen'] }] },
+    { med: { id: 'k', name: 'Cold tablet' }, substances: [
+      { written: 'Paracetamol', us: ['acetaminophen'] }, { written: 'Caffeine', us: ['caffeine'] }] },
+  ];
+  const labels = new Map([
+    ['levothyroxine', label('Fixture sentence one. Fixture naming calcium carbonate here. Again calcium carbonate.')],
+    ['acetaminophen', label('Fixture naming acetaminophen itself and caffeine too.')],
+  ]);
+  const found = matchLabels(items, labels);
+  const lab = found.filter((f) => f.kind === 'label');
+  check('Thyronorm\'s label names Calcium + D3, found through the US names',
+    lab.some((f) => f.kind === 'label' && f.sourceMed === 'Thyronorm' && f.mentions === 'Calcium + D3'
+      && f.sourceIngredient === 'levothyroxine' && f.mentionsIngredient === 'calcium carbonate'), true);
+  check('one finding however many sentences repeat it',
+    lab.filter((f) => f.kind === 'label' && f.mentions === 'Calcium + D3').length, 1);
+  check('a label naming its own ingredient is not an interaction with the other paracetamol',
+    lab.some((f) => f.kind === 'label' && f.mentionsIngredient === 'acetaminophen'), false);
+  check('but another ingredient of that tablet still counts',
+    lab.some((f) => f.kind === 'label' && f.sourceMed === 'Dolo 650' && f.mentionsIngredient === 'caffeine'), true);
+  const shared = found.filter((f) => f.kind === 'shared');
+  check('two medicines with the same ingredient are said to share it',
+    shared.map((f) => f.kind === 'shared' && [f.ingredient, f.meds.sort().join(' + '), f.written.join()]),
+    [['acetaminophen', 'Cold tablet + Dolo 650', 'Paracetamol']]);
+
+  const far = 'Filler sentence about nothing. '.repeat(80) + 'Fixture naming cholecalciferol late.';
+  check('a name past the old 1,800-character cut is still found',
+    matchLabels(items, new Map([['levothyroxine', label(far)]])).some((f) =>
+      f.kind === 'label' && f.mentionsIngredient === 'cholecalciferol'), true);
+  check('a label cached before the full text existed falls back to the clipped one',
+    matchLabels(items, new Map([['levothyroxine', label(undefined, 'Fixture naming caffeine.')]])).some((f) =>
+      f.kind === 'label' && f.mentions === 'Cold tablet'), true);
+  check('a medicine RxNorm did not recognise is still matched by how it was written',
+    matchLabels([items[0], { med: { id: 'x', name: 'Brand X' }, substances: [{ written: 'Calcium carbonate', us: [] }] }],
+      labels).some((f) => f.kind === 'label' && f.mentions === 'Brand X'), true);
 }
 
 section('Medicines: how often');

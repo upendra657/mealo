@@ -22,7 +22,7 @@ import {
   TIMES,
   type Episode,
 } from '../domain/doses';
-import { checkInteractions, type Finding, type LabelStatus } from '../domain/interactions';
+import { checkInteractions } from '../domain/interactions';
 import {
   hideFromLibrary,
   listStopped,
@@ -351,8 +351,8 @@ export function EpisodePage({ episode, onBack }: { episode: Episode; onBack: () 
 
 export function LabelCheckPage({ onBack }: { onBack: () => void }) {
   const [meds, setMeds] = useState<Medication[]>([]);
-  const [findings, setFindings] = useState<Finding[] | null>(null);
-  const [statuses, setStatuses] = useState<LabelStatus[]>([]);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof checkInteractions>> | null>(null);
+  const [failed, setFailed] = useState(false);
   const [checking, setChecking] = useState(false);
 
   // What is being taken now, paused ones included — a medicine set aside for a
@@ -361,6 +361,7 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
     void readMedsDay().then((plan) => {
       const all = new Map<string, Medication>();
       for (const g of plan.groups) for (const p of g.doses) all.set(p.med.id, p.med);
+      for (const n of plan.notToday) all.set(n.med.id, n.med);
       for (const p of plan.paused) all.set(p.med.id, p.med);
       for (const m of plan.unscheduled) all.set(m.id, m);
       setMeds([...all.values()]);
@@ -369,27 +370,30 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
 
   const run = async () => {
     setChecking(true);
+    setFailed(false);
     try {
-      const r = await checkInteractions(meds);
-      setFindings(r.findings);
-      setStatuses(r.statuses);
+      setResult(await checkInteractions(meds));
     } catch {
-      setFindings([]);
+      // Offline, or a source down. Said as such: an empty result here would
+      // read as "nothing found", which is a different and reassuring claim.
+      setFailed(true);
     } finally {
       setChecking(false);
     }
   };
 
-  const noLabel = statuses.filter((s) => s.noLabel).map((s) => s.name);
+  const labelled = result?.findings.filter((f) => f.kind === 'label') ?? [];
+  const shared = result?.findings.filter((f) => f.kind === 'shared') ?? [];
+  const noLabel = result?.statuses.filter((s) => s.label === null) ?? [];
 
   return (
     <>
       <Top back={onBack} label="Meds" />
       <div className="dish-name">Label check</div>
       <div className="dish-sub">
-        Reads the FDA label for each medicine and reports whether it names anything else you
-        take. It does not judge severity — that is a pharmacist's call. Cached for 30 days; no
-        model involved.
+        Reads the US FDA label for each ingredient you take and reports whether it names anything
+        else you take. It does not judge severity — that is a pharmacist's call. Cached for 30
+        days; no model involved.
       </div>
 
       <button
@@ -397,35 +401,83 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
         disabled={checking || meds.length === 0}
         onClick={() => void run()}
       >
-        {checking ? 'Checking…' : findings ? 'Check again' : 'Check labels'}
+        {checking ? 'Checking…' : result ? 'Check again' : 'Check labels'}
       </button>
       {meds.length === 0 && <p className="empty-note">Nothing to check until a medicine is added.</p>}
+      {failed && (
+        <div className="result result--fail" style={{ marginTop: 12 }}>
+          <strong>The label sources could not be reached.</strong>
+          <p className="small muted">Nothing was checked. Try again when you are online.</p>
+        </div>
+      )}
 
-      {findings !== null && findings.length === 0 && (
+      {result && labelled.length === 0 && shared.length === 0 && (
         <p className="note">
           Nothing found. That is not the same as nothing existing — many products, supplements
-          especially, have no FDA label at all.
+          especially, have no FDA label, and labels often name a class of medicine rather than
+          each one.
         </p>
       )}
 
-      {findings?.map((f, i) => (
-        <div key={i} className="result result--warn" style={{ marginTop: 12 }}>
-          <strong>
-            {f.sourceMed}'s label mentions {f.mentions}
-          </strong>
-          <p>"{f.excerpt}"</p>
-          <p className="small muted">
-            From the label for <b>{f.productName}</b> ·{' '}
-            <a href={f.sourceUrl} target="_blank" rel="noreferrer">
-              source
-            </a>{' '}
-            · retrieved {new Date(f.retrievedAt).toLocaleDateString()}
-          </p>
-        </div>
-      ))}
+      {labelled.map((f, i) =>
+        f.kind === 'label' ? (
+          <div key={i} className="result result--warn" style={{ marginTop: 12 }}>
+            <strong>
+              {f.sourceMed}'s label mentions {f.mentions}
+            </strong>
+            <p className="small muted" style={{ margin: '4px 0 0' }}>
+              {f.sourceIngredient} → {f.mentionsIngredient}
+            </p>
+            <p>"{f.excerpt}"</p>
+            <p className="small muted">
+              US FDA label for <b>{f.productName}</b> ·{' '}
+              <a href={f.sourceUrl} target="_blank" rel="noreferrer">
+                source
+              </a>{' '}
+              · retrieved {new Date(f.retrievedAt).toLocaleDateString()}
+            </p>
+          </div>
+        ) : null,
+      )}
 
+      {shared.length > 0 && (
+        <>
+          <div className="section-h">Same ingredient</div>
+          {shared.map((f, i) =>
+            f.kind === 'shared' ? (
+              <div key={i} className="result" style={{ marginTop: 8 }}>
+                <strong>{f.meds.join(' and ')} both contain {f.ingredient}</strong>
+                {f.written.some((w) => w.toLowerCase() !== f.ingredient) && (
+                  <p className="small muted">Written as {f.written.join(', ')}.</p>
+                )}
+              </div>
+            ) : null,
+          )}
+        </>
+      )}
+
+      {result && result.unresolved.length > 0 && (
+        <p className="note">
+          Not recognised, so not checked:{' '}
+          {result.unresolved.map((u) => (u.written === u.med ? u.med : `${u.written} (${u.med})`)).join(', ')}.
+          Adding its ingredients from the strip lets it be checked.
+        </p>
+      )}
+      {result && result.byName.length > 0 && (
+        <p className="note">
+          Checked by name, with no ingredients listed:{' '}
+          {result.byName.map((b) => `${b.med} → ${b.us.join(', ')}`).join('; ')}. If that is not
+          what it contains, add its ingredients.
+        </p>
+      )}
       {noLabel.length > 0 && (
-        <p className="note">No FDA label found for: {noLabel.join(', ')}.</p>
+        <p className="note">No US FDA label found for: {noLabel.map((s) => s.ingredient).join(', ')}.</p>
+      )}
+      {result && (labelled.length > 0 || shared.length > 0) && (
+        <div className="foot">
+          A US label describes the ingredient. A product sold here can differ in what else it
+          contains.
+        </div>
       )}
     </>
   );
