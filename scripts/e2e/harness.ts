@@ -54,7 +54,10 @@ import {
   addMedication,
   addMedicine,
   cycleDose,
+  listStopped,
   readLog,
+  resumeMedication,
+  stopMedication,
   draftFromLibrary,
   draftFromMedicine,
   editMedicine,
@@ -1000,6 +1003,23 @@ async function main() {
       JSON.stringify(altRows));
     const reTick = (await readMedsDay(day)).groups.flatMap((g) => g.doses).find((p) => p.med.id === hist);
     check('and is due on that first day', reTick !== undefined);
+
+    // ---- stopping a medicine stops every entry of it --------------------
+    const twice = { ...base, name: 'Entered twice', strength: null, schedule: EVERY_DAY };
+    const first = await addMedicine(twice);
+    const second = await addMedicine(twice);
+    const bystander = await addMedicine({ ...twice, name: 'Someone else' });
+    check('one tap of Stop stops both entries', (await stopMedication(first)) === 2);
+    const still = dueIds(await readMedsDay(day));
+    check('and neither is left on the schedule', !still.includes(first) && !still.includes(second));
+    check('a different medicine is untouched', still.includes(bystander));
+    check('both are in Stopped', (await listStopped()).filter((m) => m.name === 'Entered twice').length === 2);
+    check('Resume brings back the two stopped together', (await resumeMedication(second)) === 2);
+    check('and they are due again', dueIds(await readMedsDay(day)).filter((id) => id === first || id === second).length === 2);
+    const legacyA = await addMedication({ name: 'Old Style', dose_text: null, schedule: 'daily', notes: null });
+    const legacyB = await addMedication({ name: 'old style', dose_text: null, schedule: 'daily', notes: null });
+    check('entries from before the library are matched by name', (await stopMedication(legacyA)) === 2);
+    check('whatever the case', (await listStopped()).some((m) => m.id === legacyB));
 
     const weekSlice = renderSlice(await collectFacts());
     check('the Doctor hears what was missed', /Last 7 days: \d+ doses taken, \d+ skipped, [1-9]\d* missed\./

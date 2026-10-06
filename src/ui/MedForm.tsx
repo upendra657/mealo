@@ -12,7 +12,7 @@
  * entry both of you see.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   EVERY_DAY,
   FORMS,
@@ -121,6 +121,12 @@ export function MedFormScreen({
   const [picker, setPicker] = useState<Picker>(null);
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * Set synchronously on the first tap of Save. `busy` disables the button,
+   * but only after React re-renders; a quick second tap lands before that and
+   * would add the same medicine twice.
+   */
+  const saving = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -191,6 +197,8 @@ export function MedFormScreen({
   const showLongTerm = sickness === null;
 
   const save = async () => {
+    if (saving.current) return;
+    saving.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -202,6 +210,7 @@ export function MedFormScreen({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
+      saving.current = false;
     }
   };
 

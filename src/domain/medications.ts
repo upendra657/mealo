@@ -195,15 +195,63 @@ export async function editMedication(
 }
 
 /**
- * Stopping keeps the history. Only an explicit delete removes it. Dated by the
- * Meds day, so stopping at 1 am stops from the day the screen was showing.
+ * Every entry of the same medicine for this person, in one state: the same
+ * library product, or for an entry from before the library, the same name.
+ *
+ * "Stop taking" means the medicine, not one row of it. Three entries of one
+ * medicine — added twice by mistake, or three times while trying the form —
+ * each needed stopping on its own, and a schedule still showing two of them
+ * after "Stop taking" looks like the button did not work.
  */
-export async function stopMedication(id: string): Promise<void> {
-  await db.update('medications', id, { ended_on: medDay() });
+async function entriesOf(med: Medication, stopped: boolean): Promise<Medication[]> {
+  const state = stopped ? 'ended_on = ?' : 'ended_on IS NULL';
+  const args = stopped ? [med.ended_on] : [];
+  return med.product_id
+    ? db.query<Medication>(
+        `SELECT * FROM medications
+          WHERE profile_id = ? AND deleted_at IS NULL AND product_id = ? AND ${state}`,
+        [activeProfile(), med.product_id, ...args],
+      )
+    : db.query<Medication>(
+        `SELECT * FROM medications
+          WHERE profile_id = ? AND deleted_at IS NULL AND product_id IS NULL
+            AND name = ? COLLATE NOCASE AND ${state}`,
+        [activeProfile(), med.name, ...args],
+      );
 }
 
-export async function resumeMedication(id: string): Promise<void> {
-  await db.update('medications', id, { ended_on: null });
+async function one(id: string): Promise<Medication | null> {
+  return (
+    (
+      await db.query<Medication>('SELECT * FROM medications WHERE id = ? AND profile_id = ?', [
+        id,
+        activeProfile(),
+      ])
+    )[0] ?? null
+  );
+}
+
+/**
+ * Stop a medicine: every running entry of it. Stopping keeps the history; only
+ * an explicit delete removes it. Dated by the Meds day, so stopping at 1 am
+ * stops from the day the screen was showing. Returns how many were stopped.
+ */
+export async function stopMedication(id: string): Promise<number> {
+  const med = await one(id);
+  if (!med) return 0;
+  const all = await entriesOf(med, false);
+  const day = medDay();
+  for (const m of all) await db.update('medications', m.id, { ended_on: day });
+  return all.length;
+}
+
+/** Resume a stopped medicine: the entries stopped together with this one. */
+export async function resumeMedication(id: string): Promise<number> {
+  const med = await one(id);
+  if (!med || med.ended_on === null) return 0;
+  const all = await entriesOf(med, true);
+  for (const m of all) await db.update('medications', m.id, { ended_on: null });
+  return all.length;
 }
 
 export async function deleteMedication(id: string): Promise<void> {

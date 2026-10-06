@@ -233,6 +233,36 @@ async function store(source: string, claim: string, url: string, value: unknown)
   });
 }
 
+/**
+ * The names to ask RxNorm for, in order, for an ingredient as written on a
+ * strip.
+ *
+ * Strips add things RxNorm's exact match will not see past: a pharmacopoeia
+ * tag (Indian strips print "Chlorpheniramine Maleate I.P.", British "B.P.",
+ * American "USP"), and sometimes the strength. Those are removed first. Then
+ * the full salt name, which RxNorm knows — "Dextromethorphan Hydrobromide",
+ * "Ambroxol Hydrochloride", "Ferrous Sulphate" all resolve exactly. Only if
+ * that fails, the base without its salt word: a typo in the salt
+ * ("Hydobromide", as on one real entry) should not cost the whole ingredient.
+ * The salt word is recognised by its ending, -ide or -ate, or a named cation,
+ * and the base must still be a real word. Every candidate is still an exact
+ * match; nothing here guesses.
+ */
+export function lookupNames(written: string): string[] {
+  const cleaned = written
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/(^|\s)(i\.?\s?p\.?|b\.?\s?p\.?|u\.?\s?s\.?\s?p\.?|ph\.?\s?eur\.?|n\.?f\.?)(?=\s|$)/gi, ' ')
+    .replace(/\b\d+(\.\d+)?\s*(mg|mcg|µg|g|ml|iu|%)(\s*\/\s*\d*\s*(ml|g))?\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return [];
+  const words = cleaned.split(' ');
+  const last = words[words.length - 1].toLowerCase();
+  const isSalt = /(ide|ate)$/.test(last) || ['sodium', 'potassium', 'monohydrate', 'trihydrate'].includes(last);
+  const base = words.slice(0, -1).join(' ');
+  return isSalt && words.length > 1 && base.replace(/\s/g, '').length >= 4 ? [cleaned, base] : [cleaned];
+}
+
 /** US ingredient names for a written name, from RxNorm, cached. */
 async function resolveWritten(written: string): Promise<string[]> {
   // A new key, not the old "ingredient:" one: answers cached under it may have
@@ -240,7 +270,11 @@ async function resolveWritten(written: string): Promise<string[]> {
   const claim = `ingredient-exact:${written.toLowerCase()}`;
   const hit = await cached<UsIngredient[]>('RxNorm', claim);
   if (hit) return hit.map((i) => i.name);
-  const found = await usIngredients(written);
+  let found: UsIngredient[] = [];
+  for (const name of lookupNames(written)) {
+    found = await usIngredients(name);
+    if (found.length) break;
+  }
   await store('RxNorm', claim, 'https://rxnav.nlm.nih.gov/REST/rxcui.json', found);
   return found.map((i) => i.name);
 }
@@ -318,15 +352,19 @@ export async function checkInteractions(meds: Medication[]): Promise<{
     }
   }
 
-  const unresolved = items.flatMap((i) =>
-    i.substances
-      .filter((s) => s.us.length === 0 && !s.unreachable)
-      .map((s) => ({ med: i.med.name, written: s.written })),
-  );
+  // Once each: two medicines of the same name list the same ingredients, and
+  // a list that repeats itself hides the one line worth reading.
+  const unresolved = items
+    .flatMap((i) =>
+      i.substances
+        .filter((s) => s.us.length === 0 && !s.unreachable)
+        .map((s) => ({ med: i.med.name, written: s.written })),
+    )
+    .filter((u, n, all) => all.findIndex((x) => x.med === u.med && x.written === u.written) === n);
   const unreachable = [
     ...items.flatMap((i) => i.substances.filter((s) => s.unreachable).map((s) => s.written)),
     ...statuses.filter((s) => s.unreachable).map((s) => s.ingredient),
-  ];
+  ].filter((n, i, all) => all.indexOf(n) === i);
 
   const byName = items.flatMap((i) =>
     i.substances.filter((s) => s.byName && s.us.length > 0).map((s) => ({ med: i.med.name, us: s.us })),

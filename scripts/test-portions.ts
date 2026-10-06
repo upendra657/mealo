@@ -26,7 +26,7 @@ import {
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import { settledValue } from '../src/lib/wheel';
-import { matchLabels, sentenceNaming, worthKeeping } from '../src/domain/interactions';
+import { lookupNames, matchLabels, sentenceNaming, worthKeeping } from '../src/domain/interactions';
 import { isNoMatch } from '../src/data/drugs';
 import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
@@ -1436,6 +1436,18 @@ section('Label check: matching by ingredient');
   check('a label cached before the full text existed falls back to the clipped one',
     matchLabels(items, new Map([['levothyroxine', label(undefined, 'Fixture naming caffeine.')]])).some((f) =>
       f.kind === 'label' && f.mentions === 'Cold tablet'), true);
+  check('an Indian strip\'s I.P. tag is dropped, salt name first',
+    lookupNames('Chlorpheniramine Maleate I.P.'), ['Chlorpheniramine Maleate', 'Chlorpheniramine']);
+  check('a typo in the salt still leaves the base to try',
+    lookupNames('Dextromethorphan Hydobromide I.P.'), ['Dextromethorphan Hydobromide', 'Dextromethorphan']);
+  check('B.P., USP and Ph. Eur. go the same way',
+    [lookupNames('Ferrous Sulphate B.P.')[0], lookupNames('Guaifenesin USP')[0], lookupNames('Paracetamol Ph. Eur.')[0]],
+    ['Ferrous Sulphate', 'Guaifenesin', 'Paracetamol']);
+  check('a strength in brackets or after the name is dropped',
+    [lookupNames('Ambroxol (30mg/5ml)'), lookupNames('Paracetamol 650 mg')], [['Ambroxol'], ['Paracetamol']]);
+  check('a plain name is asked as it is', lookupNames('Guaifenesin'), ['Guaifenesin']);
+  check('"IP" inside a word is not a tag', lookupNames('Ciprofloxacin')[0], 'Ciprofloxacin');
+  check('nothing left means nothing to ask', lookupNames('(10mg) I.P.'), []);
   check('a found answer is kept', [worthKeeping([{ rxcui: '1', name: 'x' }]), worthKeeping({ productName: 'P' })],
     [true, true]);
   check('"not recognised" is never kept', worthKeeping([]), false);

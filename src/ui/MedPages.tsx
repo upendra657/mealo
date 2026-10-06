@@ -91,8 +91,8 @@ export function MedDetailPage({
       : 'pauses in sick mode';
 
   const stop = async () => {
-    await stopMedication(med.id);
-    toast('Stopped');
+    const n = await stopMedication(med.id);
+    toast(n > 1 ? `Stopped, all ${n} entries` : 'Stopped');
     onBack();
   };
 
@@ -458,6 +458,14 @@ export function LabelCheckPage({ onBack }: { onBack: () => void }) {
         </>
       )}
 
+      {/* What was actually read, so "nothing found" can be weighed: a clean
+          result over three labels is not the same as one over none. */}
+      {result && result.statuses.some((st) => st.label) && (
+        <p className="small muted" style={{ marginTop: 14 }}>
+          Checked against the US labels for{' '}
+          {result.statuses.filter((st) => st.label).map((st) => st.ingredient).join(', ')}.
+        </p>
+      )}
       {result && result.unreachable.length > 0 && (
         <div className="result result--fail" style={{ marginTop: 12 }}>
           <strong>Not checked this time: {result.unreachable.join(', ')}</strong>
@@ -501,6 +509,14 @@ export function StoppedPage({ onBack }: { onBack: () => void }) {
   const toast = useToast();
   const load = () => void listStopped().then(setRows);
   useEffect(load, []);
+  // One row per medicine stopped together, the way it was stopped.
+  const groups: { m: Medication; n: number }[] = [];
+  for (const m of rows) {
+    const key = `${m.product_id ?? m.name.toLowerCase()}|${m.ended_on}`;
+    const g = groups.find((x) => `${x.m.product_id ?? x.m.name.toLowerCase()}|${x.m.ended_on}` === key);
+    if (g) g.n++;
+    else groups.push({ m, n: 1 });
+  }
 
   return (
     <>
@@ -509,7 +525,7 @@ export function StoppedPage({ onBack }: { onBack: () => void }) {
       <div className="dish-sub">Kept, not deleted — the history still matters.</div>
       <div style={{ marginTop: 14 }}>
         {rows.length === 0 && <p className="empty-note">Nothing stopped.</p>}
-        {rows.map((m) => (
+        {groups.map(({ m, n }) => (
           <div className="row" key={m.id}>
             <span className="grow">
               <span className="nm" style={{ display: 'block' }}>
@@ -518,6 +534,7 @@ export function StoppedPage({ onBack }: { onBack: () => void }) {
               </span>
               <span className="amt num" style={{ display: 'block' }}>
                 stopped {m.ended_on ? shortDay(m.ended_on) : ''}
+                {n > 1 ? ` · ${n} entries` : ''}
               </span>
             </span>
             {m.episode_id === null && (
