@@ -20,6 +20,17 @@
 
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
+import {
+  describeDose,
+  medDay,
+  planDay,
+  progress,
+  timeLabel,
+  type Episode,
+  type PlanDose,
+  type PlanIntake,
+  type PlanMed,
+} from './doses';
 
 const db = scopedDb('doctor');
 
@@ -43,6 +54,10 @@ export type MealSummary = {
 
 export type StateFacts = {
   medications: { name: string; dose: string | null; schedule: string | null }[];
+  /** The sickness running today, if any — it changes what "taking" means. */
+  sickness: { name: string; day: number; of: number } | null;
+  /** Regular medicines set aside while that sickness runs. */
+  paused: string[];
   adherence7d: { taken: number; skipped: number };
   /** Per-medication status today — "taken at 08:15" beats "9 doses this week". */
   dosesToday: { name: string; status: string; time: string }[];
@@ -68,16 +83,51 @@ export async function collectFacts(): Promise<StateFacts> {
   const me = activeProfile();
   const weekAgo = Date.now() - 7 * 86_400_000;
 
-  const meds = await db.query<{
-    name: string;
-    dose_text: string | null;
-    schedule: string | null;
-  }>(
-    `SELECT name, dose_text, schedule FROM medications
-      WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NULL
-      ORDER BY name COLLATE NOCASE`,
-    [me],
-  );
+  // The same plan the Meds screen draws, from the Doctor's own reads. Not
+  // "every row not stopped": a finished course of antibiotics is not stopped,
+  // it is over, and a regular supplement paused for a fever is not being taken.
+  const today = medDay();
+  const [medRows, doseRows, episodes, ticks] = await Promise.all([
+    db.query<PlanMed>(
+      `SELECT id, name, dose_text, schedule, long_term, episode_id FROM medications
+        WHERE profile_id = ? AND deleted_at IS NULL AND ended_on IS NULL
+        ORDER BY name COLLATE NOCASE`,
+      [me],
+    ),
+    db.query<PlanDose>(
+      'SELECT * FROM med_doses WHERE profile_id = ? AND deleted_at IS NULL ORDER BY position',
+      [me],
+    ),
+    db.query<Episode>(
+      'SELECT * FROM sick_episodes WHERE profile_id = ? AND deleted_at IS NULL',
+      [me],
+    ),
+    db.query<PlanIntake>(
+      `SELECT id, dose_id, status, updated_at FROM intake_events
+        WHERE profile_id = ? AND for_day = ? AND deleted_at IS NULL`,
+      [me, today],
+    ),
+  ]);
+  const plan = planDay(today, medRows, doseRows, episodes, ticks);
+
+  const scheduled = new Map<string, { med: PlanMed; parts: string[] }>();
+  for (const g of plan.groups) {
+    for (const p of g.doses) {
+      const entry = scheduled.get(p.med.id) ?? { med: p.med, parts: [] };
+      entry.parts.push(`${timeLabel(p.dose.time_of_day).toLowerCase()}: ${describeDose(p.dose)}`);
+      scheduled.set(p.med.id, entry);
+    }
+  }
+  const meds = [
+    ...[...scheduled.values()].map(({ med, parts }) => ({
+      name: med.name,
+      dose_text: med.dose_text,
+      schedule: parts.join(', '),
+    })),
+    // From before dose slots: the schedule exactly as it was typed.
+    ...plan.unscheduled.map((m) => ({ name: m.name, dose_text: m.dose_text, schedule: m.schedule })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  const sick = plan.episode ? progress(plan.episode, today) : null;
 
   const intake = await db.query<{ status: string; n: number }>(
     `SELECT status, COUNT(*) AS n FROM intake_events
@@ -214,6 +264,9 @@ export async function collectFacts(): Promise<StateFacts> {
       dose: m.dose_text,
       schedule: m.schedule,
     })),
+    sickness:
+      plan.episode && sick ? { name: plan.episode.name, day: sick.day, of: sick.total } : null,
+    paused: plan.paused.map((p) => p.med.name),
     adherence7d: {
       taken: Number(intake.find((r) => r.status === 'taken')?.n ?? 0),
       skipped: Number(intake.find((r) => r.status === 'skipped')?.n ?? 0),
@@ -248,6 +301,12 @@ export async function collectFacts(): Promise<StateFacts> {
 export function renderSlice(facts: StateFacts): string {
   const lines: string[] = [];
 
+  if (facts.sickness) {
+    lines.push(
+      `Sick mode: ${facts.sickness.name}, day ${facts.sickness.day} of ${facts.sickness.of}.`,
+    );
+  }
+
   if (facts.medications.length) {
     lines.push(
       'Currently taking: ' +
@@ -262,6 +321,9 @@ export function renderSlice(facts: StateFacts): string {
     );
   } else {
     lines.push('Currently taking: nothing recorded.');
+  }
+  if (facts.paused.length) {
+    lines.push(`Paused while sick: ${facts.paused.join('; ')}.`);
   }
 
   if (facts.dosesToday.length) {

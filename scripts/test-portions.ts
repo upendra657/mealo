@@ -49,6 +49,26 @@ import {
 } from '../src/domain/banner';
 import type { Macros } from '../src/domain/day';
 import {
+  addDays,
+  daysFrom,
+  describeDose,
+  durationLabel,
+  fmtAmount,
+  FORMS,
+  isRunning,
+  lastDayOf,
+  lengths,
+  medDay,
+  medSlug,
+  partOfDay,
+  planDay,
+  progress,
+  resizeDoses,
+  unitFor,
+  UNITS_FOR,
+  type TimeOfDay,
+} from '../src/domain/doses';
+import {
   collapse,
   isAddressable,
   nextCursor,
@@ -1179,6 +1199,138 @@ section('Migrations: nothing deletes or rewrites a row');
     false);
   check('lets INSERT OR IGNORE through',
     caught("INSERT OR IGNORE INTO profiles (id) VALUES ('primary')"), false);
+}
+
+// --------------------------------------------------------------- medicines
+
+section('Medicines: how an amount reads');
+check('one tablet', fmtAmount(1, 'tablet'), '1 tablet');
+check('two tablets', fmtAmount(2, 'tablet'), '2 tablets');
+check('half a tablet is not "tablets"', fmtAmount(0.5, 'tablet'), '0.5 tablet');
+check('ml never pluralises', fmtAmount(10, 'ml'), '10 ml');
+check('grams never pluralise', fmtAmount(5, 'g'), '5 g');
+check('scoops do', fmtAmount(2, 'scoop'), '2 scoops');
+check('drops do', fmtAmount(2, 'drop'), '2 drops');
+check('no amount says so rather than "null"', fmtAmount(null, 'tablet'), 'amount not set');
+check('a whole dose line', describeDose({ amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after' }),
+  '1 tablet · after meal');
+check('drops are a form, counted in drops', UNITS_FOR.drops, ['drop']);
+check('every form has a unit', FORMS.every((f) => UNITS_FOR[f.id].length > 0), true);
+
+section('Medicines: the library merge key');
+check('"650mg" and "650 MG" are the same strip',
+  medSlug('Paracetamol', '650mg'), medSlug('paracetamol', '650 MG'));
+check('the strength is part of it', medSlug('Thyroxine', '25 mcg') === medSlug('Thyroxine', '50 mcg'), false);
+check('no strength still keys on the name', medSlug('Cough syrup', null), 'cough syrup');
+
+section('Medicines: changing "times a day"');
+{
+  const one = [{ amount: 2, unit: 'tablet' as const, time_of_day: 'morning' as const, meal: 'before' as const }];
+  const two = resizeDoses(one, 2, 'tablet');
+  check('2 keeps the first row as typed', two[0], one[0]);
+  check('and adds night, copying its amount', [two[1].time_of_day, two[1].amount, two[1].meal],
+    ['night', 2, 'before']);
+  const three = resizeDoses(two, 3, 'tablet');
+  check('3 adds the afternoon, in day order', three.map((d) => d.time_of_day),
+    ['morning', 'afternoon', 'night']);
+  check('4 is the most', resizeDoses(three, 9, 'tablet').length, 4);
+  check('down to 1 keeps the first', resizeDoses(three, 1, 'tablet').map((d) => d.time_of_day), ['morning']);
+  check('a first row starts in the form\'s unit', resizeDoses([], 1, 'syrup')[0].unit, 'ml');
+  check('switching to powder keeps a unit that fits', unitFor('powder', 'g'), 'g');
+  check('and replaces one that does not', unitFor('syrup', 'tablet'), 'ml');
+}
+
+section('Medicines: the sickness calendar');
+check('7 days from Tue 6 Oct ends Mon 12 Oct', lastDayOf('2026-10-06', 7, 'days'), '2026-10-12');
+check('1 week is the same 7 days', lastDayOf('2026-10-06', 1, 'weeks'), '2026-10-12');
+check('1 day is just today', lastDayOf('2026-10-06', 1, 'days'), '2026-10-06');
+check('a calendar month: 6 Oct runs to 5 Nov', lastDayOf('2026-10-06', 1, 'months'), '2026-11-05');
+check('from 31 Jan, held at the end of February', lastDayOf('2026-01-31', 1, 'months'), '2026-02-27');
+check('a year from a leap day', lastDayOf('2024-02-29', 1, 'years'), '2025-02-27');
+check('across a year end', lastDayOf('2026-12-20', 3, 'weeks'), '2027-01-09');
+{
+  const e = { id: 'e', name: 'Viral fever', started_on: '2026-10-04', last_day: '2026-10-10',
+    duration_n: 7, duration_unit: 'days', recovered_on: null };
+  check('day 3 of 7 with 5 to go, today counting', progress(e, '2026-10-06'), { day: 3, total: 7, toGo: 5 });
+  check('running on its first day', isRunning(e, '2026-10-04'), true);
+  check('and its last', isRunning(e, '2026-10-10'), true);
+  check('not the day after', isRunning(e, '2026-10-11'), false);
+  check('not before it began', isRunning(e, '2026-10-03'), false);
+  const rec = { ...e, recovered_on: '2026-10-08' };
+  check('recovered ends it that day', isRunning(rec, '2026-10-08'), false);
+  check('but not the day before', isRunning(rec, '2026-10-07'), true);
+  check('it ran 4 of 7 planned days', lengths(rec), { planned: 7, lasted: 4 });
+  check('recovered on day one still lasted a day',
+    lengths({ ...e, recovered_on: '2026-10-04' }), { planned: 7, lasted: 1 });
+  check('extended to the 13th: planned 7, lasted 10',
+    lengths({ ...e, last_day: '2026-10-13' }), { planned: 7, lasted: 10 });
+}
+check('"1 weeks" reads as "1 week"', durationLabel(1, 'weeks'), '1 week');
+check('half past midnight is still last night', medDay(new Date(2026, 9, 7, 0, 30)), '2026-10-06');
+check('three o\'clock is the new day', medDay(new Date(2026, 9, 7, 3, 0)), '2026-10-07');
+check('two in the afternoon is the afternoon', partOfDay(new Date(2026, 9, 7, 14, 0)), 'afternoon');
+{
+  // A clock change inside a sickness. Node reads TZ afresh when it changes,
+  // so this runs in a zone that has one: US clocks went forward on 8 Mar 2026.
+  const was = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  check('across a clock change, still 7 calendar days', lastDayOf('2026-03-05', 7, 'days'), '2026-03-11');
+  check('and two days are two days', daysFrom('2026-03-07', '2026-03-09'), 2);
+  check('and the day after is the 9th', addDays('2026-03-08', 1), '2026-03-09');
+  if (was === undefined) delete process.env.TZ;
+  else process.env.TZ = was;
+}
+
+section('Medicines: what is due on a day');
+{
+  const day = '2026-10-06';
+  const at2pm = new Date(2026, 9, 6, 14, 0);
+  const med = (id: string, long_term: number | null, episode_id: string | null = null) =>
+    ({ id, name: id, dose_text: null, schedule: null, long_term, episode_id });
+  const dose = (id: string, medication_id: string, time_of_day: TimeOfDay) =>
+    ({ id, medication_id, position: 1, amount: 1, unit: 'tablet' as const, time_of_day, meal: 'after' as const });
+  const meds = [
+    med('thyroxine', 1), med('creatine', 0), med('old vitamin', null), med('unasked', null),
+    med('syrup', 0, 'fever'), med('antibiotic', 0, 'last-month'),
+  ];
+  const doses = [
+    dose('d-thy', 'thyroxine', 'morning'), dose('d-cre', 'creatine', 'morning'),
+    dose('d-una', 'unasked', 'night'), dose('d-syr', 'syrup', 'night'),
+    dose('d-ant', 'antibiotic', 'morning'),
+  ];
+  const fever = { id: 'fever', name: 'Fever', started_on: '2026-10-05', last_day: '2026-10-09',
+    duration_n: 5, duration_unit: 'days', recovered_on: null };
+  const lastMonth = { ...fever, id: 'last-month', started_on: '2026-09-01', last_day: '2026-09-07' };
+
+  const well = planDay(day, meds, doses, [lastMonth], [], at2pm);
+  const wellIds = well.groups.flatMap((g) => g.doses.map((p) => p.med.id));
+  check('well: every regular medicine with slots is due', wellIds.sort(),
+    ['creatine', 'thyroxine', 'unasked']);
+  check('a finished course is not', wellIds.includes('antibiotic'), false);
+  check('nor a sickness medicine with no sickness running', wellIds.includes('syrup'), false);
+  check('a medicine with no slots is shown as written', well.unscheduled.map((m) => m.id), ['old vitamin']);
+  check('morning, two hours ago, is due', well.groups[0].doses[0].state, 'due');
+  check('night is later', well.groups.at(-1)!.doses[0].state, 'later');
+
+  const sick = planDay(day, meds, doses, [fever, lastMonth], [], at2pm);
+  const sickIds = sick.groups.flatMap((g) => g.doses.map((p) => p.med.id));
+  check('sick: the long-term medicine continues', sickIds.includes('thyroxine'), true);
+  check('the sickness medicine is due', sickIds.includes('syrup'), true);
+  check('the regular one pauses', sick.paused.map((p) => p.med.id).includes('creatine'), true);
+  check('so does one nobody was asked about', sick.paused.map((p) => p.med.id).includes('unasked'), true);
+  check('and one from before slots', sick.paused.map((p) => p.med.id).includes('old vitamin'), true);
+  check('the running sickness is the one reported', sick.episode?.id, 'fever');
+
+  const ticks = [
+    { id: 't1', dose_id: 'd-thy', status: 'taken' as const, updated_at: 1 },
+    { id: 't2', dose_id: 'd-thy', status: 'skipped' as const, updated_at: 2 },
+  ];
+  const ticked = planDay(day, meds, doses, [], ticks, at2pm);
+  const thy = ticked.groups.flatMap((g) => g.doses).find((p) => p.dose.id === 'd-thy')!;
+  check('the newest answer for a dose wins', [thy.state, thy.eventId], ['skipped', 't2']);
+  check('a past day leaves nothing "later"',
+    planDay('2026-10-01', meds, doses, [], [], at2pm).groups.flatMap((g) => g.doses)
+      .every((p) => p.state === 'due'), true);
 }
 
 // ------------------------------------------------------------------ done

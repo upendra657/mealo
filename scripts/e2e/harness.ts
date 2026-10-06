@@ -50,6 +50,28 @@ import {
   open as openSealed,
   seal,
 } from '../../src/lib/household';
+import {
+  addMedication,
+  addMedicine,
+  draftFromLibrary,
+  draftFromMedicine,
+  editMedicine,
+  extendSickness,
+  hideFromLibrary,
+  ingredientsOf,
+  listEpisodes,
+  markDose,
+  medicineDetail,
+  readMedsDay,
+  recoverSickness,
+  runningEpisode,
+  searchLibrary,
+  sicknessRecord,
+  startSickness,
+  unaskedLongTerm,
+  type MedForm,
+} from '../../src/domain/medications';
+import { addDays, medDay } from '../../src/domain/doses';
 import { upgradeFromPrevious } from './upgrade';
 
 type Result = { name: string; ok: boolean; detail?: string };
@@ -627,6 +649,179 @@ async function main() {
     // Raw client: scaffolding, not an agent action.
     await sql('DELETE FROM med_products WHERE id = ?', [productId]);
     await sql('DELETE FROM med_doses WHERE id = ?', [doseId]);
+  }
+
+  // ---- v10: one medicine, from his phone's library to her day -------------
+  // Both people are on this one device, which is exactly the situation sync
+  // reproduces across two: the library is shared, the doses are not.
+  step('medicines');
+  {
+    const day = medDay();
+    const products = async () =>
+      Number((await query<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM med_products WHERE deleted_at IS NULL'))[0].n);
+    const dueIds = (plan: Awaited<ReturnType<typeof readMedsDay>>) =>
+      plan.groups.flatMap((g) => g.doses.map((p) => p.med.id));
+    const startCount = await products();
+
+    const calcium: MedForm = {
+      name: 'Calcium + D3',
+      form: 'tablet',
+      strength: '1250mg',
+      ingredients: [
+        { name: 'Calcium carbonate', strength_text: '1250 mg' },
+        { name: 'Cholecalciferol', strength_text: '250 IU' },
+      ],
+      doses: [
+        { amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after' },
+        { amount: 1, unit: 'tablet', time_of_day: 'night', meal: 'after' },
+      ],
+      long_term: false,
+      private: false,
+    };
+
+    await setActiveProfile(PRIMARY_PROFILE);
+    const his = await addMedicine(calcium);
+    check('adding a medicine puts it in the library', (await products()) === startCount + 1);
+
+    await setActiveProfile(partner);
+    const found = await searchLibrary('calcium');
+    check('the other person finds it there', found.map((p) => p.name).join(), 'Calcium + D3');
+    check('"1250 mg" finds what was typed "1250mg"',
+      (await searchLibrary('calcium 1250 mg')).length === 1);
+    const herDraft = (await draftFromLibrary(found[0].id))!;
+    check('the form opens with its ingredients', herDraft.ingredients.length === 2,
+      JSON.stringify(herDraft.ingredients));
+    check('and his schedule to start from',
+      herDraft.doses.map((d) => d.time_of_day).join() === 'morning,night',
+      JSON.stringify(herDraft.doses));
+
+    // Her doctor says two, once a day.
+    const hers = await addMedicine({ ...herDraft, doses: [{ ...herDraft.doses[0], amount: 2 }] });
+    check('adding it again does not copy the entry', (await products()) === startCount + 1);
+    const herPlan = await readMedsDay(day);
+    const herDoses = herPlan.groups.flatMap((g) => g.doses);
+    check('her day has her one dose, at her amount',
+      herDoses.length === 1 && herDoses[0].dose.amount === 2,
+      JSON.stringify(herDoses.map((p) => p.dose.amount)));
+
+    await setActiveProfile(PRIMARY_PROFILE);
+    check('his day still has his two',
+      dueIds(await readMedsDay(day)).filter((id) => id === his).length === 2);
+
+    // A different strength is a different medicine, and his is left alone.
+    await setActiveProfile(partner);
+    await editMedicine(hers, { ...herDraft, strength: '500 mg', doses: herDraft.doses });
+    check('changing the strength makes a new entry', (await products()) === startCount + 2);
+    await setActiveProfile(PRIMARY_PROFILE);
+    const mine = (await medicineDetail(his))!;
+    check('and his still points at the 1250', mine.product?.strength_text === '1250mg',
+      String(mine.product?.strength_text));
+
+    // A corrected ingredient list is the same strip, so it is the same entry.
+    await editMedicine(his, {
+      ...draftFromMedicine(mine),
+      ingredients: [...mine.ingredients, { name: 'Magnesium', strength_text: '50 mg' }],
+    });
+    check('a corrected ingredient list reaches the shared entry',
+      (await ingredientsOf(mine.product!.id)).length === 3);
+    check('without making a new one', (await medicineDetail(his))!.product?.id === mine.product?.id);
+
+    await hideFromLibrary(mine.product!.id);
+    check('a hidden medicine leaves the search',
+      (await searchLibrary('calcium')).every((p) => p.id !== mine.product!.id));
+    check('but anyone taking it keeps it', (await medicineDetail(his))!.med.name === 'Calcium + D3');
+
+    await addMedicine({ ...calcium, name: 'Something private', strength: null, ingredients: [],
+      private: true });
+    const priv = await query<{ private: number }>(
+      "SELECT private FROM med_products WHERE name = 'Something private'");
+    check('"Keep private" is recorded on the entry', Number(priv[0]?.private) === 1);
+
+    // ---- sick mode, end to end -------------------------------------------
+    const thyroxine = await addMedicine({ ...calcium, name: 'Thyroxine', strength: '50 mcg',
+      ingredients: [], long_term: true,
+      doses: [{ amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'before' }] });
+    // The way a medicine looked before v10: free text, no slots, never asked.
+    const legacy = await addMedication({ name: 'Old vitamin', dose_text: '1000 IU',
+      schedule: 'after breakfast', notes: null });
+    check('a medicine from before slots counts as never asked',
+      (await unaskedLongTerm()).some((m) => m.id === legacy));
+    check('and is shown as written', (await readMedsDay(day)).unscheduled.some((m) => m.id === legacy));
+
+    const fever = await startSickness('Viral fever', 7, 'days', day);
+    let twice = false;
+    try {
+      await startSickness('Cold', 3, 'days', day);
+    } catch {
+      twice = true;
+    }
+    check('a second sickness cannot start over a running one', twice);
+
+    let plan = await readMedsDay(day);
+    check('sick mode is running', plan.episode?.id === fever);
+    check('the long-term medicine continues', dueIds(plan).includes(thyroxine));
+    check('the regular one pauses',
+      plan.paused.some((p) => p.med.id === his) && !dueIds(plan).includes(his));
+    check('so does the never-asked one', plan.paused.some((p) => p.med.id === legacy));
+
+    const syrup = await addMedicine({ name: 'Cough syrup', form: 'syrup', strength: null,
+      ingredients: [], long_term: true, private: false,
+      doses: [{ amount: 10, unit: 'ml', time_of_day: 'morning', meal: 'after' }] }, fever);
+    check('a sickness medicine is never long-term, whatever the switch said',
+      (await medicineDetail(syrup))!.med.long_term === 0);
+    plan = await readMedsDay(day);
+    const syrupDose = plan.groups.flatMap((g) => g.doses).find((p) => p.med.id === syrup);
+    check('and it is due', syrupDose !== undefined);
+
+    await markDose(syrupDose!, day);
+    let tick = (await readMedsDay(day)).groups.flatMap((g) => g.doses)
+      .find((p) => p.med.id === syrup);
+    check('ticking it marks it taken', tick?.state === 'taken', tick?.state);
+    await markDose(tick!, day, 'skipped');
+    tick = (await readMedsDay(day)).groups.flatMap((g) => g.doses).find((p) => p.med.id === syrup);
+    check('re-ticking replaces the answer', tick?.state === 'skipped', tick?.state);
+    const live = await query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM intake_events
+        WHERE profile_id = ? AND dose_id = ? AND for_day = ? AND deleted_at IS NULL`,
+      [PRIMARY_PROFILE, tick!.dose.id, day]);
+    check('one live answer per dose per day', Number(live[0].n) === 1, String(live[0].n));
+
+    const sickSlice = renderSlice(await collectFacts());
+    check('the Doctor sees the sickness', sickSlice.includes('Sick mode: Viral fever, day 1 of 7.'),
+      sickSlice);
+    check('and what it paused', /Paused while sick:.*Calcium \+ D3/.test(sickSlice), sickSlice);
+    check('and the dose slots', sickSlice.includes('morning: 10 ml · after meal'), sickSlice);
+
+    const running = (await runningEpisode(day))!;
+    const extended = await extendSickness(running, 3, 'days');
+    check('Extend moves the last day on', extended === addDays(running.last_day, 3), extended);
+
+    await recoverSickness((await runningEpisode(day))!, day);
+    plan = await readMedsDay(day);
+    check('Recovered ends sick mode today', plan.episode === null);
+    check('its medicine is no longer due', !dueIds(plan).includes(syrup));
+    check('and the regular one is back', dueIds(plan).includes(his));
+    // Only "Currently taking" drops it. This morning's skip is still a fact
+    // about today, and the "Doses today" line rightly keeps saying so.
+    const wellSlice = renderSlice(await collectFacts());
+    const takingLine = wellSlice.split('\n').find((l) => l.startsWith('Currently taking')) ?? '';
+    check('and the Doctor no longer counts the syrup as being taken',
+      !takingLine.includes('Cough syrup'), wellSlice);
+    check('while today\'s skip is still reported', /Doses today:.*Cough syrup skipped/.test(wellSlice),
+      wellSlice);
+
+    const past = (await listEpisodes()).find((e) => e.id === fever);
+    check('the sickness stays in history', past?.recovered_on === day, JSON.stringify(past));
+    const record = await sicknessRecord(past!);
+    check('with what was taken for it',
+      JSON.stringify(record.map((r) => [r.med.name, r.taken, r.skipped])) ===
+        JSON.stringify([['Cough syrup', 0, 1]]),
+      JSON.stringify(record.map((r) => [r.med.name, r.taken, r.skipped])));
+
+    await setActiveProfile(partner);
+    check('his sickness was never hers', (await readMedsDay(day)).episode === null);
+    await setActiveProfile(PRIMARY_PROFILE);
   }
 }
 
