@@ -42,12 +42,18 @@ export type Measure = {
   /**
    * Kept in the vocabulary, kept out of the picker.
    *
-   * Two sorts of measure earn this. One is the generic serving word — whole,
+   * Three sorts of measure earn this. One is the generic serving word — whole,
    * serve, large, regular, burger, bar, nugget — which says "one of these"
    * and nothing more, which is what `piece` already says. Nineteen entries
    * under Pieces meant reading a list to find the one that mattered.
-   * The other is the wrong magnitude for a plate of food: kg and litre, when
+   * The second is the wrong magnitude for a plate of food: kg and litre, when
    * grams already runs to a kilo.
+   * The third is the measure that names a food — roti, paratha, naan, idli,
+   * dosa, egg, biscuit, clove — plus ladle, scoop and plate, none of which
+   * this kitchen logs in. Each named-food measure is only ever used on its
+   * own dish, where it means one piece of it, and piece is enough; on any
+   * other dish it is nonsense, and "a roti of dal" was one scroll away.
+   * Upendra's call, 7 Oct 2026.
    *
    * Hidden rather than deleted, and that distinction is the whole point.
    * `toMeasure` still resolves these, so:
@@ -90,9 +96,9 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['teaspoon', 'teaspoons', 'tsps', 'chamach'] },
   { id: 'tbsp',    label: 'tablespoon', kind: 'volume', ml: 15, grams: 15,  group: 'Bowls & spoons',
     aliases: ['tablespoon', 'tablespoons', 'tbsps', 'tbs'] },
-  { id: 'scoop',   label: 'scoop',     kind: 'volume', ml: 30,  grams: 30,  group: 'Bowls & spoons',
+  { id: 'scoop',   label: 'scoop',     kind: 'volume', ml: 30,  grams: 30,  hidden: true, group: 'Bowls & spoons',
     aliases: ['scoops'] },
-  { id: 'ladle',   label: 'ladle',     kind: 'volume', ml: 60,  grams: 60,  group: 'Bowls & spoons',
+  { id: 'ladle',   label: 'ladle',     kind: 'volume', ml: 60,  grams: 60,  hidden: true, group: 'Bowls & spoons',
     aliases: ['ladles', 'karchi', 'karchhi'] },
   { id: 'katori',  label: 'katori',    kind: 'volume', ml: 150, grams: 150, group: 'Bowls & spoons',
     aliases: ['katoris'] },
@@ -110,7 +116,7 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['bowls', 'big bowl', 'large bowl'] },
   { id: 'glass',   label: 'glass',     kind: 'volume', ml: 250, grams: 250, group: 'Bowls & spoons',
     aliases: ['glasses', 'tumbler'] },
-  { id: 'plate',   label: 'plate',     kind: 'volume', ml: 350, grams: 350, group: 'Bowls & spoons',
+  { id: 'plate',   label: 'plate',     kind: 'volume', ml: 350, grams: 350, hidden: true, group: 'Bowls & spoons',
     aliases: ['plates', 'thali'] },
   // A handful is whoever's hand. Kept for the importer, out of the picker.
   { id: 'handful', label: 'handful',   kind: 'volume', ml: 40,  grams: 30,  hidden: true, group: 'Bowls & spoons',
@@ -142,27 +148,30 @@ export const MEASURES: readonly Measure[] = [
   { id: 'nugget',  label: 'nugget',  kind: 'count', grams: 35, hidden: true, group: 'Pieces',
     aliases: ['nuggets'] },
   // ---- shapes that name a food, and so carry a weight of their own -------
+  // Most are hidden now (see `hidden` above). Their `grams` still earns its
+  // keep: it is what a meal logged as "2 roti" before then still weighs, on a
+  // dish that was never given a roti portion of its own.
   { id: 'slice',   label: 'slice',   kind: 'count', grams: 30,  group: 'Pieces',
     aliases: ['slices'] },
-  { id: 'egg',     label: 'egg',     kind: 'count', grams: 50,  group: 'Pieces',
+  { id: 'egg',     label: 'egg',     kind: 'count', grams: 50,  hidden: true, group: 'Pieces',
     aliases: ['eggs'] },
-  { id: 'roti',    label: 'roti',    kind: 'count', grams: 40,  group: 'Pieces',
+  { id: 'roti',    label: 'roti',    kind: 'count', grams: 40,  hidden: true, group: 'Pieces',
     aliases: ['rotis', 'chapati', 'chapatis', 'chapathi', 'phulka', 'phulkas'] },
-  { id: 'paratha', label: 'paratha', kind: 'count', grams: 70,  group: 'Pieces',
+  { id: 'paratha', label: 'paratha', kind: 'count', grams: 70,  hidden: true, group: 'Pieces',
     aliases: ['parathas', 'parantha', 'paranthas'] },
-  { id: 'naan',    label: 'naan',    kind: 'count', grams: 90,  group: 'Pieces',
+  { id: 'naan',    label: 'naan',    kind: 'count', grams: 90,  hidden: true, group: 'Pieces',
     aliases: ['naans', 'kulcha', 'kulchas'] },
-  { id: 'idli',    label: 'idli',    kind: 'count', grams: 45,  group: 'Pieces',
+  { id: 'idli',    label: 'idli',    kind: 'count', grams: 45,  hidden: true, group: 'Pieces',
     aliases: ['idlis', 'idly', 'idlies'] },
-  { id: 'dosa',    label: 'dosa',    kind: 'count', grams: 110, group: 'Pieces',
+  { id: 'dosa',    label: 'dosa',    kind: 'count', grams: 110, hidden: true, group: 'Pieces',
     aliases: ['dosas', 'dosai'] },
-  { id: 'biscuit', label: 'biscuit', kind: 'count', grams: 12,  group: 'Pieces',
+  { id: 'biscuit', label: 'biscuit', kind: 'count', grams: 12,  hidden: true, group: 'Pieces',
     aliases: ['biscuits', 'cookie', 'cookies'] },
   { id: 'packet',  label: 'packet',  kind: 'count', grams: 100, group: 'Pieces',
     aliases: ['packets', 'pack', 'packs', 'sachet', 'sachets', 'pouch'] },
   { id: 'bottle',  label: 'bottle',  kind: 'count', grams: 500, group: 'Pieces',
     aliases: ['bottles', 'can', 'cans', 'tetrapack'] },
-  { id: 'clove',   label: 'clove',   kind: 'count', grams: 3,   group: 'Pieces',
+  { id: 'clove',   label: 'clove',   kind: 'count', grams: 3,   hidden: true, group: 'Pieces',
     aliases: ['cloves', 'kali'] },
   { id: 'whole',   label: 'whole',   kind: 'count', grams: 120, hidden: true, group: 'Pieces',
     aliases: ['full', 'entire', 'unit', 'units', 'each'] },
@@ -226,6 +235,26 @@ export function describeMeasure(x: Measure | string | null | undefined): string 
  */
 export function allMeasureIds(): string[] {
   return MEASURES.filter((x) => !x.hidden).map((x) => x.id);
+}
+
+/**
+ * What the log's measure wheel offers for one dish, in order.
+ *
+ * The dish's own measures lead, then the unit the meal was opened in if
+ * neither list has it, then the picker. That middle entry is for a meal
+ * logged in a measure since hidden — "2 roti" from before roti left the
+ * picker. Without it the wheel cannot find the meal's unit, highlights its
+ * first row instead, and reads "Piece" over a meal that says roti.
+ *
+ * `opened` must be the unit the screen opened with, not the live one.
+ * Following the live unit drops roti from the list the moment the wheel
+ * moves off it, every row below shifts up one under the finger, and the
+ * wheel's next report names the row beneath the one it shows.
+ */
+export function wheelMeasures(own: readonly string[], opened: string | null): string[] {
+  const offered = allMeasureIds();
+  const kept = opened && !own.includes(opened) && !offered.includes(opened) ? [opened] : [];
+  return [...own, ...kept, ...offered.filter((id) => !own.includes(id))];
 }
 
 /** Every measure, hidden ones included. For the resolver and the importer. */

@@ -23,6 +23,7 @@ import {
   describeMeasure,
   everyMeasureId,
   toMeasure,
+  wheelMeasures,
 } from '../src/domain/measures';
 import { normalise, slugFor } from '../src/domain/foods';
 import { settledValue } from '../src/lib/wheel';
@@ -862,7 +863,11 @@ section('Measures: the picker is shorter than the vocabulary');
   // Nineteen entries under Pieces, most of them a synonym for one of them.
   // These are out of the picker.
   const gone = ['kg', 'l', 'handful', 'serve', 'large', 'regular', 'burger',
-                'bar', 'nugget', 'whole'];
+                'bar', 'nugget', 'whole',
+                // 7 Oct 2026: the measures that name a food, where piece is
+                // enough, and the three bowls this kitchen never logs in.
+                'roti', 'paratha', 'naan', 'idli', 'dosa', 'egg', 'biscuit',
+                'clove', 'ladle', 'scoop', 'plate'];
   for (const id of gone) {
     check(`${id} is not offered`, offered.includes(id), false);
     // The load-bearing half: still in the vocabulary, so nothing that already
@@ -876,21 +881,56 @@ section('Measures: the picker is shorter than the vocabulary');
   check('"each" still parses', toMeasure('each')?.id, 'whole');
   check('"medium" still parses', toMeasure('medium')?.id, 'regular');
   check('"sandwich" still parses', toMeasure('sandwich')?.id, 'burger');
+  check('"chapati" still parses', toMeasure('chapati')?.id, 'roti');
+  check('"3 cloves" still parses', toMeasure('cloves')?.id, 'clove');
+  check('"karchi" still parses', toMeasure('karchi')?.id, 'ladle');
+  check('"thali" still parses', toMeasure('thali')?.id, 'plate');
 
-  // A shape that names a food carries a weight of its own and stays.
-  for (const id of ['piece', 'roti', 'slice', 'egg', 'idli', 'dosa', 'paratha',
-                    'naan', 'biscuit', 'clove', 'packet', 'bottle']) {
+  // A meal logged in one before it was hidden weighs what it did: a dish with
+  // no roti portion of its own still falls back to the household 40 g.
+  check('2 roti still weighs 80 g', resolvePortion(2, 'roti', []).grams, 80);
+  check('a ladle still weighs 60 g', resolvePortion(1, 'ladle', []).grams, 60);
+
+  // What stays: the four pieces worth naming, every bowl and spoon this
+  // kitchen uses, and the three weights worth logging a plate in.
+  const kept = ['piece', 'slice', 'packet', 'bottle',
+                'katori', 'smallbowl', 'bowl', 'cup', 'glass', 'teacup', 'tsp', 'tbsp',
+                'g', 'ml', 'tingu'];
+  for (const id of kept) {
     check(`${id} is still offered`, offered.includes(id), true);
   }
-  // As does every bowl and spoon, and the three weights worth logging a plate in.
-  for (const id of ['katori', 'smallbowl', 'bowl', 'cup', 'glass', 'plate',
-                    'teacup', 'tsp', 'tbsp', 'scoop', 'ladle', 'g', 'ml', 'tingu']) {
-    check(`${id} is still offered`, offered.includes(id), true);
-  }
+  check('and nothing else is', [...offered].sort(), [...kept].sort());
 
-  check('the picker lost exactly ten', every.length - offered.length, gone.length);
+  check('the picker lost exactly the hidden ones', every.length - offered.length, gone.length);
   check('and every offered id still resolves',
     offered.every((i) => toMeasure(i) !== null), true);
+}
+
+section('Measures: the wheel keeps the unit a meal was logged in');
+{
+  const offered = allMeasureIds();
+
+  // The bug: "2 roti" logged before roti was hidden, on a Roti dish whose only
+  // portion is a piece. The wheel's list had no roti, so it highlighted its
+  // first row and read "Piece" over a meal that says roti.
+  const old = wheelMeasures(['piece'], 'roti');
+  check('the old meal\'s unit is on the wheel', old.includes('roti'), true);
+  check('right after the dish\'s own', old.slice(0, 2), ['piece', 'roti']);
+  check('once', old.filter((x) => x === 'roti').length, 1);
+  check('and the picker follows, whole', old.slice(2), offered.filter((x) => x !== 'piece'));
+  check('only that one hidden unit comes back', old.includes('idli'), false);
+
+  // Upendra's own weighed portions stay, hidden or not: a Roti dish with
+  // "1 roti = 40 g" saved still offers roti, first, and only once.
+  const own = wheelMeasures(['roti'], 'roti');
+  check('a saved roti portion leads', own[0], 'roti');
+  check('and is not repeated', own.filter((x) => x === 'roti').length, 1);
+
+  // Nothing changes for a unit already on offer, or for no unit at all.
+  const plain = ['piece', ...offered.filter((x) => x !== 'piece')];
+  check('an offered unit adds nothing', wheelMeasures(['piece'], 'katori'), plain);
+  check('nor does no unit', wheelMeasures(['piece'], null), plain);
+  check('a dish with no portions gets the picker', wheelMeasures([], null), offered);
 }
 
 section('Burn: one row a day, and the second entry adds');

@@ -29,7 +29,7 @@ import {
   searchFoods,
   type Food,
 } from '../domain/foods';
-import { allMeasureIds, describeMeasure, MEASURES, toMeasure } from '../domain/measures';
+import { describeMeasure, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
 import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
@@ -536,6 +536,8 @@ function DishStep({
    * Sambar in a teacup is arithmetic from it.
    */
   const [anchors, setAnchors] = useState<{ measure: string }[]>([]);
+  /** Read once, at mount: see `wheelMeasures` for why the live unit won't do. */
+  const [openedUnit] = useState(item.unit ?? null);
 
   useEffect(() => {
     const id = item.food?.id;
@@ -587,7 +589,7 @@ function DishStep({
   const ownMeasures = anchors
     .map((a: { measure: string }) => a.measure)
     .filter((id: string, i: number, all: string[]) => all.indexOf(id) === i);
-  const measureIds = allMeasureIds().filter((id) => !ownMeasures.includes(id));
+  const measureIds = wheelMeasures(ownMeasures, openedUnit);
 
   const rememberPortion = async () => {
     if (!food || !measure || measure.kind === 'weight') return;
@@ -747,7 +749,7 @@ function DishStep({
       <Sheet open={picker === 'meas'} onClose={() => setPicker(null)} label="Measure">
         <h3>Measure</h3>
         <Wheel
-          values={[...ownMeasures, ...measureIds]}
+          values={measureIds}
           value={item.unit ?? 'g'}
           render={(v) => describeMeasure(v as string) || String(v)}
           onChange={(v) => void reprice({ unit: v as string })}
