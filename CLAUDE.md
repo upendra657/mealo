@@ -46,12 +46,22 @@ at Chrome: `CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google
 made to hang again. It now stops after two minutes and prints what wrangler
 said, rather than sitting silent.
 
-**Deploying always builds first.** `wrangler deploy` ships whatever is sitting in
-`dist/` — it does not build. This has already caused one silent non-deploy where
-the old bundle went up and everything looked fine:
+**A push to `main` deploys.** Cloudflare Workers Builds builds from GitHub on
+every push. Confirmed 7 Oct 2026: the live bundle switched to a GitHub build
+about 90 seconds after the push, identical to the local one apart from its
+build stamp. So what is live is what is on `main`, and the status bar's build
+stamp is Cloudflare's, not the Mac's. A push is a release; nothing goes to
+`main` untested.
+
+`wrangler deploy` is only for putting something live without pushing — and the
+next push replaces it. It ships whatever is sitting in `dist/` and does not
+build, which has already caused one silent non-deploy where the old bundle went
+up and everything looked fine. Build first, either way; locally it is also the
+type-check gate before anything reaches `main`:
 
 ```bash
-npm run build && npx wrangler deploy && git push origin main
+npm run build && git push origin main     # the usual release
+npm run build && npx wrangler deploy      # live without a push, until the next one
 ```
 
 Upendra runs deploys and pushes himself.
@@ -86,8 +96,12 @@ rather than the only safeguard. Keep it that way.
 **Never handle credentials.** BYOK keys live in the browser's IndexedDB and go
 browser → provider directly. Do not accept, store, echo or request one.
 
-**`npx wrangler` is unpinned** and has pulled a different version on four
-consecutive deploys. Worth pinning to `devDependencies`.
+**Wrangler is pinned**, exactly, in `devDependencies` (4.148.0 since 7 Oct
+2026), after `npx` pulled a different version on five consecutive deploys.
+`npx wrangler` and `test:relay` both run that copy. Upgrade on purpose: bump
+it, run `test:relay`, then deploy. `npm audit` flags `sharp` through wrangler's
+local simulator (miniflare); it never reaches `dist/` or the Worker, and
+`audit fix --force` would move wrangler off the pin.
 
 ---
 

@@ -64,8 +64,13 @@ const pull = (household, device, since) =>
 // is fixable is that it hung silently: the suite sat there looking like it was
 // working. Now it gets two minutes and, failing that, the run stops and shows
 // what wrangler last said.
+//
+// `--no` rather than `--yes wrangler@4`: the latter fetched whichever 4.x was
+// newest on every run, so the relay was tested on one wrangler and deployed
+// by another. Now it runs the one pinned in package.json, or stops and says
+// so if `npm install` has not been run.
 try {
-  execFileSync('npx', ['--yes', 'wrangler@4', 'd1', 'execute', 'mealo-sync', '--local',
+  execFileSync('npx', ['--no', 'wrangler', 'd1', 'execute', 'mealo-sync', '--local',
     '--file=migrations/0001_batches.sql'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
 } catch (e) {
   const said = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim().slice(-600) || '(nothing)';
@@ -76,7 +81,7 @@ try {
   process.exit(1);
 }
 
-const dev = spawn('npx', ['--yes', 'wrangler@4', 'dev', '--local', '--port', String(PORT),
+const dev = spawn('npx', ['--no', 'wrangler', 'dev', '--local', '--port', String(PORT),
   '--ip', '127.0.0.1'], { stdio: ['ignore', 'pipe', 'pipe'] });
 
 const ready = new Promise((res, rej) => {
