@@ -109,6 +109,7 @@ import {
 } from '../src/domain/import';
 import { parseMealText } from '../src/domain/foods';
 import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
+import { anchorsAfter, previewEntries, recalcEntry, type DishEdit } from '../src/domain/dishedit';
 import { createHash } from 'node:crypto';
 import { LATEST_VERSION, MIGRATIONS, type Migration } from '../src/db/migrations';
 
@@ -1702,6 +1703,53 @@ section('Medicines: the schedule a day had');
   check('a day with two doses answered differently is partial',
     buildLog([day(5)], [med], [daily, { ...daily, id: 'n2', time_of_day: 'night' as const }], [],
       [{ ...tick, dose_id: 'old', for_day: day(5) }], noon(14)).meds[0].days[0].state, 'partial');
+}
+
+// ------------------------------------------------------------- dish edit
+
+section('Edit dish: what past entries become');
+{
+  // The potato from 8 Oct, corrected: 1 piece was 100 g at 150 Cal/100g,
+  // and is really 75 g at 86.67. Sample numbers, not his.
+  const edit: DishEdit = {
+    name: 'Boiled potato (small)',
+    per100: { energy_kcal: 86.67, protein_g: 2, fat_g: 0.13, carbs_g: 20, fibre_g: 1.73 },
+    portion: { measure: 'piece', quantity: 1, netWeightG: 75 },
+    others: [
+      { id: 'k', measure: 'katori', quantity: 1, netWeightG: 110 },
+      { id: 'b', measure: 'bowl', quantity: 1, netWeightG: null },
+      // The form's own measure is never an "other"; if one slipped in, the
+      // form's weight must still win.
+      { id: 'p', measure: 'piece', quantity: 1, netWeightG: 999 },
+    ],
+  };
+  const anchors = anchorsAfter(edit);
+  check('the form\'s portion is the default anchor',
+    anchors.filter((a) => a.is_default).map((a) => [a.measure, a.net_weight_g]), [['piece', 75]]);
+  check('a removed portion is not an anchor', anchors.some((a) => a.measure === 'bowl'), false);
+  check('and the form\'s measure appears once', anchors.filter((a) => a.measure === 'piece').length, 1);
+
+  const piece = recalcEntry({ quantity: 1, unit: 'piece' }, edit.per100, anchors);
+  near('1 piece logged at the old 100 g becomes 75 g', piece.net_weight_g, 75, 0.01);
+  near('and 65 Cal', piece.energy_kcal ?? 0, 65, 0.06);
+  const two = recalcEntry({ quantity: 2, unit: 'piece' }, edit.per100, anchors);
+  near('the quantity logged is kept: 2 pieces is 150 g', two.net_weight_g, 150, 0.01);
+  const weighed = recalcEntry({ quantity: 120, unit: 'g' }, edit.per100, anchors);
+  near('a weighed entry keeps its grams', weighed.net_weight_g, 120, 0.01);
+  near('and only its calories change', weighed.energy_kcal ?? 0, 104, 0.06);
+  const bare = recalcEntry({ quantity: 1, unit: null }, edit.per100, anchors);
+  near('an entry with no measure takes the default portion', bare.net_weight_g, 75, 0.01);
+
+  // A weight is not an anchor: "100 g weighs 100 g" says nothing about a katori.
+  check('a weight in the form makes no anchor',
+    anchorsAfter({ ...edit, portion: { measure: 'g', quantity: 100, netWeightG: 100 }, others: [] }), []);
+
+  const entries = [
+    { id: 'a', quantity: 1, unit: 'piece', net_weight_g: 100, energy_kcal: 150, eaten_at: 1 },
+    { id: 'b', quantity: 1, unit: 'piece', net_weight_g: 100, energy_kcal: 150, eaten_at: 5 },
+  ];
+  check('the sheet\'s numbers: count, span, now and after',
+    previewEntries(entries, edit), { count: 2, from: 1, to: 5, kcalNow: 300, kcalNew: 130 });
 }
 
 // ------------------------------------------------------------------ done

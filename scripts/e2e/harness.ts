@@ -27,7 +27,7 @@ import {
   slugFor,
 } from '../../src/domain/foods';
 import { draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
-import { portionsFor, resolveFor } from '../../src/domain/portions';
+import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { collectFacts, renderSlice } from '../../src/domain/state';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
@@ -44,6 +44,14 @@ import { readDay, contributors } from '../../src/domain/day';
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
 import { apply, collect } from '../../src/domain/librarysync';
+import {
+  customFood,
+  deleteDish,
+  entriesUsing,
+  previewEntries,
+  saveDishEdit,
+  type DishEdit,
+} from '../../src/domain/dishedit';
 import {
   createHousehold,
   joinHousehold,
@@ -752,6 +760,141 @@ async function main() {
     // Raw client: scaffolding, not an agent action.
     await sql('DELETE FROM med_products WHERE id = ?', [productId]);
     await sql('DELETE FROM med_doses WHERE id = ?', [doseId]);
+  }
+
+  // ---- correcting a dish, and what was logged with it --------------------
+  //
+  // 8 Oct 2026. Before Edit dish, the only fix for a wrong dish was adding it
+  // again, which saved over the old one under the old name.
+  step('dish edit');
+  {
+    const made = await saveDishFromPortion({
+      name: 'Aloo jeera', quantity: 1, measure: 'katori', netWeightG: 150,
+      energy: 200, protein: 3, fat: 8, carbs: 30, fibre: 3,
+    });
+    const id = made.foodId as string;
+    await saveMeal(await draftFromText('1 katori aloo jeera'), { mealType: 'lunch' });
+    await saveMeal(await draftFromText('120 g aloo jeera'), { mealType: 'dinner' });
+    await setActiveProfile(partner);
+    await saveMeal(await draftFromText('1 katori aloo jeera'), { mealType: 'lunch' });
+    await setActiveProfile(PRIMARY_PROFILE);
+
+    const mine = await entriesUsing(id);
+    check('his two entries are found, not hers', mine.length === 2, String(mine.length));
+    // A portion the edit leaves alone, which must still follow the rename.
+    const bowlId = (await upsertPortion({ foodId: id, measure: 'bowl', netWeightG: 300 })) as string;
+
+    const cursor = Date.now();
+    await new Promise((r) => setTimeout(r, 5));
+
+    // A new name with a new slug, new numbers, and the katori reweighed.
+    const edit: DishEdit = {
+      name: 'Jeera aloo',
+      per100: { energy_kcal: 120, protein_g: 2, fat_g: 5, carbs_g: 18, fibre_g: 2 },
+      portion: { measure: 'katori', quantity: 1, netWeightG: 120 },
+      others: [{ id: bowlId, measure: 'bowl', quantity: 1, netWeightG: 300 }],
+    };
+    const preview = previewEntries(mine, edit);
+    check('the sheet counts both', preview.count === 2, String(preview.count));
+    check('and adds up what they are now: 200 + 160', preview.kcalNow === 360, String(preview.kcalNow));
+    check('and what they would be: 144 + 144', preview.kcalNew === 288, String(preview.kcalNew));
+
+    const res = await saveDishEdit(id, edit, true);
+    check('the edit saves under the new name', res.food?.name === 'Jeera aloo', String(res.food?.name));
+    check('and rewrote both entries', res.updated === 2, String(res.updated));
+    const after = await entriesUsing(id);
+    const katori = after.find((e) => e.unit === 'katori');
+    const grams = after.find((e) => e.unit === 'g');
+    near('a katori entry takes the corrected katori', Number(katori?.net_weight_g), 120, 0.01);
+    near('and the new calories', Number(katori?.energy_kcal), 144, 0.01);
+    near('a weighed entry keeps its grams', Number(grams?.net_weight_g), 120, 0.01);
+    near('and only its calories change', Number(grams?.energy_kcal), 144, 0.01);
+    const written = after.reduce((a, e) => a + (e.energy_kcal ?? 0), 0);
+    check('what the sheet promised is what was written', Math.round(written) === preview.kcalNew,
+      `${written} vs ${preview.kcalNew}`);
+    const labels = await query<{ label: string }>(
+      'SELECT label FROM meal_items WHERE profile_id = ? AND food_id = ? AND deleted_at IS NULL',
+      [PRIMARY_PROFILE, id],
+    );
+    check('the entries carry the new name', labels.every((l) => l.label === 'Jeera aloo'),
+      labels.map((l) => l.label).join(','));
+
+    // Hers is a record of her body. A dish edit on his phone does not reach it.
+    await setActiveProfile(partner);
+    const hersAfter = await entriesUsing(id);
+    check('her entry is untouched',
+      hersAfter.length === 1 && Number(hersAfter[0].energy_kcal) === 200 && Number(hersAfter[0].net_weight_g) === 150,
+      JSON.stringify(hersAfter));
+    await setActiveProfile(PRIMARY_PROFILE);
+
+    // A new slug is a new identity to sync. The old one is left as a
+    // tombstone the other phone applies to its copy; the row keeps its id.
+    const rows = await query<{ id: string; slug: string; deleted_at: number | null }>(
+      "SELECT id, slug, deleted_at FROM custom_foods WHERE slug IN ('aloo jeera', 'jeera aloo')",
+    );
+    const live = rows.find((r) => r.slug === 'jeera aloo' && r.deleted_at === null);
+    const tomb = rows.find((r) => r.slug === 'aloo jeera');
+    check('the dish keeps its row', live?.id === id, JSON.stringify(rows));
+    check('the old slug is left as a tombstone', !!tomb && tomb.id !== id && tomb.deleted_at !== null,
+      JSON.stringify(tomb));
+    const wire = await collect(cursor);
+    check('the other phone is told to drop the old name',
+      wire.some((r) => r.t === 'custom_foods' && r.k === 'aloo jeera' && r.del !== null));
+    check('and to take the new one',
+      wire.some((r) => r.t === 'custom_foods' && r.k === 'jeera aloo' && r.del === null));
+    check('an untouched portion travels again, under the new name',
+      wire.some((r) => r.t === 'food_portions' && r.k === 'jeera aloo|bowl'),
+      wire.filter((r) => r.t === 'food_portions').map((r) => r.k).join(','));
+    check('and none under the old one',
+      !wire.some((r) => r.t === 'food_portions' && r.f.food_slug === 'aloo jeera'));
+    // Without this, the other phone's "aloo jeera" would still point at the
+    // copy the tombstone just deleted, and the old name would find nothing
+    // there. Portions would follow anyway — saving the default re-stamps all
+    // of a dish's portions — but aliases have no such ride.
+    check('the old name travels again, now pointing at the new one',
+      wire.some((r) => r.t === 'food_aliases' && r.k === 'aloo jeera' && r.f.food_slug === 'jeera aloo'),
+      wire.filter((r) => r.t === 'food_aliases').map((r) => `${r.k}->${r.f.food_slug}`).join(','));
+    check('typing the old name still finds it', (await matchFood('aloo jeera'))?.food.id === id);
+
+    // Punctuation only: same slug, so no second tombstone. And "keep" keeps.
+    const keep = await saveDishEdit(id, { ...edit, name: 'Jeera Aloo!' }, false);
+    check('a cosmetic rename saves', keep.food?.name === 'Jeera Aloo!', String(keep.food?.name));
+    const under = await query<{ n: number }>("SELECT COUNT(*) AS n FROM custom_foods WHERE slug = 'jeera aloo'");
+    check('without leaving a tombstone of itself', Number(under[0].n) === 1, String(under[0].n));
+    check('and "keep" leaves past entries alone', keep.updated === 0, String(keep.updated));
+
+    // Onto another dish's name: refused, nothing written.
+    const onto = await saveDishEdit(id, { ...edit, name: 'dal tadka' }, true);
+    check('renaming onto another dish is refused', onto.food === null && onto.clash?.name === 'Dal Tadka',
+      String(onto.clash?.name));
+    check('and writes nothing', (await customFood(id))?.name === 'Jeera Aloo!');
+
+    // The form switched from katori to piece: the katori is kept beside it,
+    // no longer the default, until it is removed.
+    const katoriId = (await portionsFor(id)).find((p) => p.measure === 'katori')?.id as string;
+    await saveDishEdit(id, {
+      ...edit, name: 'Jeera Aloo!',
+      portion: { measure: 'piece', quantity: 1, netWeightG: 60 },
+      others: [{ id: katoriId, measure: 'katori', quantity: 1, netWeightG: 130 }],
+    }, false);
+    const ps = await portionsFor(id);
+    check('the new measure is the default', ps.find((p) => p.measure === 'piece')?.is_default === 1,
+      JSON.stringify(ps.map((p) => [p.measure, p.is_default])));
+    const kept = ps.find((p) => p.measure === 'katori');
+    check('the old one is kept beside it, reweighed', kept?.is_default === 0 && Number(kept?.net_weight_g) === 130,
+      JSON.stringify(kept));
+    await saveDishEdit(id, {
+      ...edit, name: 'Jeera Aloo!',
+      portion: { measure: 'piece', quantity: 1, netWeightG: 60 },
+      others: [{ id: katoriId, measure: 'katori', quantity: 1, netWeightG: null }],
+    }, false);
+    check('and goes when removed', !(await portionsFor(id)).some((p) => p.measure === 'katori'));
+
+    await deleteDish(id);
+    check('a deleted dish leaves the table', (await customFood(id)) === null);
+    const remains = await entriesUsing(id);
+    check('its entries keep their numbers', remains.length === 2 && remains.every((e) => Number(e.energy_kcal) === 144),
+      JSON.stringify(remains.map((e) => e.energy_kcal)));
   }
 
   // ---- v10: one medicine, from his phone's library to her day -------------

@@ -18,7 +18,6 @@ import { Chevron } from './bits';
 import type { Screen } from '../App';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  deleteCustomFood,
   dishNamed,
   listCustomFoods,
   type Food,
@@ -31,6 +30,8 @@ import {
   type ImportReport,
 } from '../domain/import';
 import { checkRowsFor, checkSheetCsv, type CheckRow } from '../domain/checksheet';
+import { entriesUsing } from '../domain/dishedit';
+import { DeleteDishSheet, EditDish } from './EditDish';
 import { measureGroups, toMeasure } from '../domain/measures';
 import {
   deletePortion,
@@ -92,6 +93,8 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState('');
   const [adding, setAdding] = useState(false);
+  /** The dish open in Edit dish, which takes the whole screen while open. */
+  const [editing, setEditing] = useState<Food | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -124,6 +127,14 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
   const shown = filter.trim()
     ? foods.filter((f) => f.name.toLowerCase().includes(filter.trim().toLowerCase()))
     : foods;
+
+  if (editing) {
+    const done = async () => {
+      setEditing(null);
+      await refresh();
+    };
+    return <EditDish food={editing} onBack={() => setEditing(null)} onSaved={done} onDeleted={done} />;
+  }
 
   return (
     <>
@@ -268,13 +279,14 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
         ) : shown.length === 0 ? (
           <p className="muted small">Nothing matches “{filter}”.</p>
         ) : (
-          <ul className="med-list">
+          <ul className="dish-list">
             {shown.map((f) => (
               <DishRow
                 key={f.id}
                 food={f}
                 portions={portions.get(f.id) ?? []}
                 onChanged={refresh}
+                onEdit={() => setEditing(f)}
               />
             ))}
           </ul>
@@ -493,13 +505,17 @@ function DishRow({
   food,
   portions,
   onChanged,
+  onEdit,
 }: {
   food: Food;
   portions: Portion[];
   onChanged: () => void | Promise<void>;
+  onEdit: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
+  /** Entries using this dish, counted when Delete is pressed; null = sheet shut. */
+  const [deleting, setDeleting] = useState<number | null>(null);
   const [measure, setMeasure] = useState<string | null>('katori');
   const [weight, setWeight] = useState('');
 
@@ -519,16 +535,16 @@ function DishRow({
       : Math.round((food.energy_kcal * grams) / 100);
 
   return (
-    <li className="med">
+    <li>
       <div className="grow">
-        <div className="dose-name">
-          {food.name}
-          <span className="dose-amt">
-            {food.energy_kcal ?? '?'} kcal/100g
+        <div className="dl-head">
+          <span className="nm">{food.name}</span>
+          <span className="num small muted">
+            {food.energy_kcal === null ? '?' : Math.round(food.energy_kcal)} Cal/100g
           </span>
         </div>
 
-        <p className="muted small" style={{ margin: '2px 0' }}>
+        <p className="muted small" style={{ margin: '3px 0 0' }}>
           {portions.length === 0 ? (
             <>no portion recorded — logged by weight, or 100g assumed</>
           ) : (
@@ -537,8 +553,8 @@ function DishRow({
               return (
                 <span key={p.id}>
                   {i > 0 && ' · '}
-                  <b>{m?.label ?? p.measure}</b> {per(p)}g
-                  {kcalFor(per(p)) !== null && <> ({kcalFor(per(p))} kcal)</>}
+                  {m?.label ?? p.measure} {per(p)} g
+                  {kcalFor(per(p)) !== null && <> ({kcalFor(per(p))} Cal)</>}
                   {p.is_default ? ' ★' : ''}
                   {p.source === 'derived' ? ' ~' : ''}
                 </span>
@@ -547,17 +563,28 @@ function DishRow({
           )}
         </p>
 
-        <button className="link" onClick={() => setOpen((v) => !v)}>
-          {open ? 'done' : 'portions'}
-        </button>
-        <button
-          className="link"
-          style={{ marginLeft: 10 }}
-          onClick={() => setChecking((v) => !v)}
-          title="See what the app works out for other quantities, and correct it"
-        >
-          {checking ? 'hide check' : 'check'}
-        </button>
+        <div className="dl-acts">
+          <button className="link" onClick={onEdit}>
+            Edit
+          </button>
+          <button className="link" onClick={() => setOpen((v) => !v)}>
+            {open ? 'Done' : 'Portions'}
+          </button>
+          <button
+            className="link"
+            onClick={() => setChecking((v) => !v)}
+            title="See what the app works out for other quantities, and correct it"
+          >
+            {checking ? 'Hide check' : 'Check'}
+          </button>
+          <div className="grow" />
+          <button
+            className="link link--bad"
+            onClick={async () => setDeleting((await entriesUsing(food.id)).length)}
+          >
+            Delete
+          </button>
+        </div>
 
         {checking && (
           <PortionCheck food={food} anchors={anchors} onChanged={onChanged} />
@@ -656,15 +683,13 @@ function DishRow({
         )}
       </div>
 
-      <button
-        title="Remove this dish"
-        onClick={async () => {
-          await deleteCustomFood(food.id);
-          await onChanged();
-        }}
-      >
-        Delete
-      </button>
+      <DeleteDishSheet
+        open={deleting !== null}
+        food={food}
+        logged={deleting ?? 0}
+        onClose={() => setDeleting(null)}
+        onDeleted={() => void onChanged()}
+      />
     </li>
   );
 }

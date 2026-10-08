@@ -2720,3 +2720,22 @@ textarea {
 }
 .mpreview b { font-weight: 500; }
 .mprog { margin-top: 4px; --mode: var(--meds); }
+
+/* ---- Edit dish, and the food table's dish list ------------------------
+   The list replaces a bulleted <ul> left over from before the dark
+   rebuild, where "Delete" sat as plain white text with nothing to say it
+   was a button, and a dish's name ran straight into its calories. */
+.cta--danger { background: var(--bad); color: #2a0906; }
+.link--muted { color: var(--muted); }
+.link--bad { color: var(--bad); }
+.dish-del { display: block; margin: 22px auto 30px; }
+.sheet-cancel { display: block; margin: 14px auto 4px; }
+.field--portion { grid-template-columns: 1fr 90px auto; }
+.field label.gone { color: var(--muted); text-decoration: line-through; }
+
+.dish-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.dish-list > li { padding: 13px 0; border-bottom: 1px solid var(--line); }
+.dish-list > li:last-child { border-bottom: 0; }
+.dl-head { display: flex; align-items: baseline; gap: 10px; }
+.dl-head .nm { flex: 1; min-width: 0; font-size: 15.5px; }
+.dl-acts { display: flex; align-items: center; gap: 18px; margin-top: 10px; font-size: 14px; }

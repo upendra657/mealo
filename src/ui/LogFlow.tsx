@@ -35,6 +35,7 @@ import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
+import { EditDish } from './EditDish';
 import { MealDial } from './MealDial';
 import { Chevron, fmtQty, Plus, SearchIcon, Sheet, useToast, Wheel } from './bits';
 import type { Screen } from '../App';
@@ -115,7 +116,7 @@ export function setDraft(d: Draft) {
   pending = d;
 }
 
-type Step = 'slot' | 'search' | 'dish' | 'new';
+type Step = 'slot' | 'search' | 'dish' | 'new' | 'edit';
 
 export function LogFlow({
   go,
@@ -256,6 +257,19 @@ export function LogFlow({
           busy={busy}
           onBack={back}
           onSave={save}
+          onEdit={() => setStep('edit')}
+        />
+      )}
+
+      {/* Back to the dish screen with the corrected dish and the amount that
+          was already set, so the item reprices in front of you. Deleted from
+          an entry being edited, there is no dish left to edit it against. */}
+      {step === 'edit' && item?.food && (
+        <EditDish
+          food={item.food}
+          onBack={() => setStep('dish')}
+          onSaved={(f) => void open(f, item.quantity ?? 1, item.unit)}
+          onDeleted={() => (editing ? go('day') : setStep('search'))}
         />
       )}
 
@@ -530,6 +544,7 @@ function DishStep({
   busy,
   onBack,
   onSave,
+  onEdit,
 }: {
   item: DraftItem;
   setItem: (i: DraftItem) => void;
@@ -539,6 +554,7 @@ function DishStep({
   busy: boolean;
   onBack: () => void;
   onSave: () => void;
+  onEdit: () => void;
 }) {
   const [picker, setPicker] = useState<'qty' | 'meas' | 'slot' | null>(null);
   /** What the typed quantity box is showing, mid-edit. See the input below. */
@@ -640,6 +656,16 @@ function DishStep({
               {food.energy_kcal === null ? '?' : Math.round(food.energy_kcal)}
             </span>{' '}
             Cal per 100g · your table
+            {/* Only your own dishes. A bundled IFCT or USDA row is the same
+                on every install and is not anyone's to correct. */}
+            {food.source_db === 'custom' && (
+              <>
+                {' · '}
+                <button className="link" onClick={onEdit}>
+                  Edit dish
+                </button>
+              </>
+            )}
           </>
         ) : (
           'No match — the numbers below are whatever you enter'
