@@ -43,5 +43,9 @@ HANDOFF.md
 Claude_memory.md
 Development_report.md
 
+# A write-up of the project for Upendra's resume, pasted into other tools. It
+# names the two of us and is about him, not the code.
+mealo_prompt.md
+
 # wrangler dev --local keeps its miniflare state (the local D1) here
 .wrangler
