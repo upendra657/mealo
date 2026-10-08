@@ -82,6 +82,18 @@ function laddersFor(unit: string | null): number[] {
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
+ * The standing "Add a dish" row under the search box.
+ *
+ * It looks like a duplicate of the "Add “…” as a dish" button that appears
+ * when nothing matches, and was hidden for that reason on 8 Oct 2026 — then
+ * brought straight back. The button only shows when search finds nothing, so
+ * a dish whose name sits inside an existing one ("Dal" beside "Dal tadka")
+ * could not be added from here at all. The switch stays in case the row is
+ * ever replaced by something that covers that case.
+ */
+const SHOW_ADD_ROW = true;
+
+/**
  * What the Day screen hands over when you tap something already logged.
  * Module-level rather than a prop chain: it is set once, read once, and the
  * alternative is threading an optional object through three components.
@@ -372,19 +384,21 @@ function SearchStep({
       {/* Seeds too, not just the CTA below. Type something, change your mind
           about which button to press, and the typed text is still what you
           meant. An empty box seeds nothing, exactly as before. */}
-      <button className="row" style={{ width: '100%', marginTop: 9 }} onClick={() => onNew(term)}>
-        <span className="add-mark" aria-hidden="true">
-          <Plus size={15} />
-        </span>
-        <span className="grow" style={{ textAlign: 'left' }}>
-          <span className="nm" style={{ display: 'block' }}>
-            Add a dish
+      {SHOW_ADD_ROW && (
+        <button className="row" style={{ width: '100%', marginTop: 9 }} onClick={() => onNew(term)}>
+          <span className="add-mark" aria-hidden="true">
+            <Plus size={15} />
           </span>
-          <span className="amt" style={{ display: 'block' }}>
-            Not in the table yet — record it once, it&rsquo;s there for both of you
+          <span className="grow" style={{ textAlign: 'left' }}>
+            <span className="nm" style={{ display: 'block' }}>
+              Add a dish
+            </span>
+            <span className="amt" style={{ display: 'block' }}>
+              Not in the table yet — record it once, it&rsquo;s there for both of you
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+      )}
 
       {term.length >= 2 ? (
         <>
