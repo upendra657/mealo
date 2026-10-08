@@ -19,6 +19,7 @@ import type { Screen } from '../App';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteCustomFood,
+  dishNamed,
   listCustomFoods,
   type Food,
 } from '../domain/foods';
@@ -369,6 +370,16 @@ function AddDish({ onSaved }: { onSaved: () => void }) {
   const [vals, setVals] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The dish this name already is — see NewDishStep in LogFlow. */
+  const [clash, setClash] = useState<Food | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void dishNamed(name).then((f) => live && setClash(f));
+    return () => {
+      live = false;
+    };
+  }, [name]);
 
   const n = (s: string | undefined) =>
     s === undefined || s.trim() === '' ? null : Number(s);
@@ -414,6 +425,12 @@ function AddDish({ onSaved }: { onSaved: () => void }) {
           onChange={(e) => setName(e.target.value)}
         />
       </label>
+      {clash && (
+        <p className="small muted">
+          You already have <b>{clash.name}</b> in the list below. Names that
+          differ only in punctuation, capitals or a plural are the same dish.
+        </p>
+      )}
 
       <div className="portion-row">
         <label>
@@ -462,7 +479,7 @@ function AddDish({ onSaved }: { onSaved: () => void }) {
       <div className="row">
         <button
           className="primary"
-          disabled={busy || !name.trim() || !weight}
+          disabled={busy || !name.trim() || !weight || !!clash}
           onClick={() => void save()}
         >
           Save dish

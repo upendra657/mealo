@@ -48,11 +48,19 @@ export type Food = {
  * accepts names that appear in the result set — and the failure is a thrown
  * error at query time, not at build time. Search was dead because of it.
  */
+/*
+ * A dish is also searched by its slug, because the needle is normalised and
+ * the name is not: "boiled potato (small)" became "boiled potato small", which
+ * is not inside "Boiled potato - small", so the dish the app would have saved
+ * over was the one search could not show. Two bind slots for it, so callers
+ * pass the pattern three times.
+ */
 const UNION_FOODS = `
   SELECT id, name, 'custom' AS source_db, per_unit,
          energy_kcal, protein_g, fat_g, carbs_g, fibre_g,
          1 AS is_custom, LENGTH(name) AS name_len
-    FROM custom_foods WHERE deleted_at IS NULL AND name LIKE ?
+    FROM custom_foods
+   WHERE deleted_at IS NULL AND (name LIKE ? OR slug LIKE ?)
   UNION ALL
   SELECT id, name, source_db, per_unit,
          energy_kcal, protein_g, fat_g, carbs_g, fibre_g,
@@ -282,6 +290,29 @@ export async function customFoodIdBySlug(slug: string): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+/**
+ * The dish a typed name would land on, if this device already has one.
+ *
+ * The same test `writeDishes` uses to decide create-or-update — slug, or the
+ * exact name for a row init has not reached — so the add screens can say
+ * "you already have this" about precisely the dish a save would overwrite.
+ * Two tests that disagree is how "Boiled potato (small)" quietly rewrote
+ * "Boiled potato - small" while the screen promised a new dish.
+ */
+export async function dishNamed(name: string): Promise<Food | null> {
+  const slug = slugFor(name);
+  if (!slug) return null;
+  const rows = await db.query<Food>(
+    `SELECT id, name, 'custom' AS source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+       FROM custom_foods
+      WHERE deleted_at IS NULL AND (slug = ? OR LOWER(name) = ?)
+      LIMIT 1`,
+    [slug, name.trim().toLowerCase()],
+  );
+  return rows[0] ?? null;
+}
+
 export type LibraryInit = {
   /** Rows that had no slug and now do. */
   filled: number;
@@ -398,6 +429,7 @@ export async function matchFood(
   const candidates = await db.query<Food>(`${UNION_FOODS} LIMIT 400`, [
     like,
     like,
+    like,
   ]);
   if (candidates.length === 0) return null;
 
@@ -443,7 +475,7 @@ export async function searchFoods(term: string, limit = 20): Promise<Food[]> {
   const like = `%${needle}%`;
   return db.query<Food>(
     `${UNION_FOODS} ORDER BY is_custom DESC, name_len LIMIT ?`,
-    [like, like, limit],
+    [like, like, like, limit],
   );
 }
 

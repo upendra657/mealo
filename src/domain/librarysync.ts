@@ -234,8 +234,9 @@ async function resolveRef(ref: string): Promise<string | null> {
     const id = ref.slice(1);
     return (await isBundled(id)) ? id : null;
   }
+  // Live row first; see `applyOne`.
   const rows = await db.query<{ id: string }>(
-    'SELECT id FROM custom_foods WHERE slug = ? LIMIT 1',
+    'SELECT id FROM custom_foods WHERE slug = ? ORDER BY deleted_at IS NOT NULL LIMIT 1',
     [ref],
   );
   return rows[0]?.id ?? null;
@@ -276,8 +277,14 @@ export async function apply(rows: WireRow[]): Promise<Applied> {
 async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
   if (r.t === 'custom_foods') {
     const slug = String(r.f.slug ?? '');
+    // Live row first. A phone where a dish was deleted and then added again
+    // before 8 Oct 2026 holds two rows under one slug, and an unordered LIMIT 1
+    // returned the older, deleted one: the incoming edit, newer than its
+    // tombstone, brought it back to life beside the live copy. `writeDishes`
+    // no longer makes the pair; this keeps a phone that already has one safe.
     const local = await db.query<{ id: string; updated_at: number; deleted_at: number | null }>(
-      'SELECT id, updated_at, deleted_at FROM custom_foods WHERE slug = ? LIMIT 1',
+      `SELECT id, updated_at, deleted_at FROM custom_foods
+        WHERE slug = ? ORDER BY deleted_at IS NOT NULL LIMIT 1`,
       [slug],
     );
     if (!local[0]) {

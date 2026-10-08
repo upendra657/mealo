@@ -24,9 +24,9 @@
  */
 
 import { scopedDb } from '../db/scope';
-import { normalise, rememberAlias, slugFor } from './foods';
+import { dishNamed, normalise, rememberAlias, slugFor, type Food } from './foods';
 import { canonicalMeasure, toMeasure } from './measures';
-import { upsertPortion } from './portions';
+import { deletePortion, portionsFor, upsertPortion } from './portions';
 
 const db = scopedDb('nutritionist');
 
@@ -397,17 +397,41 @@ export async function writeDishes(dishes: DishPlan[]): Promise<WriteCounts> {
     //
     // The name fallback covers rows written before v6 that init has not
     // backfilled yet.
+    //
+    // Deleted rows are candidates too, live ones first. Deleting a dish and
+    // adding it again used to insert a second row under the same slug; sync,
+    // which merges on the slug, then landed the other phone's copy on the
+    // deleted row and woke it up beside the new one — two identical dishes,
+    // reproduced 8 Oct 2026. One slug, one row: a re-added dish is the old
+    // row brought back.
     const slug = slugFor(d.name);
-    const existing = await db.query<{ id: string }>(
-      `SELECT id FROM custom_foods
-        WHERE deleted_at IS NULL AND (slug = ? OR LOWER(name) = ?)
+    const existing = await db.query<{ id: string; deleted_at: number | null }>(
+      `SELECT id, deleted_at FROM custom_foods
+        WHERE slug = ? OR LOWER(name) = ?
+        ORDER BY deleted_at IS NOT NULL
         LIMIT 1`,
       [slug, d.name.trim().toLowerCase()],
     );
 
     let foodId: string;
     let isNew = false;
-    if (existing[0]) {
+    if (existing[0]?.deleted_at != null) {
+      // Brought back, but as the dish just described, not the one deleted.
+      // Its old portions would otherwise return with it, the wrong one still
+      // the default — the same blend of old and new numbers that made the
+      // dish worth deleting. Soft deletes, so the other phone drops them too.
+      foodId = existing[0].id;
+      for (const p of await portionsFor(foodId)) await deletePortion(p.id);
+      await db.update('custom_foods', foodId, {
+        name: d.name.trim(),
+        per_unit: '100g',
+        ...d.per100,
+        slug,
+        deleted_at: null,
+      });
+      created++;
+      isNew = true;
+    } else if (existing[0]) {
       foodId = existing[0].id;
       await db.update('custom_foods', foodId, {
         per_unit: '100g',
@@ -471,11 +495,19 @@ export async function importPersonalFoods(text: string): Promise<ImportReport> {
 }
 
 /**
- * Add or correct one dish from a single portion, entered by hand.
+ * Add one new dish from a single portion, entered by hand.
  *
  * Takes the same shape as one row of the sheet, deliberately: the form in the
  * app and the spreadsheet should not require two different ways of thinking
  * about the same dish.
+ *
+ * Unlike the sheet, it will not write over a dish that already exists. A
+ * re-imported sheet is meant to update what it names; a person on the "Add a
+ * dish" screen means a new dish. Routed through `writeDishes`, "Boiled potato
+ * (small)" became a silent correction of "Boiled potato - small" — numbers
+ * replaced, name kept, the old portion still the default — and was then
+ * logged under the old name. So it stops and hands back the dish instead,
+ * and the screen says so.
  */
 export async function saveDishFromPortion(input: {
   name: string;
@@ -487,7 +519,13 @@ export async function saveDishFromPortion(input: {
   fat: number | null;
   carbs: number | null;
   fibre: number | null;
-}): Promise<{ foodId: string | null; issues: RowIssue[]; warnings: string[] }> {
+}): Promise<{
+  foodId: string | null;
+  issues: RowIssue[];
+  warnings: string[];
+  /** The dish this name already is, when that is why nothing was saved. */
+  existing?: Food;
+}> {
   const row: PersonalRow = {
     line: 1,
     name: input.name.trim(),
@@ -502,6 +540,15 @@ export async function saveDishFromPortion(input: {
   };
   if (!row.name) {
     return { foodId: null, issues: [{ line: 1, text: 'Give the dish a name.' }], warnings: [] };
+  }
+  const existing = await dishNamed(row.name);
+  if (existing) {
+    return {
+      foodId: null,
+      issues: [{ line: 1, text: `You already have “${existing.name}”.` }],
+      warnings: [],
+      existing,
+    };
   }
   const { dishes, issues } = planDishes([row]);
   if (dishes.length === 0) return { foodId: null, issues, warnings: [] };

@@ -24,6 +24,7 @@ import {
   type MealType,
 } from '../domain/meals';
 import {
+  dishNamed,
   matchFood,
   scaleMacros,
   searchFoods,
@@ -823,12 +824,22 @@ function NewDishStep({
   const [vals, setVals] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The dish this name already is. Said while typing, not after Save. */
+  const [clash, setClash] = useState<Food | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void dishNamed(name).then((f) => live && setClash(f));
+    return () => {
+      live = false;
+    };
+  }, [name]);
 
   const n = (s: string | undefined) => (s === undefined || s.trim() === '' ? null : Number(s));
   const measureId = measure === '__custom' ? custom.trim().toLowerCase() : measure;
   const wt = n(weight);
   const qty = Number(quantity) || 1;
-  const ready = !!name.trim() && !!measureId && !!wt && wt > 0;
+  const ready = !!name.trim() && !!measureId && !!wt && wt > 0 && !clash;
 
   const save = async () => {
     setBusy(true);
@@ -845,6 +856,10 @@ function NewDishStep({
         carbs: n(vals.carbs),
         fibre: n(vals.fibre),
       });
+      if (res.existing) {
+        setClash(res.existing);
+        return;
+      }
       if (!res.foodId) {
         setProblem(res.issues[0]?.text ?? 'Could not save that.');
         return;
@@ -884,6 +899,15 @@ function NewDishStep({
           onChange={(e) => setName(e.target.value)}
         />
       </div>
+      {clash && (
+        <p className="note">
+          You already have <b>{clash.name}</b>. Names that differ only in
+          punctuation, capitals or a plural are the same dish.{' '}
+          <button className="link" onClick={() => onCreated(clash, 1, null)}>
+            Open it
+          </button>
+        </p>
+      )}
 
       <div className="field-lbl">One portion</div>
       <div className="card" style={{ padding: '4px 16px' }}>

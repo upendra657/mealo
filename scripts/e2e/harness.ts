@@ -19,6 +19,8 @@ import { activeProfile } from '../../src/lib/active-profile';
 import { importPersonalFoods, saveDishFromPortion } from '../../src/domain/import';
 import {
   customFoodIdBySlug,
+  deleteCustomFood,
+  dishNamed,
   initFoodLibrary,
   matchFood,
   searchFoods,
@@ -259,8 +261,10 @@ async function main() {
     );
     check('and suffixed, not collided', dup[0]?.slug === 'aloo gobi ~2', String(dup[0]?.slug));
 
-    // The whole point, end to end: the same dish entered two ways lands on
-    // one row. This is the live path the "add a new dish" screen uses.
+    // The whole point, end to end: the same dish entered two ways is one
+    // dish. This is the live path the "add a new dish" screen uses, and since
+    // 8 Oct 2026 it says so rather than quietly saving over it — the potato
+    // below is why.
     const a = await saveDishFromPortion({
       name: 'Palak Paneer', quantity: 1, measure: 'katori', netWeightG: 150,
       energy: 180, protein: 9, fat: 12, carbs: 8, fibre: 3,
@@ -269,12 +273,70 @@ async function main() {
       name: 'palak  paneer!', quantity: 1, measure: 'bowl', netWeightG: 350,
       energy: 420, protein: 21, fat: 28, carbs: 19, fibre: 7,
     });
-    check('a second spelling is the same dish', a.foodId === b.foodId, `${a.foodId} vs ${b.foodId}`);
+    check('a second spelling is the same dish', b.existing?.id === a.foodId, `${a.foodId} vs ${b.existing?.id}`);
     const rows = await nut.query<{ n: number }>(
       "SELECT COUNT(*) AS n FROM custom_foods WHERE slug = ? AND deleted_at IS NULL",
       [slugFor('Palak Paneer')],
     );
     check('one row, not two', Number(rows[0]?.n) === 1, String(rows[0]?.n));
+
+    // The case that was hit, 8 Oct 2026. "Boiled potato (small)" was typed
+    // on the add screen to replace an inaccurate "Boiled potato - small".
+    // Both slug to "boiled potato small", so the save rewrote the old dish's
+    // numbers, kept its name and its default portion, and the log screen
+    // opened it under the old name with the new numbers.
+    const first = await saveDishFromPortion({
+      name: 'Boiled potato - small', quantity: 1, measure: 'piece', netWeightG: 100,
+      energy: 150, protein: 1, fat: 0, carbs: 35, fibre: 1,
+    });
+    const potatoId = first.foodId as string;
+    // Search normalised the needle but not the name, so the one dish the save
+    // would land on was the one search could not show.
+    const found = await searchFoods('boiled potato (small)');
+    check('search finds a dish whatever its punctuation',
+      found.some((f) => f.id === potatoId), found.map((f) => f.name).join(','));
+
+    const retyped = await saveDishFromPortion({
+      name: 'Boiled potato (small)', quantity: 1, measure: 'katori', netWeightG: 75,
+      energy: 65, protein: 1.5, fat: 0.1, carbs: 15, fibre: 1.3,
+    });
+    check('adding a dish that exists saves nothing', retyped.foodId === null, String(retyped.foodId));
+    check('and names the dish it already is', retyped.existing?.name === 'Boiled potato - small',
+      String(retyped.existing?.name));
+    const kept = await nut.query<{ energy_kcal: number }>(
+      'SELECT energy_kcal FROM custom_foods WHERE id = ?', [potatoId],
+    );
+    check('its numbers are untouched', Number(kept[0]?.energy_kcal) === 150, String(kept[0]?.energy_kcal));
+    check('and it gained no portion', (await portionsFor(potatoId)).length === 1,
+      String((await portionsFor(potatoId)).length));
+
+    // Deleted, then added again. A second row under the same slug is a
+    // duplicate waiting for the next sync (see the pair in librarysync), so
+    // the old row comes back — as the dish just typed, not the one deleted.
+    await deleteCustomFood(potatoId);
+    check('a deleted dish does not block its name', (await dishNamed('Boiled potato (small)')) === null);
+    const again = await saveDishFromPortion({
+      name: 'Boiled potato (small)', quantity: 1, measure: 'katori', netWeightG: 75,
+      energy: 65, protein: 1.5, fat: 0.1, carbs: 15, fibre: 1.3,
+    });
+    check('re-adding brings the same row back', again.foodId === potatoId, `${again.foodId} vs ${potatoId}`);
+    const twins = await nut.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM custom_foods WHERE slug = ?', [slugFor('Boiled potato (small)')],
+    );
+    check('one row under that slug, deleted or not', Number(twins[0]?.n) === 1, String(twins[0]?.n));
+    const revived = await nut.query<{ name: string; energy_kcal: number; deleted_at: number | null }>(
+      'SELECT name, energy_kcal, deleted_at FROM custom_foods WHERE id = ?', [potatoId],
+    );
+    check('live again', revived[0]?.deleted_at === null, String(revived[0]?.deleted_at));
+    check('under the name just typed', revived[0]?.name === 'Boiled potato (small)', String(revived[0]?.name));
+    near('with the new numbers', Number(revived[0]?.energy_kcal), 86.67, 0.01);
+    const ports = await portionsFor(potatoId);
+    check('the deleted dish\'s portion stays deleted',
+      ports.length === 1 && ports[0].measure === 'katori', JSON.stringify(ports.map((x) => x.measure)));
+    check('and the new portion is the default', ports[0]?.is_default === 1, String(ports[0]?.is_default));
+    const opened = await matchFood('Boiled potato (small)');
+    check('logging it finds it under its new name', opened?.food.name === 'Boiled potato (small)',
+      String(opened?.food.name));
   }
 
 
@@ -410,6 +472,37 @@ async function main() {
     );
     check('a derived portion cannot overwrite a measured one',
       Number(kept[0].net_weight_g) === 150, JSON.stringify(kept[0]));
+
+    // A phone where a dish was deleted and re-added before 8 Oct 2026 holds
+    // two rows under one slug, the deleted one older. An unordered LIMIT 1
+    // found the deleted one, and an incoming edit, newer than its tombstone,
+    // woke it up beside the live copy: two identical dishes.
+    await sql(
+      `INSERT INTO custom_foods (id, name, slug, per_unit, energy_kcal, updated_at, deleted_at)
+       VALUES ('pair-old', 'Poha', 'poha', '100g', 999, 100, 200)`,
+    );
+    await sql(
+      `INSERT INTO custom_foods (id, name, slug, per_unit, energy_kcal, updated_at, deleted_at)
+       VALUES ('pair-new', 'Poha', 'poha', '100g', 130, 300, NULL)`,
+    );
+    await apply([
+      { t: 'custom_foods', k: 'poha', at: 400, del: null,
+        f: { slug: 'poha', name: 'Poha', per_unit: '100g', energy_kcal: 131, protein_g: 2.5,
+             fat_g: 3, carbs_g: 23, fibre_g: 1.2, notes: null, share: 0 } },
+      { t: 'food_portions', k: 'poha|katori', at: 400, del: null,
+        f: { food_slug: 'poha', measure: 'katori', quantity: 1, net_weight_g: 120,
+             is_default: 1, source: 'user' } },
+    ]);
+    const pair = await nut.query<{ id: string; energy_kcal: number; deleted_at: number | null }>(
+      "SELECT id, energy_kcal, deleted_at FROM custom_foods WHERE slug = 'poha'",
+    );
+    const old = pair.find((x) => x.id === 'pair-old');
+    const live = pair.find((x) => x.id === 'pair-new');
+    check('a deleted twin stays deleted', old?.deleted_at != null, JSON.stringify(old));
+    check('the edit lands on the live one', Number(live?.energy_kcal) === 131, JSON.stringify(live));
+    const onLive = await portionsFor('pair-new');
+    check('and so does its portion', onLive.length === 1 && Number(onLive[0].net_weight_g) === 120,
+      JSON.stringify(onLive));
   }
 
   // ---- targets, and what an unset one means -----------------------------
