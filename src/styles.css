@@ -2739,3 +2739,56 @@ textarea {
 .dl-head { display: flex; align-items: baseline; gap: 10px; }
 .dl-head .nm { flex: 1; min-width: 0; font-size: 15.5px; }
 .dl-acts { display: flex; align-items: center; gap: 18px; margin-top: 10px; font-size: 14px; }
+
+/* ---- meals planned ahead -----------------------------------------------
+   The Meds circle, in the meal screens' teal: purple was rendered beside it
+   and turned down because it means "medicine" everywhere else in the app,
+   and would have put three accents on one screen. Only a meal logged ahead
+   of its time has a circle. The shapes are the Meds ones — fill, dash, ring
+   — so no state is told by colour alone. A plan whose day is over is an
+   amber ring, the way the medicine log draws a missed dose. */
+.tickb[data-state='eaten'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.tickb[data-state='planned'] { border-color: var(--accent); }
+.tickb[data-state='ahead'] { opacity: 0.55; cursor: default; }
+.tickb[data-state='unticked'] { border-color: var(--warn); }
+
+/* A plan's calories are not counted yet, a skipped one's never will be. */
+.row[data-plan='planned'] .kc,
+.row[data-plan='ahead'] .kc,
+.row[data-plan='unticked'] .kc { opacity: 0.6; }
+.row[data-plan='skipped'] .nm,
+.row[data-plan='skipped'] .kc { color: var(--muted); }
+.row[data-plan='skipped'] .kc { text-decoration: line-through; }
+.row .pl-tag { color: var(--accent); }
+.row[data-plan='skipped'] .pl-tag { color: var(--muted); }
+.row[data-plan='unticked'] .pl-tag { color: var(--warn); }
+
+.section-h .pl { color: var(--muted); opacity: 0.75; margin-left: 6px; }
+
+/* What is planned, in grey after what was eaten. Grey rather than a pale
+   teal: beside an amber "still in budget" fill, teal would read as "on
+   target". Specific enough to beat .f-low > i and friends. */
+.bar.split { display: flex; }
+.bar > i.plan {
+  background: rgba(230, 237, 232, 0.16);
+  border-radius: 0 3px 3px 0;
+}
+.bar.split > i:first-child { border-radius: 3px 0 0 3px; }
+.plan-note { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.plan-note b { color: var(--ink-text); font-weight: 500; }
+
+/* A day with only plans: the calendar's dot, left open. */
+.cal-day[data-planned] .mark { box-shadow: inset 0 0 0 1px var(--blue); }
+.cal-key-ring {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--blue);
+  margin: 0 5px 0 10px;
+  vertical-align: 1.5px;
+}

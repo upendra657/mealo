@@ -5,19 +5,22 @@
  * that stops you looking at your own history at all. This drops a month grid
  * under the date, remembers nothing, and closes the moment you pick.
  *
- * Two marks, and only two:
+ * Three marks:
  *   - today wears a blue bubble, so you always know where you are
- *   - a day with anything logged carries a blue dot beneath it
+ *   - a day with something eaten carries a blue dot beneath it
+ *   - a day with only plans carries a blue ring, the same dot left open
  * A day with nothing gets no decoration at all. An empty square that looks
  * the same as a full one is the only thing this view has to get right.
  *
- * Days after today are shown but not selectable — there is nothing to see
- * there, and hiding them would make the grid jump shape at the month's end.
+ * Days up to a week ahead can be picked, to plan meals; later ones are shown
+ * but not selectable, because hiding them would make the grid jump shape at
+ * the month's end.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { loggedDays, localDayKey } from '../domain/day';
 import { startOfToday } from '../domain/meals';
+import { lastPlannableDay } from '../domain/plan';
 import { Chevron } from './bits';
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -43,9 +46,13 @@ export function DatePicker({
   onClose: () => void;
 }) {
   const [cursor, setCursor] = useState<Date>(() => monthStart(selected));
-  const [marked, setMarked] = useState<Set<string>>(new Set());
+  const [marked, setMarked] = useState<{ eaten: Set<string>; planned: Set<string> }>({
+    eaten: new Set(),
+    planned: new Set(),
+  });
 
   const today = startOfToday();
+  const last = lastPlannableDay();
   const todayKey = localDayKey(today);
   const selectedKey = localDayKey(selected);
 
@@ -66,7 +73,7 @@ export function DatePicker({
   useEffect(() => {
     let live = true;
     void loggedDays(from, to).then((s) => {
-      if (live) setMarked(s.eaten);
+      if (live) setMarked(s);
     });
     return () => {
       live = false;
@@ -79,10 +86,11 @@ export function DatePicker({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // There is nothing above today, so stop the forward arrow there.
+  // Nothing can be picked past the last plannable day, so stop the forward
+  // arrow at its month — which is next month for the last week of this one.
   const atCurrentMonth =
-    cursor.getFullYear() === new Date(today).getFullYear() &&
-    cursor.getMonth() === new Date(today).getMonth();
+    cursor.getFullYear() === new Date(last).getFullYear() &&
+    cursor.getMonth() === new Date(last).getMonth();
 
   const step = (n: number) =>
     setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1));
@@ -124,14 +132,15 @@ export function DatePicker({
           {days.map((d) => {
             const ms = d.getTime();
             const key = localDayKey(ms);
-            const future = ms > today;
+            const future = ms > last;
             return (
               <button
                 key={key}
                 className="cal-day"
                 data-today={key === todayKey ? '1' : undefined}
                 data-on={key === selectedKey ? '1' : undefined}
-                data-logged={marked.has(key) ? '1' : undefined}
+                data-logged={marked.eaten.has(key) ? '1' : undefined}
+                data-planned={marked.planned.has(key) ? '1' : undefined}
                 disabled={future}
                 aria-current={key === selectedKey ? 'date' : undefined}
                 aria-label={d.toLocaleDateString(undefined, {
@@ -162,7 +171,8 @@ export function DatePicker({
             Jump to today
           </button>
           <span className="muted small">
-            <i className="cal-key-dot" /> has entries
+            <i className="cal-key-dot" /> eaten
+            <i className="cal-key-ring" /> planned
           </span>
         </div>
       </div>
