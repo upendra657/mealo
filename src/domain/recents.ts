@@ -53,6 +53,10 @@ export async function recentItems(
        FROM meal_items i
        JOIN meals m ON m.id = i.meal_id
       WHERE i.profile_id = ? AND i.deleted_at IS NULL AND m.deleted_at IS NULL
+        -- Eaten only. A plan for next Friday carries a future eaten_at and
+        -- would sit at the top of "recent" for a week; a skipped one was
+        -- not eaten at all.
+        AND (i.plan_state IS NULL OR i.plan_state = 'eaten')
       ORDER BY m.eaten_at DESC
       LIMIT 400`,
     [activeProfile()],

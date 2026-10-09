@@ -66,7 +66,7 @@ export function DatePicker({
   useEffect(() => {
     let live = true;
     void loggedDays(from, to).then((s) => {
-      if (live) setMarked(s);
+      if (live) setMarked(s.eaten);
     });
     return () => {
       live = false;

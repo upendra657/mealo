@@ -18,6 +18,7 @@ import {
   type Meal,
   type MealItem,
 } from './meals';
+import { counts, isPlanned } from './plan';
 import { normaliseSlot, SLOTS, type SlotId } from './slots';
 
 /** kcal, protein, fat, carbs, fibre — in that order, everywhere. */
@@ -61,42 +62,71 @@ export type SlotGroup = {
 
 export type DayView = {
   dayStart: number;
+  /**
+   * What was eaten: items logged as eaten, and planned ones once ticked.
+   * Everything that totals, ranks or counts reads this and `groups`, so a
+   * plan stays out of Home, the banner and Insights without any of them
+   * having to know plans exist.
+   */
   items: MealItem[];
-  /** Only the slots that actually have something in them, in day order. */
+  /** Only the slots that actually have something eaten in them, in day order. */
   groups: SlotGroup[];
   totals: Macros;
-  /** True when an item carries no calories, so the totals are a floor. */
+  /** True when an eaten item carries no calories, so the totals are a floor. */
   hasGaps: boolean;
+  /**
+   * Every row the Day screen lists — plans and skipped ones included — by
+   * slot. `macros` is what was eaten in the slot, `planned` what is still
+   * planned in it.
+   */
+  listed: (SlotGroup & { planned: Macros })[];
+  /** Still planned, not yet ticked or skipped: the grey part of the bars. */
+  planned: Macros;
 };
+
+function sum(items: MealItem[]): Macros {
+  return round(items.map(macrosOf).reduce(add, zero()));
+}
 
 export async function readDay(dayStart = startOfToday()): Promise<DayView> {
   const meals = await mealsOn(dayStart);
-  const items = await itemsFor(meals.map((m) => m.id));
+  const all = await itemsFor(meals.map((m) => m.id));
+  const items = all.filter((i) => counts(i.plan_state));
+  const plans = all.filter((i) => isPlanned(i.plan_state));
 
   const slotOf = new Map<string, SlotId>();
   for (const m of meals) slotOf.set(m.id, normaliseSlot(m.meal_type));
 
   const groups: SlotGroup[] = [];
+  const listed: DayView['listed'] = [];
   for (const s of SLOTS) {
     const mine = meals.filter((m) => slotOf.get(m.id) === s.id);
     if (!mine.length) continue;
     const ids = new Set(mine.map((m) => m.id));
-    const its = items.filter((i) => ids.has(i.meal_id));
-    if (!its.length && !mine.length) continue;
-    groups.push({
-      slot: s.id,
-      meals: mine,
-      items: its,
-      macros: round(its.map(macrosOf).reduce(add, zero())),
-    });
+    const rows = all.filter((i) => ids.has(i.meal_id));
+    const eaten = items.filter((i) => ids.has(i.meal_id));
+    if (rows.length) {
+      listed.push({
+        slot: s.id,
+        meals: mine,
+        items: rows,
+        macros: sum(eaten),
+        planned: sum(plans.filter((i) => ids.has(i.meal_id))),
+      });
+    }
+    if (eaten.length) {
+      groups.push({ slot: s.id, meals: mine, items: eaten, macros: sum(eaten) });
+    }
   }
 
   return {
     dayStart,
     items,
     groups,
-    totals: round(items.map(macrosOf).reduce(add, zero())),
+    totals: sum(items),
     hasGaps: items.some((i) => i.energy_kcal === null),
+    listed,
+    planned: sum(plans),
   };
 }
 
@@ -177,21 +207,30 @@ export function localDayKey(ms: number): string {
 }
 
 /**
- * Which days in a range have anything logged.
+ * Which days in a range have something eaten, and which have only plans.
  *
  * The bucketing happens here rather than in SQL for the same reason as above:
  * SQLite's DATE(ts/1000,'unixepoch') is UTC and has no idea what timezone the
  * person eats in. A month of timestamps is a handful of rows, so reading them
  * and grouping in local time costs nothing and is right everywhere.
+ *
+ * A day with something eaten is `eaten` even if it also holds plans: the
+ * filled dot says more. A day with nothing but skipped items is neither.
  */
 export async function loggedDays(
   fromMs: number,
   toMs: number,
-): Promise<Set<string>> {
+): Promise<{ eaten: Set<string>; planned: Set<string> }> {
   const rows = await mealRange(fromMs, toMs);
-  const out = new Set<string>();
-  for (const r of rows) out.add(localDayKey(r.eaten_at));
-  return out;
+  const eaten = new Set<string>();
+  const planned = new Set<string>();
+  for (const r of rows) {
+    const key = localDayKey(r.eaten_at);
+    if (counts(r.plan_state)) eaten.add(key);
+    else if (isPlanned(r.plan_state)) planned.add(key);
+  }
+  for (const k of eaten) planned.delete(k);
+  return { eaten, planned };
 }
 
 /** Local midnight for a day offset from today. Negative is the past. */

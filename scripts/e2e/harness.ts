@@ -26,7 +26,7 @@ import {
   searchFoods,
   slugFor,
 } from '../../src/domain/foods';
-import { draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
+import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { collectFacts, renderSlice } from '../../src/domain/state';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
@@ -40,7 +40,7 @@ import {
   setBurnTotal,
   setGoalBurn,
 } from '../../src/domain/burn';
-import { readDay, contributors } from '../../src/domain/day';
+import { readDay, contributors, dayAt, localDayKey, loggedDays } from '../../src/domain/day';
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
 import { apply, collect } from '../../src/domain/librarysync';
@@ -1383,6 +1383,128 @@ async function main() {
       panadol[0]?.tag === 'HSA' && panadol[0]?.ingredients.map((i) => i.strength).join() === '35 mg,450 mg',
       JSON.stringify(panadol[0]));
     check('and still no meal row changed', JSON.stringify(await counts()) === JSON.stringify(before));
+  }
+
+  // ---- v13: meals planned ahead ---------------------------------------------
+  step('planned meals');
+  {
+    await setActiveProfile(PRIMARY_PROFILE);
+    const today = dayAt(0);
+    const tomorrow = dayAt(1);
+    // A label nothing else in this run logs, so recents and the slice can be
+    // asked about it by name. 300 Cal, typed straight off a label.
+    const [raw] = await draftFromText('1 piece fixture thali');
+    const thali = { ...raw, energy_kcal: 300, protein_g: 12, fat_g: 10, carbs_g: 40, fibre_g: 5 };
+    const listedRows = async (day: number) =>
+      (await readDay(day)).listed.flatMap((g) => g.items).filter((i) => i.label === thali.label);
+
+    // Tomorrow's lunch, planned.
+    await saveMeal([thali], { mealType: 'lunch', eatenAt: tomorrow + 12 * 3_600_000, planned: true });
+    let ahead = await readDay(tomorrow);
+    check('a meal planned for tomorrow is listed', (await listedRows(tomorrow)).length === 1);
+    check('as planned', (await listedRows(tomorrow))[0]?.plan_state === 'planned');
+    check('and counts toward nothing', ahead.totals[0] === 0 && ahead.items.length === 0 && ahead.groups.length === 0,
+      JSON.stringify(ahead.totals));
+    check('its calories are the grey part of the bar', ahead.planned[0] === 300 && ahead.planned[1] === 12,
+      JSON.stringify(ahead.planned));
+    check('and of its slot', ahead.listed.find((g) => g.slot === 'lunch')?.planned[0] === 300);
+    const marks = await loggedDays(tomorrow, dayAt(2));
+    check('the calendar marks tomorrow as planned, not eaten',
+      marks.planned.has(localDayKey(tomorrow)) && !marks.eaten.has(localDayKey(tomorrow)));
+    let refused = false;
+    try {
+      await cyclePlan((await listedRows(tomorrow))[0], tomorrow);
+    } catch {
+      refused = true;
+    }
+    check('it cannot be ticked before its day', refused);
+    check('and is still planned after the attempt', (await listedRows(tomorrow))[0]?.plan_state === 'planned');
+
+    // Today: dinner added at lunchtime.
+    const before = await readDay(today);
+    const factsBefore = await collectFacts();
+    await saveMeal([thali], { mealType: 'dinner', eatenAt: Date.now(), planned: true });
+    let now = await readDay(today);
+    check("tonight's planned dinner leaves today's totals alone",
+      JSON.stringify(now.totals) === JSON.stringify(before.totals), `${now.totals} vs ${before.totals}`);
+    check('and the count Home reads', now.items.length === before.items.length);
+    check('and Insights\' top contributors',
+      !contributors(now, 0).some((c) => c.label === thali.label));
+    check('but is on the day screen with its circle', (await listedRows(today))[0]?.plan_state === 'planned');
+    let facts = await collectFacts();
+    check('the Doctor is not told about a plan',
+      JSON.stringify(facts.todayTotals) === JSON.stringify(factsBefore.todayTotals) &&
+        !facts.mealsToday.some((m) => m.items.some((i) => i.includes(thali.label))),
+      JSON.stringify(facts.todayTotals));
+    check('recents do not offer a plan', !(await recentItems()).some((r) => r.label === thali.label));
+
+    // The circle: planned → eaten → skipped → planned.
+    const row = async () => (await listedRows(today))[0];
+    await cyclePlan(await row(), today);
+    now = await readDay(today);
+    check('ticked, it is eaten', (await row()).plan_state === 'eaten');
+    near('and counts: +300 Cal today', now.totals[0] - before.totals[0], 300, 0.01);
+    check('no longer grey', now.planned[0] === 0);
+    facts = await collectFacts();
+    near('the Doctor now counts it', facts.todayTotals.energy - factsBefore.todayTotals.energy, 300, 0.01);
+    check('recents offer it once eaten', (await recentItems()).some((r) => r.label === thali.label));
+    await cyclePlan(await row(), today);
+    now = await readDay(today);
+    check('a second tap skips it', (await row()).plan_state === 'skipped');
+    check('skipped counts toward nothing', JSON.stringify(now.totals) === JSON.stringify(before.totals));
+    check('and is not planned either', now.planned[0] === 0);
+    check('but stays on the list', (await listedRows(today)).length === 1);
+    await cyclePlan(await row(), today);
+    check('a third makes it planned again', (await row()).plan_state === 'planned');
+
+    // A meal logged as eaten has no circle; a tap on it changes nothing.
+    const [plain] = await draftFromText('1 piece fixture plain');
+    await saveMeal([{ ...plain, energy_kcal: 50 }], { mealType: 'lunch' });
+    const plainRow = (await readDay(today)).listed.flatMap((g) => g.items)
+      .find((i) => i.label === plain.label)!;
+    check('a meal logged as eaten is stored with no plan', plainRow.plan_state === null);
+    check('and a tap leaves it so', (await cyclePlan(plainRow, today)) === null &&
+      (await readDay(today)).listed.flatMap((g) => g.items).find((i) => i.label === plain.label)?.plan_state === null);
+
+    // Before planning existed, "meals today" had no upper bound. A meal
+    // stamped tomorrow — however it got there — is not today's.
+    const factsMid = await collectFacts();
+    await saveMeal([{ ...thali, label: 'fixture tomorrow eaten' }],
+      { mealType: 'lunch', eatenAt: tomorrow + 12 * 3_600_000 });
+    facts = await collectFacts();
+    check("tomorrow's rows stay out of the Doctor's today",
+      JSON.stringify(facts.todayTotals) === JSON.stringify(factsMid.todayTotals) &&
+        facts.mealsToday.length === factsMid.mealsToday.length,
+      JSON.stringify([facts.todayTotals, factsMid.todayTotals]));
+
+    // The 7-day average counts local days. Half past midnight here is the
+    // previous day in UTC whenever the offset is ahead of UTC, as at +05:30.
+    await saveMeal([{ ...thali, label: 'fixture early chai', energy_kcal: 40 }],
+      { mealType: 'breakfast', eatenAt: today + 30 * 60_000 });
+    const eatenTimes = await query<{ eaten_at: number }>(
+      `SELECT m.eaten_at FROM meals m JOIN meal_items i ON i.meal_id = m.id
+        WHERE m.profile_id = ? AND m.deleted_at IS NULL AND i.deleted_at IS NULL
+          AND (i.plan_state IS NULL OR i.plan_state = 'eaten')
+          AND m.eaten_at >= ? AND m.eaten_at < ?`,
+      [PRIMARY_PROFILE, dayAt(-6), dayAt(1)]);
+    const localDays = new Set(eatenTimes.map((r) => localDayKey(r.eaten_at))).size;
+    facts = await collectFacts();
+    check(`the week counts local days (${localDays}, offset ${-new Date().getTimezoneOffset()} min)`,
+      facts.nutrition7d.daysLogged === localDays, String(facts.nutrition7d.daysLogged));
+
+    // One person's plan is not the other's.
+    await setActiveProfile(partner);
+    check("the partner's tomorrow is empty", (await readDay(tomorrow)).listed.length === 0);
+    await setActiveProfile(PRIMARY_PROFILE);
+
+    // The column itself refuses anything but the three states.
+    let bad = false;
+    try {
+      await sql("UPDATE meal_items SET plan_state = 'maybe' WHERE profile_id = ?", [PRIMARY_PROFILE]);
+    } catch {
+      bad = true;
+    }
+    check('the database refuses a fourth state', bad);
   }
 }
 

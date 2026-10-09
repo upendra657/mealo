@@ -213,6 +213,11 @@ const SEEDS: Seed[] = [
     { id: 'fx-ref-2', set_id: 'fx-set-1', name: 'Old', name_norm: 'old', ingredients: '[]',
       updated_at: T, deleted_at: T + 1 },
   ] },
+  { version: 13, table: 'meal_items', rows: [
+    { id: 'fx-item-4', profile_id: 'primary', meal_id: 'fx-meal-1', label: 'Dahi', quantity: 1,
+      unit: 'katori', net_weight_g: 150, energy_kcal: 98, source: 'matched',
+      plan_state: 'planned', updated_at: T },
+  ] },
   { version: 10, table: 'intake_events', rows: [
     { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,
       status: 'taken', dose_id: 'fx-dose-1', for_day: '2026-10-05', updated_at: T },

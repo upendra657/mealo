@@ -25,6 +25,7 @@ import {
   type Food,
 } from './foods';
 import { toMeasure } from './measures';
+import { canTick, nextPlanState, type PlanState } from './plan';
 import { guessSlot, type SlotId } from './slots';
 import {
   resolveFor,
@@ -62,6 +63,8 @@ export type MealItem = {
   carbs_g: number | null;
   fibre_g: number | null;
   source: ItemSource;
+  /** NULL when logged as eaten; see domain/plan.ts. */
+  plan_state: PlanState | null;
   updated_at: number;
   deleted_at: number | null;
 };
@@ -239,7 +242,13 @@ export function localHitRate(items: DraftItem[]): number {
 
 export async function saveMeal(
   items: DraftItem[],
-  opts: { rawText?: string | null; mealType?: MealType; eatenAt?: number } = {},
+  opts: {
+    rawText?: string | null;
+    mealType?: MealType;
+    eatenAt?: number;
+    /** Logged ahead of its time; the caller decides with plansAt. */
+    planned?: boolean;
+  } = {},
 ): Promise<string> {
   const mealId = await db.insert('meals', {
     eaten_at: opts.eatenAt ?? Date.now(),
@@ -265,6 +274,7 @@ export async function saveMeal(
       carbs_g: it.carbs_g,
       fibre_g: it.fibre_g,
       source: it.source,
+      plan_state: opts.planned ? 'planned' : null,
       deleted_at: null,
     });
     // Only learn from matches the user kept.
@@ -342,6 +352,24 @@ export async function updateMealItem(
   });
 }
 
+/**
+ * Tap a planned item's circle: planned → eaten → skipped → planned.
+ *
+ * Refused before the day comes, here and not only by a disabled button, so
+ * nothing can mark tomorrow's lunch eaten. An item logged as eaten has no
+ * circle and is left alone.
+ */
+export async function cyclePlan(
+  item: Pick<MealItem, 'id' | 'plan_state'>,
+  dayStart: number,
+): Promise<PlanState | null> {
+  if (!canTick(dayStart)) throw new Error('A planned meal can be ticked on its day, not before');
+  const next = nextPlanState(item.plan_state);
+  if (next === null) return item.plan_state;
+  await db.update('meal_items', item.id, { plan_state: next });
+  return next;
+}
+
 /** Move an item's meal into a different slot. */
 export async function setMealSlot(
   mealId: string,
@@ -372,16 +400,23 @@ export async function mealsOn(dayStart = startOfToday()): Promise<Meal[]> {
   );
 }
 
-/** Just the timestamps of meals in a window — for the calendar's dots. */
+/**
+ * When each item in a window was eaten and whether it was a plan — for the
+ * calendar's dots, which tell an eaten day from a day with only plans.
+ */
 export async function mealRange(
   fromMs: number,
   toMs: number,
-): Promise<{ eaten_at: number }[]> {
-  return db.query<{ eaten_at: number }>(
-    `SELECT eaten_at FROM meals
-      WHERE profile_id = ? AND deleted_at IS NULL
-        AND eaten_at >= ? AND eaten_at < ?`,
-    [activeProfile(), fromMs, toMs],
+): Promise<{ eaten_at: number; plan_state: PlanState | null }[]> {
+  const me = activeProfile();
+  return db.query<{ eaten_at: number; plan_state: PlanState | null }>(
+    `SELECT m.eaten_at, i.plan_state
+       FROM meals m
+       JOIN meal_items i ON i.meal_id = m.id
+      WHERE m.profile_id = ? AND i.profile_id = ?
+        AND m.deleted_at IS NULL AND i.deleted_at IS NULL
+        AND m.eaten_at >= ? AND m.eaten_at < ?`,
+    [me, me, fromMs, toMs],
   );
 }
 

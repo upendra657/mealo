@@ -33,6 +33,7 @@ import {
 import { describeMeasure, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
 import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
+import { plansAt } from '../domain/plan';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
 import { EditDish } from './EditDish';
@@ -212,11 +213,15 @@ export function LogFlow({
         await setMealSlot(editing.mealId, slot);
         toast(`${item.label} updated`);
       } else {
+        // Decided at the moment of saving, against the clock then: dinner
+        // chosen at 6:58 and saved at 7:01 was logged at dinner time.
+        const planned = plansAt(dayStart ?? startOfToday(), slot);
         await saveMeal([item], {
           mealType: slot,
           eatenAt: eatenAt(dayStart),
+          planned,
         });
-        toast(`${item.label} added`);
+        toast(`${item.label} ${planned ? 'planned' : 'added'}`);
       }
       go('day');
     } finally {
@@ -281,11 +286,11 @@ export function LogFlow({
 }
 
 /**
- * When a meal logged for a past day actually happened.
+ * When a meal logged for another day actually happened.
  *
- * Today gets the real clock so the order of meals is right. A past day gets
- * midday, because pretending to know that Tuesday's lunch was at 13:42 is
- * inventing a fact; noon is visibly a placeholder.
+ * Today gets the real clock so the order of meals is right. A past or a
+ * future day gets midday, because pretending to know that Tuesday's lunch was
+ * at 13:42 is inventing a fact; noon is visibly a placeholder.
  */
 function eatenAt(dayStart: number | null): number {
   const start = dayStart ?? startOfToday();

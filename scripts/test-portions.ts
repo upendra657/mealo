@@ -110,6 +110,16 @@ import {
 import { parseMealText } from '../src/domain/foods';
 import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
 import { anchorsAfter, previewEntries, recalcEntry, type DishEdit } from '../src/domain/dishedit';
+import {
+  canTick,
+  circleOf,
+  counts,
+  dayLabel,
+  daysFromToday,
+  lastPlannableDay,
+  nextPlanState,
+  plansAt,
+} from '../src/domain/plan';
 import { createHash } from 'node:crypto';
 import { LATEST_VERSION, MIGRATIONS, type Migration } from '../src/db/migrations';
 
@@ -1174,6 +1184,7 @@ const SHIPPED: Record<number, string> = {
   10: 'f43590523ac269c1',
   11: '67e1fd8a3fbb5520',
   12: '5d81a83c35f6cae2',
+  13: 'ca5525f7a2b617e6',
 };
 
 /**
@@ -1750,6 +1761,63 @@ section('Edit dish: what past entries become');
   ];
   check('the sheet\'s numbers: count, span, now and after',
     previewEntries(entries, edit), { count: 2, from: 1, to: 5, kcalNow: 300, kcalNew: 130 });
+}
+
+section('Meals planned ahead: when a meal is a plan');
+{
+  // Friday 9 Oct 2026, local time — the clock the rules are judged against.
+  const at = (h: number, m = 0) => new Date(2026, 9, 9, h, m);
+  const day = (d: number) => new Date(2026, 9, d).getTime();
+  const lunchtime = at(13);
+
+  check('dinner added at lunchtime is planned', plansAt(day(9), 'dinner', lunchtime), true);
+  check('lunch added at lunchtime is logged', plansAt(day(9), 'lunch', lunchtime), false);
+  check('breakfast added at lunchtime is logged', plansAt(day(9), 'breakfast', lunchtime), false);
+  check('evening snack at 1 pm is planned', plansAt(day(9), 'esnack', lunchtime), true);
+  // The boundary is the slot's start hour, the same one guessSlot uses.
+  check('dinner at 6:59 pm is still planned', plansAt(day(9), 'dinner', at(18, 59)), true);
+  check('dinner at 7:00 pm is logged', plansAt(day(9), 'dinner', at(19, 0)), false);
+  check('lunch at 11:30 am is planned', plansAt(day(9), 'lunch', at(11, 30)), true);
+  // His decision: "Something else" has no time, so it is never ahead today.
+  check('"Something else" is never planned today', plansAt(day(9), 'other', at(8)), false);
+  check('but it is on a later day', plansAt(day(10), 'other', at(8)), true);
+  check('anything tomorrow is planned, breakfast too', plansAt(day(10), 'breakfast', at(23, 30)), true);
+  check('anything on a past day is logged', plansAt(day(8), 'dinner', at(0, 5)), false);
+
+  check('7 days ahead is the last plannable day', lastPlannableDay(lunchtime), day(16));
+  check('tomorrow is 1 day away', daysFromToday(day(10), lunchtime), 1);
+  check('yesterday is -1', daysFromToday(day(8), lunchtime), -1);
+  // 25 Oct has 25 hours in Europe and the US; an exact division would floor
+  // the day after to the wrong count wherever the clocks change.
+  check('a day count survives a clock change',
+    daysFromToday(new Date(2026, 9, 27).getTime(), new Date(2026, 9, 24, 22)), 3);
+
+  check('labels: today, tomorrow, in N days, past',
+    [9, 10, 13, 8].map((d) => dayLabel(day(d), lunchtime)), ['Today', 'Tomorrow', 'In 4 days', '']);
+}
+
+section('Meals planned ahead: ticks and totals');
+{
+  const now = new Date(2026, 9, 9, 13, 0);
+  const day = (d: number) => new Date(2026, 9, d).getTime();
+
+  check('the circle goes planned → eaten → skipped → planned',
+    [nextPlanState('planned'), nextPlanState('eaten'), nextPlanState('skipped')],
+    ['eaten', 'skipped', 'planned']);
+  check('a meal logged as eaten has no circle to turn', nextPlanState(null), null);
+
+  check('logged and ticked count; planned and skipped do not',
+    [counts(null), counts('eaten'), counts('planned'), counts('skipped')],
+    [true, true, false, false]);
+
+  check('no circle on a meal logged as eaten', circleOf(null, day(9), now), null);
+  check('a plan today is a ring', circleOf('planned', day(9), now), 'planned');
+  check('a plan tomorrow cannot be ticked yet', circleOf('planned', day(10), now), 'ahead');
+  check('a plan whose day is over is unticked', circleOf('planned', day(8), now), 'unticked');
+  check('ticked and skipped draw as themselves on any day',
+    [circleOf('eaten', day(8), now), circleOf('skipped', day(9), now)], ['eaten', 'skipped']);
+  check('ticking is allowed today and before, not after',
+    [canTick(day(8), now), canTick(day(9), now), canTick(day(10), now)], [true, true, false]);
 }
 
 // ------------------------------------------------------------------ done

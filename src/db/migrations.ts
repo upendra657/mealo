@@ -730,4 +730,22 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 13,
+  name: 'meals planned ahead',
+  sql: `
+    -- A meal logged for later — tomorrow, or tonight's dinner at lunchtime —
+    -- is a plan, not something eaten, and stays out of every total until it
+    -- is ticked. Three states once planned: 'planned', 'eaten' (ticked) and
+    -- 'skipped'. NULL is a meal logged as it was eaten, which is every row
+    -- that exists today, so nothing already logged is rewritten and nothing
+    -- already logged grows a tick circle.
+    --
+    -- On the item, not the meal: the day lists items, and a planned dinner of
+    -- paneer and two roti can turn out to be just the paneer.
+    ALTER TABLE meal_items ADD COLUMN plan_state TEXT
+      CHECK (plan_state IN ('planned', 'eaten', 'skipped'));
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

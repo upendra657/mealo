@@ -20,6 +20,7 @@
 
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
+import { localDayKey } from './day';
 import {
   addDays,
   buildLog,
@@ -88,7 +89,6 @@ function daysAgo(ts: number): number {
 /** Gathers the facts. Reads widely — this is the one agent allowed to. */
 export async function collectFacts(): Promise<StateFacts> {
   const me = activeProfile();
-  const weekAgo = Date.now() - 7 * 86_400_000;
 
   // The same plan the Meds screen draws, from the Doctor's own reads. Not
   // "every row not stopped": a finished course of antibiotics is not stopped,
@@ -166,6 +166,16 @@ export async function collectFacts(): Promise<StateFacts> {
   const dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
   const todayMs = dayStart.getTime();
+  // Bounded above as well since meals can be planned ahead: "eaten_at >=
+  // today" alone would hand the model next week's plans as today's meals.
+  const tomorrow = new Date(dayStart);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowMs = tomorrow.getTime();
+  // Seven local days, today included. Calendar arithmetic, not 7 × 86.4M ms,
+  // which is a rolling 168 hours that can touch eight dates.
+  const weekStart = new Date(dayStart);
+  weekStart.setDate(weekStart.getDate() - 6);
+  const weekMs = weekStart.getTime();
 
   const dosesToday = await db.query<{
     name: string;
@@ -186,9 +196,10 @@ export async function collectFacts(): Promise<StateFacts> {
     eaten_at: number;
   }>(
     `SELECT id, meal_type, eaten_at FROM meals
-      WHERE profile_id = ? AND deleted_at IS NULL AND eaten_at >= ?
+      WHERE profile_id = ? AND deleted_at IS NULL
+        AND eaten_at >= ? AND eaten_at < ?
       ORDER BY eaten_at`,
-    [me, todayMs],
+    [me, todayMs, tomorrowMs],
   );
 
   const itemRows = mealRows.length
@@ -208,13 +219,16 @@ export async function collectFacts(): Promise<StateFacts> {
                 energy_kcal, protein_g, fat_g, carbs_g, fibre_g
            FROM meal_items
           WHERE profile_id = ? AND deleted_at IS NULL
+            AND (plan_state IS NULL OR plan_state = 'eaten')
             AND meal_id IN (${mealRows.map(() => '?').join(',')})`,
         [me, ...mealRows.map((m) => m.id)],
       )
     : [];
 
   const r1 = (n: number) => Math.round(n * 10) / 10;
-  const mealsToday = mealRows.map((m) => {
+  // A meal whose every item is still planned, or was skipped, was not eaten.
+  const eatenMeals = mealRows.filter((m) => itemRows.some((i) => i.meal_id === m.id));
+  const mealsToday = eatenMeals.map((m) => {
     const mine = itemRows.filter((i) => i.meal_id === m.id);
     const sum = (k: 'energy_kcal' | 'protein_g' | 'fat_g' | 'carbs_g' | 'fibre_g') =>
       r1(mine.reduce((a, i) => a + (i[k] ?? 0), 0));
@@ -251,27 +265,30 @@ export async function collectFacts(): Promise<StateFacts> {
     { energy: 0, protein: 0, fat: 0, carbs: 0, fibre: 0 },
   );
 
-  const nutrition = await db.query<{
-    days: number;
+  // Days are counted in JS, not with DATE(eaten_at/1000,'unixepoch'), which
+  // is UTC: at +05:30 a breakfast before 5:30 am landed on the day before,
+  // and the average divided by one day too many.
+  const eaten7 = await db.query<{
+    eaten_at: number;
     e: number | null;
     p: number | null;
     f: number | null;
   }>(
-    `SELECT COUNT(DISTINCT DATE(m.eaten_at / 1000, 'unixepoch')) AS days,
-            SUM(i.energy_kcal) AS e,
-            SUM(i.protein_g)   AS p,
-            SUM(i.fibre_g)     AS f
+    `SELECT m.eaten_at, i.energy_kcal AS e, i.protein_g AS p, i.fibre_g AS f
        FROM meals m
        JOIN meal_items i ON i.meal_id = m.id
-      WHERE m.profile_id = ? AND m.deleted_at IS NULL
-        AND i.deleted_at IS NULL AND m.eaten_at >= ?`,
-    [me, weekAgo],
+      WHERE m.profile_id = ? AND i.profile_id = ?
+        AND m.deleted_at IS NULL AND i.deleted_at IS NULL
+        AND (i.plan_state IS NULL OR i.plan_state = 'eaten')
+        AND m.eaten_at >= ? AND m.eaten_at < ?`,
+    [me, me, weekMs, tomorrowMs],
   );
 
-  const n = nutrition[0];
-  const days = Number(n?.days ?? 0);
-  const per = (total: number | null | undefined) =>
-    days > 0 && total != null ? Math.round(Number(total) / days) : null;
+  const days = new Set(eaten7.map((r) => localDayKey(r.eaten_at))).size;
+  const total = (k: 'e' | 'p' | 'f') =>
+    eaten7.some((r) => r[k] != null) ? eaten7.reduce((a, r) => a + (r[k] ?? 0), 0) : null;
+  const n = { e: total('e'), p: total('p'), f: total('f') };
+  const per = (t: number | null) => (days > 0 && t != null ? Math.round(t / days) : null);
 
   return {
     medications: meds.map((m) => ({
