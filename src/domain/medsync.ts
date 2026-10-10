@@ -7,7 +7,7 @@
  * through raw SQL, never db.update's now(), or two phones trade the same
  * medicine forever.
  *
- * Separate from the food half because these tables are the Pharmacist's, and
+ * Separate from the food half because these tables are Dawa's, and
  * the handle is what says so. Three things differ from food:
  *
  *   A private medicine never leaves. Not its entry, not its ingredients, not

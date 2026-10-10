@@ -1,5 +1,5 @@
 /**
- * The Pharmacist's domain operations.
+ * Dawa's domain operations.
  *
  * Everything here runs through a pharmacist-scoped database handle, so a stray
  * read of `symptoms` fails loudly instead of quietly working.

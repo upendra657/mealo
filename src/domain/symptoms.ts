@@ -1,9 +1,9 @@
 /**
- * Symptom logging — Doctor-only.
+ * Symptom logging — Ask Mealo only.
  *
- * `symptoms` is the one table no other agent may read. Everything the
- * Nutritionist and Pharmacist need about how the user is doing arrives through
- * `current_state`, which the Doctor writes deliberately. That asymmetry is the
+ * `symptoms` is the one table no other agent may read. Everything
+ * Thali and Dawa need about how the user is doing arrives through
+ * `current_state`, which Ask Mealo writes deliberately. That asymmetry is the
  * whole point of the scoping layer, and this is the table it protects.
  */
 

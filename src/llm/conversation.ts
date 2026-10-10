@@ -21,7 +21,7 @@ import type { ChatMessage, ProviderConfig } from './types';
  * Threads are per person as well as per agent.
  *
  * Two people share this install, and a conversation is the most personal
- * record in it — the Doctor's thread carries symptoms verbatim. The summary
+ * record in it — Ask Mealo's thread carries symptoms verbatim. The summary
  * key encodes both, "<profile>:<agent>", rather than adding a column to a
  * table whose primary key already identifies exactly one row.
  */

@@ -3,7 +3,7 @@
  * not at the prompt.
  *
  * Until now the slice was built clean in `domain/state.ts` and that was the
- * whole of it. Which was fine, and stayed fine only because the Doctor was the
+ * whole of it. Which was fine, and stayed fine only because Ask Mealo was the
  * only caller. "Composed carefully upstream" is a convention, and a convention
  * is one forgetful call site away from being nothing. A boundary is a place
  * every payload has to pass through, and there is exactly one of those: the

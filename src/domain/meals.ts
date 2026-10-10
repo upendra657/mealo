@@ -1,5 +1,5 @@
 /**
- * The Nutritionist's domain operations.
+ * Thali's domain operations.
  *
  * Two ways to record a meal, both first-class:
  *

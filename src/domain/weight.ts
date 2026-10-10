@@ -7,8 +7,8 @@
  * plots days, not events, and two dots on one date would imply a precision the
  * scale does not have.
  *
- * Read through the Doctor's handle: a body measurement belongs to the agent
- * that reasons about bodies. The Nutritionist can read it (db/scope.ts) because
+ * Read through Ask Mealo's handle: a body measurement belongs to the agent
+ * that reasons about bodies. Thali can read it (db/scope.ts) because
  * the home banner speaks in its voice, but it cannot write one.
  *
  * The arithmetic below — bucketing, filling, trend — is pure and lives apart
@@ -178,7 +178,7 @@ export async function weightOn(dayStart: number): Promise<Weight | null> {
 /**
  * The weight this person is aiming at, if they set one.
  *
- * Lives on `targets` beside the macro goals. Read through the Nutritionist's
+ * Lives on `targets` beside the macro goals. Read through Thali's
  * handle because that is the table's owner; nothing computes it.
  */
 const targetsDb = scopedDb('nutritionist');

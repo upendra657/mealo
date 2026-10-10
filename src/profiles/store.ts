@@ -3,7 +3,7 @@
  *
  * Not accounts, and not security. Anything on the page can read the whole
  * database; this is about a shared device where two people each want their own
- * day, their own medications, and a Doctor that is not reasoning about the
+ * day, their own medications, and an Ask Mealo that is not reasoning about the
  * other one's symptoms. Same spirit as db/scope.ts: make the wrong thing hard
  * to write by accident, which is the failure that actually happens.
  *

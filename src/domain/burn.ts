@@ -24,8 +24,8 @@
  * day's remaining calories. This is a measurement the agents may read, not a
  * term in an equation the app computes.
  *
- * Read and written through the Doctor's handle: what the body did belongs to
- * the agent that reasons about bodies. The Nutritionist can read it
+ * Read and written through Ask Mealo's handle: what the body did belongs to
+ * the agent that reasons about bodies. Thali can read it
  * (db/scope.ts) when asked about a day, but the home banner composes no line
  * about it — see the note there.
  */
@@ -170,8 +170,8 @@ export async function burnOn(dayStart: number): Promise<Burn | null> {
 /**
  * Calories to burn in a day, if this person set a number.
  *
- * On `targets` beside weight_kg and the macro goals, read through the
- * Nutritionist's handle because that table's owner is the Nutritionist.
+ * On `targets` beside weight_kg and the macro goals, read through
+ * Thali's handle because that table's owner is Thali.
  * Nothing computes it — the app has no view on how much anyone should burn.
  */
 const targetsDb = scopedDb('nutritionist');

@@ -65,7 +65,7 @@ export const SYNC_TABLES = [
   'food_aliases',
   // The medicine library (v10), on the same terms as the food one: what a
   // medicine is travels, who takes it does not. The rows are read and written
-  // by medsync.ts, through the Pharmacist's handle.
+  // by medsync.ts, through Dawa's handle.
   'med_products',
   'med_product_ingredients',
   'med_product_doses',

@@ -1,5 +1,5 @@
 /**
- * Food matching — the part that keeps the Nutritionist off the model.
+ * Food matching — the part that keeps Thali off the model.
  *
  * Phase 2's exit criterion is that 80% of meals resolve with zero model calls.
  * That is not a performance optimisation: at 8,000 tokens/minute on the free
