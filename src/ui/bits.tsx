@@ -107,6 +107,24 @@ export function Bubble({ size = 24 }: IconProps) {
   );
 }
 
+/** "What it can see": the slice that leaves the device, on the chat screen. */
+export function Eye({ size = 18 }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...stroke} strokeWidth={1.6}>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  );
+}
+
+export function ArrowUp({ size = 19 }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...stroke} strokeWidth={2}>
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </svg>
+  );
+}
+
 export function Cutlery({ size = 24 }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} {...stroke} strokeWidth={1.5}>

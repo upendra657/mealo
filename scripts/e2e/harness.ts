@@ -29,6 +29,7 @@ import {
 import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
+import { logSymptom, openSymptoms, removeSymptom } from '../../src/domain/symptoms';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
   burnOn,
@@ -210,6 +211,19 @@ async function main() {
   await refreshCurrentState();
   const stateAfter = await query<{ n: number }>('SELECT COUNT(*) AS n FROM current_state');
   check('a later refresh updates that row rather than adding one', Number(stateAfter[0].n) === 1, String(stateAfter[0].n));
+
+  // A symptom logged from the chat, and its Undo. Undo is not "resolved":
+  // the row must leave the open list and the slice, and stay in the table.
+  const symId = await logSymptom('Headache since morning, behind the eyes');
+  check('a logged symptom is open', (await openSymptoms()).some((x) => x.id === symId));
+  check('and reaches the slice in the person\'s words', renderSlice(await collectFacts()).includes('Headache since morning'));
+  await removeSymptom(symId);
+  check('undone, it is no longer open', !(await openSymptoms()).some((x) => x.id === symId));
+  check('nor in the slice', !renderSlice(await collectFacts()).includes('Headache since morning'));
+  const symRow = await query<{ deleted_at: number | null; resolved_at: number | null }>(
+    'SELECT deleted_at, resolved_at FROM symptoms WHERE id = ?', [symId]);
+  check('the row is kept, marked deleted and not resolved',
+    symRow.length === 1 && symRow[0].deleted_at !== null && symRow[0].resolved_at === null, JSON.stringify(symRow));
 
   // ---- the boundary still holds -----------------------------------------
   let threw = false;

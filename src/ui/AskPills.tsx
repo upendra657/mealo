@@ -1,0 +1,379 @@
+/**
+ * The three pills under the Ask Mealo bar that need no model: Log a meal,
+ * Tick my doses, Log a symptom.
+ *
+ * Each is one question, one card showing exactly what would be written, and
+ * one tap. A confirmed card shrinks to a one-line receipt with Undo. They
+ * call the same domain functions the Track meals and Track meds screens
+ * call, so a meal logged here is the meal you would have logged there.
+ *
+ * Nothing here is kept in the chat's history. The meal, the ticks and the
+ * symptom are saved where they belong; the card that made them lasts for
+ * this visit only. Saving cards waits for the tool-calling work, when tool
+ * results need storing too and one rule can decide what of either may reach
+ * a model.
+ */
+
+import { useEffect, useState } from 'react';
+import {
+  clock,
+  dosesAction,
+  dosesReceipt,
+  entryTime,
+  mealReceipt,
+  mealSummary,
+  nextMark,
+  PILLS,
+  type Mark,
+  type Pill,
+} from '../domain/chat';
+import { timeLabel, type PlannedDose } from '../domain/doses';
+import { deleteMeal, draftFromText, saveMeal, type DraftItem } from '../domain/meals';
+import { describeMeasure } from '../domain/measures';
+import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
+import { guessSlot, slot } from '../domain/slots';
+import { logSymptom, removeSymptom } from '../domain/symptoms';
+import { triage } from '../safety/redflags';
+import { DoseRow } from './MedLog';
+import { Tick, fmtQty } from './bits';
+
+export type FlowProps = {
+  at: number;
+  /** What the person typed in answer, or null while the bar is waiting. */
+  said: string | null;
+  /** Put the words back in the bar to be typed again. */
+  onRetype: () => void;
+  /** Take the whole thing off the screen: nothing was written. */
+  onCancel: () => void;
+  /** Something was written or taken back; the caller re-reads the record. */
+  onWrote: () => void;
+  onAddDish: () => void;
+  /**
+   * Symptom only: the row already written, when the words were an emergency.
+   * The caller writes it, in the tap that sent the words, never this
+   * component in an effect: the dev server runs effects twice and that is
+   * how one symptom becomes two rows.
+   */
+  savedId?: string | null;
+};
+
+function Asked({ pill, at, said }: { pill: Pill; at: number; said: string | null }) {
+  return (
+    <>
+      <div className="am-q">
+        <div className="am-q-t">
+          {entryTime(at)} · {PILLS[pill].label}
+        </div>
+        <div className="am-q-x">{PILLS[pill].asks}</div>
+      </div>
+      {said !== null && <div className="am-said">{said}</div>}
+    </>
+  );
+}
+
+const ToConfirm = () => (
+  <div className="am-eyeb am-eyeb--warn">
+    <i />
+    To confirm · nothing saved yet
+  </div>
+);
+
+/** What a confirmed card leaves behind. Undo takes the write back, once. */
+function Receipt({ text, onUndo }: { text: string; onUndo: () => Promise<void> }) {
+  const [undone, setUndone] = useState(false);
+  return (
+    <div className="am-rcpt" data-undone={undone ? '1' : undefined}>
+      {!undone && (
+        <span className="am-rcpt-ok">
+          <Tick size={12} />
+        </span>
+      )}
+      <span className="grow">{undone ? `Undone: ${text.charAt(0).toLowerCase()}${text.slice(1)}` : text}</span>
+      {!undone && (
+        <button
+          className="am-rcpt-undo"
+          onClick={async () => {
+            await onUndo();
+            setUndone(true);
+          }}
+        >
+          Undo
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ a meal
+
+export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish }: FlowProps) {
+  const [draft, setDraft] = useState<DraftItem[] | null>(null);
+  const [done, setDone] = useState<{ mealId: string; text: string } | null>(null);
+  const [now] = useState(() => new Date());
+
+  useEffect(() => {
+    if (said === null) return;
+    let live = true;
+    void draftFromText(said).then((d) => {
+      if (live) setDraft(d);
+    });
+    return () => {
+      live = false;
+    };
+  }, [said]);
+
+  if (done) {
+    return (
+      <Receipt
+        text={done.text}
+        onUndo={async () => {
+          await deleteMeal(done.mealId);
+          onWrote();
+        }}
+      />
+    );
+  }
+
+  const sum = draft ? mealSummary(draft) : null;
+  // Logged as eaten now, in the slot the clock suggests: this pill is for the
+  // meal just had. Planning ahead stays on the Track meals screen, where the
+  // day and the slot are chosen on purpose.
+  const where = slot(guessSlot(now));
+
+  return (
+    <div className="am-entry">
+      <Asked pill="meal" at={at} said={said} />
+      {said !== null && draft && sum && (
+        <>
+          {sum.action && <ToConfirm />}
+          <div className="am-card">
+            {draft.length === 0 && <div className="am-hint">Nothing here reads as a dish.</div>}
+            {draft.map((it, i) => (
+              <div key={i} className="am-li" data-miss={it.food ? undefined : '1'}>
+                <span>{it.food?.name ?? it.label}</span>
+                <span className="am-li-q">
+                  {it.food
+                    ? it.quantity && it.unit
+                      ? `${fmtQty(it.quantity)} ${describeMeasure(it.unit).toLowerCase()}`
+                      : `${Math.round(it.grams)} g`
+                    : 'not in your food table'}
+                </span>
+                {it.food ? (
+                  <span className="am-li-k">{Math.round(it.energy_kcal ?? 0)} Cal</span>
+                ) : (
+                  <button className="am-li-add" onClick={onAddDish}>
+                    Add dish
+                  </button>
+                )}
+              </div>
+            ))}
+            {sum.known > 0 && (
+              <div className="am-li am-li--tot">
+                <span>
+                  {where.label}, {clock(now.getTime())}
+                </span>
+                <span className="am-li-k">{sum.kcal.toLocaleString('en-US')} Cal</span>
+              </div>
+            )}
+            {sum.hint && <div className="am-hint">{sum.hint}</div>}
+            <div className="am-btns">
+              <button className="am-btn" onClick={onCancel}>
+                Cancel
+              </button>
+              <button className="am-btn" onClick={onRetype}>
+                Change
+              </button>
+              {sum.action && (
+                <button
+                  className="am-btn am-btn--go"
+                  onClick={async () => {
+                    const known = draft.filter((d) => d.food !== null);
+                    const mealId = await saveMeal(known, {
+                      rawText: said,
+                      mealType: where.id,
+                      eatenAt: now.getTime(),
+                    });
+                    setDone({ mealId, text: mealReceipt(where.label, sum.known, sum.kcal) });
+                    onWrote();
+                  }}
+                >
+                  {sum.action}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------- doses
+
+export function DosesFlow({ at, onCancel, onWrote }: FlowProps) {
+  const [due, setDue] = useState<PlannedDose<Medication>[] | null>(null);
+  const [day, setDay] = useState('');
+  const [marks, setMarks] = useState<Mark[]>([]);
+  const [done, setDone] = useState<{ events: string[]; text: string } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void readMedsDay().then((plan) => {
+      if (!live) return;
+      // Due means its time has come and it has no answer yet. Later today is
+      // left out: ticking a night dose at lunch is how a record goes wrong.
+      const list = plan.groups.flatMap((g) => g.doses).filter((p) => p.state === 'due');
+      setDue(list);
+      setDay(plan.day);
+      setMarks(list.map(() => null));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (done) {
+    return (
+      <Receipt
+        text={done.text}
+        onUndo={async () => {
+          for (const id of done.events) await undoIntake(id);
+          onWrote();
+        }}
+      />
+    );
+  }
+
+  const action = dosesAction(marks);
+  return (
+    <div className="am-entry">
+      <Asked pill="doses" at={at} said={null} />
+      {due && due.length === 0 && <p className="am-a">Nothing is due right now.</p>}
+      {due && due.length > 0 && (
+        <>
+          <ToConfirm />
+          <div className="am-card am-card--doses">
+            {due.map((p, i) => (
+              <div key={p.dose.id}>
+                {(i === 0 || due[i - 1].dose.time_of_day !== p.dose.time_of_day) && (
+                  <div className="am-eyeb am-dose-g">{timeLabel(p.dose.time_of_day)}</div>
+                )}
+                {/* The Meds screen's own row and circle, so a dose is never
+                    drawn two ways. Its state here is the card's, not the
+                    record's, until the button is pressed. */}
+                <DoseRow
+                  p={{ ...p, state: marks[i] ?? 'due' }}
+                  time={timeLabel(p.dose.time_of_day)}
+                  onTick={() => setMarks((m) => m.map((x, n) => (n === i ? nextMark(x) : x)))}
+                />
+              </div>
+            ))}
+            <div className="am-hint">Tap a circle to tick a dose. Tap it again for skipped.</div>
+            <div className="am-btns">
+              <button className="am-btn" onClick={onCancel}>
+                Cancel
+              </button>
+              <button
+                className="am-btn am-btn--go"
+                disabled={!action}
+                onClick={async () => {
+                  const events: string[] = [];
+                  for (let i = 0; i < due.length; i++) {
+                    const m = marks[i];
+                    if (m) events.push(await markDose(due[i], day, m));
+                  }
+                  setDone({ events, text: dosesReceipt(marks) });
+                  onWrote();
+                }}
+              >
+                {action ?? 'Tick doses'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------- symptom
+
+export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: FlowProps) {
+  const [logged, setLogged] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
+  const saved = savedId ?? logged;
+  const flagged = said !== null ? triage(said) : null;
+  // An emergency arrives already saved (see savedId), with an Undo. It is the
+  // one write in the app made without a confirmation: nobody should be asked
+  // to press a button while reading "seek care now". Upendra's decision, and
+  // his reason for keeping it at all: what happened is part of what the
+  // record is for.
+  const stop = flagged && flagged.triggered ? flagged.message : null;
+
+  const receipt = saved && (
+    <Receipt
+      text="Saved to your symptoms"
+      onUndo={async () => {
+        await removeSymptom(saved);
+        onWrote();
+      }}
+    />
+  );
+
+  if (stop) {
+    return (
+      <div className="am-entry">
+        <Asked pill="symptom" at={at} said={said} />
+        <div className="am-eyeb am-eyeb--bad">
+          <i />
+          Stopped by the app · not sent to any AI
+        </div>
+        <div className="am-stop">
+          <div className="am-stop-t">Seek care now</div>
+          <p>{stop}</p>
+        </div>
+        {receipt}
+      </div>
+    );
+  }
+
+  if (saved) return receipt;
+
+  return (
+    <div className="am-entry">
+      <Asked pill="symptom" at={at} said={said} />
+      {said !== null && (
+        <>
+          <ToConfirm />
+          <div className="am-card">
+            <div className="am-kv">
+              <span className="am-kk">Your words</span>
+              <span>{said}</span>
+            </div>
+            <div className="am-kv">
+              <span className="am-kk">When</span>
+              <span>Now, {clock(now)}</span>
+            </div>
+            <div className="am-btns">
+              <button className="am-btn" onClick={onCancel}>
+                Cancel
+              </button>
+              <button className="am-btn" onClick={onRetype}>
+                Change
+              </button>
+              <button
+                className="am-btn am-btn--go"
+                onClick={async () => {
+                  setLogged(await logSymptom(said));
+                  onWrote();
+                }}
+              >
+                Log symptom
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

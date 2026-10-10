@@ -2792,3 +2792,496 @@ textarea {
   margin: 0 5px 0 10px;
   vertical-align: 1.5px;
 }
+
+/* ---- Ask Mealo ------------------------------------------------------- */
+/* The chat. A notebook rather than a messenger: entries, not bubbles.
+
+   The green is turned down on this screen and only here. At the app's full
+   --accent every rule, label and button on a page of text shouted at once,
+   and Upendra asked for it quieter after seeing the mock-up: buttons are a
+   faint wash with green text, lines and labels a softer green. The send
+   button alone keeps --accent, so there is still exactly one bright thing
+   on the screen and it is the thing you press. */
+.am {
+  --am-g: #7cc4ad;
+  --am-g-bg: rgba(79, 209, 169, 0.16);
+  --am-g-ink: #a3e2ce;
+  --am-g-bd: rgba(79, 209, 169, 0.38);
+  --am-g-tint: rgba(79, 209, 169, 0.075);
+  --am-g-tl: rgba(79, 209, 169, 0.27);
+
+  display: flex;
+  flex-direction: column;
+  /* The shell already pays the top inset; without taking it back here the
+     screen is one notch taller than the phone and the bar sits off it. */
+  min-height: calc(100dvh - env(safe-area-inset-top, 0px));
+}
+.am-ttl {
+  font-size: 16px;
+  font-weight: 500;
+}
+.am-see-link {
+  font-size: 13px;
+  color: var(--am-g);
+}
+.am-eye {
+  color: var(--muted);
+}
+.am-eye[aria-pressed='true'] {
+  color: var(--am-g);
+  border-color: var(--am-g-tl);
+}
+
+.am-eyeb {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.am-eyeb i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.am-eyeb--bad {
+  color: var(--bad);
+}
+
+.am-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* A short thread sits against the bar, where the thumb and the next
+     question are, rather than under the header with a gap below it. */
+  justify-content: flex-end;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+.am-thread--first {
+  justify-content: space-between;
+  gap: 22px;
+}
+
+/* -- the first page */
+.am-hello {
+  padding-top: 6px;
+  text-align: center;
+  color: var(--muted);
+}
+.am-orb {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  margin: 0 auto 14px;
+  display: grid;
+  place-items: center;
+  color: var(--am-g);
+  background: var(--am-g-tint);
+  border: 1px solid var(--am-g-tl);
+}
+.am-hello h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink-text);
+}
+.am-hello > p {
+  margin: 0 auto;
+  max-width: 280px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+/* Body text in a plain card, not a red or amber panel: a warning colour
+   reads as an error, and this is only what the thing is. */
+.am-not {
+  margin-top: 18px;
+  text-align: left;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.am-not strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-text);
+}
+.am-not p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.am-not p b {
+  color: var(--ink-text);
+  font-weight: 500;
+}
+.am-try-h {
+  margin-bottom: 6px;
+}
+.am-try {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 2px;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+  text-align: left;
+}
+.am-try:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.am-try svg {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted);
+}
+
+/* -- entries */
+.am-q {
+  border-left: 2px solid var(--am-g);
+  padding: 1px 0 1px 12px;
+}
+/* The rule between one exchange and the next. Drawn from the question so a
+   thread that starts with one has none above it. */
+.am-q:not(:first-child) {
+  margin-top: 12px;
+}
+.am-q-t {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.am-q-x {
+  margin-top: 2px;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.am-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.am-src {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.am-ai {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.am-a {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #c9d3cd;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.am-wait {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.am-stop {
+  border: 1px solid rgba(var(--hue-sick), 0.42);
+  background: rgba(var(--hue-sick), 0.09);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.am-stop-t {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--bad);
+}
+.am-stop p {
+  margin: 5px 0 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+/* -- what it can see */
+.am-see {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.am-see pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c9d3cd;
+}
+.am-see p {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.am-sym {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14.5px;
+}
+.am-sym .link {
+  margin-left: auto;
+  flex: none;
+}
+.am-clear {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 13.5px;
+}
+
+/* -- the pills and their cards */
+.am-eyeb--warn {
+  color: var(--warn);
+}
+.am-pills {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 10px;
+}
+.am-pills::-webkit-scrollbar {
+  display: none;
+}
+.am-pills button {
+  flex: none;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--muted);
+}
+.am-said {
+  align-self: flex-start;
+  margin-top: -2px;
+  padding: 9px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.am-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 4px 12px 12px;
+}
+.am-li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px;
+}
+.am-li:first-child {
+  border-top: 0;
+}
+.am-li-q {
+  font-size: 13px;
+  color: var(--muted);
+}
+.am-li-k {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+.am-li[data-miss],
+.am-li[data-miss] .am-li-q {
+  color: var(--warn);
+}
+.am-li-add {
+  margin-left: auto;
+  flex: none;
+  font-size: 13.5px;
+  color: var(--am-g);
+}
+.am-li--tot {
+  font-weight: 500;
+}
+.am-li--tot .am-li-k {
+  color: var(--ink-text);
+}
+.am-hint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.am-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.am-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  font-size: 15px;
+  text-align: center;
+  color: var(--muted);
+}
+.am-btn--go {
+  flex: 1.6;
+  border-color: var(--am-g-bd);
+  background: var(--am-g-bg);
+  color: var(--am-g-ink);
+  font-weight: 500;
+}
+.am-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* The Meds screen's rows, inside a card: they bring their own borders and
+   would draw a box in a box. */
+.am-card--doses {
+  padding-top: 12px;
+}
+.am-card--doses .row.dose {
+  border: 0;
+  background: none;
+  padding: 6px 0;
+  margin: 0;
+}
+.am-dose-g {
+  margin: 8px 0 2px;
+}
+.am-card--doses > div:first-child .am-dose-g {
+  margin-top: 0;
+}
+.am-kv {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px;
+  overflow-wrap: anywhere;
+}
+.am-kv:first-child {
+  border-top: 0;
+}
+.am-kk {
+  width: 88px;
+  flex: none;
+  padding-top: 1px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.am-rcpt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.am-rcpt[data-undone] {
+  border-style: dashed;
+}
+.am-rcpt-ok {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--am-g-bg);
+  color: var(--am-g-ink);
+}
+.am-rcpt-undo {
+  flex: none;
+  color: var(--am-g);
+}
+
+/* -- the bar */
+.am-dock {
+  position: sticky;
+  bottom: 0;
+  /* Opaque from a little way down, so a long thread fades out under the bar
+     instead of showing through it. */
+  background: linear-gradient(transparent, var(--ink) 14px);
+  padding: 14px 0 calc(22px + env(safe-area-inset-bottom, 0px));
+}
+.am-nokey {
+  margin: 0 2px 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.am-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 7px 7px 7px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.am-bar textarea {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: none;
+  font-size: 15px;
+  line-height: 1.4;
+  max-height: 110px;
+  field-sizing: content;
+}
+.am-bar textarea::placeholder {
+  color: var(--muted);
+}
+.am-send {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+/* Not dimmed while there is nothing to send. It is the one bright thing on
+   the screen, and a greyed-out version read as the screen being broken. */
+.am-send:disabled {
+  cursor: default;
+}

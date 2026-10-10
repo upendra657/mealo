@@ -37,6 +37,15 @@ export async function logSymptom(
   });
 }
 
+/**
+ * Take back a symptom logged a moment ago. Not the same as resolving it:
+ * resolved means it happened and passed, this means it was never meant to be
+ * recorded. Soft, like every delete here.
+ */
+export async function removeSymptom(id: string): Promise<void> {
+  await db.softDelete('symptoms', id);
+}
+
 /** Still bothering them: logged, not resolved. */
 export async function openSymptoms(): Promise<Symptom[]> {
   return db.query<Symptom>(

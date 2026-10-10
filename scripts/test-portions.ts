@@ -57,6 +57,10 @@ import {
   type BannerCtx,
   type MedsGlance,
 } from '../src/domain/banner';
+import {
+  clock, dosesAction, dosesReceipt, entriesFrom, entryTime, mealReceipt, mealSummary, nextMark, PILLS, TRY_ASKING,
+} from '../src/domain/chat';
+import { triage } from '../src/safety/redflags';
 import type { Macros } from '../src/domain/day';
 import {
   addDays,
@@ -1852,6 +1856,80 @@ section('Meals planned ahead: ticks and totals');
     [circleOf('eaten', day(8), now), circleOf('skipped', day(9), now)], ['eaten', 'skipped']);
   check('ticking is allowed today and before, not after',
     [canTick(day(8), now), canTick(day(9), now), canTick(day(10), now)], [true, true, false]);
+}
+
+section('Ask Mealo: which lines carry the AI tag');
+{
+  const chest = 'I have chest pain since an hour';
+  const flagged = triage(chest);
+  const stopText = flagged.triggered ? flagged.message : '';
+  check('the fixture really is a red flag', flagged.triggered, true);
+  const row = (role: string, content: string, created_at = 1) => ({ role, content, created_at });
+
+  const thread = entriesFrom([
+    row('user', 'how has my week looked?', 10),
+    row('assistant', 'You logged six days.', 11),
+    row('user', chest, 20),
+    row('assistant', stopText, 21),
+  ]);
+  check('a question, an answer, a question, a stop', thread.map((e) => e.kind), ['asked', 'answer', 'asked', 'stop']);
+  check('each keeps its words and its time', [thread[1].text, thread[1].at, thread[3].text], ['You logged six days.', 11, stopText]);
+  check('a model answer after an ordinary question is AI',
+    entriesFrom([row('user', 'hello'), row('assistant', stopText)])[1].kind, 'answer');
+  // A pattern added later must not relabel what a model said back then.
+  check('a model answer after a red-flag question, in other words, stays AI',
+    entriesFrom([row('user', chest), row('assistant', 'Please see someone about that.')])[1].kind, 'answer');
+  check('a stop with no question before it is not taken on trust',
+    entriesFrom([row('assistant', stopText)])[0].kind, 'answer');
+  check('system and tool rows are not shown',
+    entriesFrom([row('system', 'x'), row('tool', 'y'), row('user', 'z')]).map((e) => e.kind), ['asked']);
+  check('an empty thread is empty', entriesFrom([]), []);
+
+  const at = (d: number, h: number, m: number) => new Date(2026, 9, d, h, m).getTime();
+  const now = at(10, 15, 0);
+  check('today, afternoon', entryTime(at(10, 14, 14), now), 'Today \u00b7 2:14 pm');
+  check('today, morning, minutes padded', entryTime(at(10, 9, 5), now), 'Today \u00b7 9:05 am');
+  check('midnight is 12 am, noon is 12 pm', [entryTime(at(10, 0, 0), now), entryTime(at(10, 12, 0), now)],
+    ['Today \u00b7 12:00 am', 'Today \u00b7 12:00 pm']);
+  check('late last night is yesterday, however few hours ago', entryTime(at(9, 23, 50), at(10, 0, 10)), 'Yesterday \u00b7 11:50 pm');
+  check('older than that carries its date', entryTime(at(8, 14, 14), now), '8 Oct \u00b7 2:14 pm');
+  check('across a month end', entryTime(new Date(2026, 8, 30, 8, 0).getTime(), now), '30 Sep \u00b7 8:00 am');
+
+  check('three questions are offered', TRY_ASKING.length, 3);
+  check('none of them is itself a red flag', TRY_ASKING.map((q) => triage(q).triggered), [false, false, false]);
+}
+
+section('Ask Mealo: the pills');
+{
+  const dish = (kcal: number | null, known = true) => ({ food: known ? {} : null, energy_kcal: kcal });
+  const all = mealSummary([dish(156), dish(98)]);
+  check('every dish known: one plain button, no hint', [all.action, all.hint, all.kcal], ['Log meal', null, 254]);
+  const part = mealSummary([dish(156), dish(98), dish(null, false)]);
+  check('an unknown dish is left out of the total and the button says how many', [part.known, part.unknown, part.kcal, part.action],
+    [2, 1, 254, 'Log 2 dishes']);
+  check('and the card says it will not be logged', part.hint, 'One dish is not in your food table and will not be logged.');
+  check('two unknown', mealSummary([dish(100), dish(null, false), dish(null, false)]).hint,
+    '2 dishes are not in your food table and will not be logged.');
+  check('one known dish is singular', mealSummary([dish(100), dish(null, false)]).action, 'Log 1 dish');
+  const none = mealSummary([dish(null, false)]);
+  check('nothing known: no button at all', [none.action, none.kcal], [null, 0]);
+  check('nothing typed that reads as a dish: no button', mealSummary([]).action, null);
+  // A matched dish with unknown calories must not throw the sum off or count as unknown.
+  check('a known dish without calories counts as a dish, as zero', [mealSummary([dish(null), dish(98)]).known, mealSummary([dish(null), dish(98)]).kcal], [2, 98]);
+  check('a card never claims calories for what it could not place', mealSummary([dish(500, false)]).kcal, 0);
+  check('the meal receipt', mealReceipt('Breakfast', 2, 1254), 'Logged to breakfast \u00b7 2 dishes \u00b7 1,254 Cal');
+  check('one dish', mealReceipt('Evening snack', 1, 98), 'Logged to evening snack \u00b7 1 dish \u00b7 98 Cal');
+
+  check('the circle turns empty, taken, skipped, empty', [nextMark(null), nextMark('taken'), nextMark('skipped')], ['taken', 'skipped', null]);
+  check('nothing ticked: nothing to save', dosesAction([null, null]), null);
+  check('ticks only', [dosesAction(['taken', null, 'taken']), dosesReceipt(['taken', null, 'taken'])], ['Tick 2 doses', '2 doses ticked']);
+  check('one tick is singular', [dosesAction(['taken']), dosesReceipt(['taken'])], ['Tick 1 dose', '1 dose ticked']);
+  check('a skip changes the verb, and is never called ticked', [dosesAction(['taken', 'skipped']), dosesReceipt(['taken', 'skipped'])],
+    ['Save 2 doses', '1 taken, 1 skipped']);
+  check('skips only', dosesReceipt(['skipped', null]), '1 dose marked skipped');
+
+  check('the clock alone', [clock(new Date(2026, 9, 10, 14, 5).getTime()), clock(new Date(2026, 9, 10, 0, 30).getTime())], ['2:05 pm', '12:30 am']);
+  check('three pills, each with a name and a question', Object.values(PILLS).every((p) => p.label && p.asks), true);
 }
 
 // ------------------------------------------------------------------ done

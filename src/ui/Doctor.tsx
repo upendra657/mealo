@@ -1,5 +1,9 @@
 /**
- * The Doctor.
+ * Ask Mealo: the one AI chat.
+ *
+ * It was "Doctor" on screen until Oct 2026. The file, the component and the
+ * agent id keep the old word (see the map in db/scope.ts); nothing a person
+ * reads does.
  *
  * Two things make this different from a chat box with a medical system prompt:
  *
@@ -7,11 +11,19 @@
  *      are routed by a regex that cannot be talked out of its judgement.
  *
  *   2. What crosses the network is a de-identified slice assembled from the
- *      local record — no name, no identifiers, no raw symptom text — plus a
- *      rolling summary rather than the full history.
+ *      local record — no name, no identifiers — plus a rolling summary
+ *      rather than the full history. A logged symptom does travel in the
+ *      person's own words, cut to 60 characters (domain/state.ts): the
+ *      comment here said "no raw symptom text" for a long time and the code
+ *      never agreed with it.
+ *
+ * The screen is a notebook, not a messenger: each question is an entry, and
+ * what the model wrote under it is marked AI. No bubbles and no avatar, on
+ * purpose. This is a tool for reading your own records, and the look of a
+ * conversation with someone invites using it as company or as a clinician.
  */
 
-import { Chevron } from './bits';
+import { ArrowUp, Bubble, Chevron, Eye } from './bits';
 import type { Screen } from '../App';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -20,15 +32,31 @@ import {
   clearThread,
   loadThread,
   maybeSummarise,
-  type StoredMessage,
 } from '../llm/conversation';
 import { chat } from '../llm/adapter';
 import { LlmError } from '../llm/types';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
 import { triage } from '../safety/redflags';
 import { filterDoses } from '../safety/dosefilter';
+import { entriesFrom, entryTime, PILLS, TRY_ASKING, type Entry, type Pill } from '../domain/chat';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
+import { readMedsDay } from '../domain/medications';
+import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
+
+/**
+ * One use of a pill, in the thread beside the questions. Held in this
+ * screen's state only: see AskPills.tsx for why it is not stored.
+ */
+type FlowItem = {
+  kind: 'flow';
+  pill: Pill;
+  id: number;
+  at: number;
+  said: string | null;
+  savedId: string | null;
+};
+type Item = Entry | FlowItem;
 
 const SYSTEM_PROMPT = [
   'You are the everyday-health assistant inside a personal tracking app.',
@@ -54,11 +82,18 @@ const SYSTEM_PROMPT = [
   'empty, say so instead of answering generically.',
 ].join('\n');
 
-type Bubble = { role: 'user' | 'assistant' | 'triage'; content: string };
-
 export function Doctor({ go }: { go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [thread, setThread] = useState<Bubble[]>([]);
+  const [thread, setThread] = useState<Item[]>([]);
+  /** The pill whose question the bar is answering, if any. */
+  const [awaiting, setAwaiting] = useState<number | null>(null);
+  /** Whether "Tick my doses" has anything to offer right now. */
+  const [dueNow, setDueNow] = useState(false);
+  const nextId = useRef(1);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  /** The stored thread has been read. Until then "empty" is not yet known. */
+  const [loaded, setLoaded] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
@@ -71,56 +106,107 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
     const facts = await collectFacts();
     setSlice(renderSlice(facts));
     setSymptoms(await openSymptoms());
+    const plan = await readMedsDay();
+    setDueNow(plan.groups.some((g) => g.doses.some((p) => p.state === 'due')));
     await refreshCurrentState();
   }, []);
 
   useEffect(() => {
     void loadSettings().then(setSettings);
     void (async () => {
-      const stored = await loadThread('doctor');
-      setThread(
-        stored
-          .filter((m): m is StoredMessage & { role: 'user' | 'assistant' } =>
-            m.role === 'user' || m.role === 'assistant',
-          )
-          .map((m) => ({ role: m.role, content: m.content })),
-      );
+      setThread(entriesFrom(await loadThread('doctor')));
+      setLoaded(true);
       await refresh();
     })();
   }, [refresh]);
 
   useEffect(() => {
+    // Not on an empty thread: the first page should open at its top, with
+    // the name and "What this is not" in view, not scrolled to the bar.
+    if (thread.length === 0 && !busy) return;
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [thread]);
+  }, [thread, busy]);
+
+  // A card grows after it is drawn: the meal is matched, the doses are read.
+  // Watching the thread's height keeps the end in view without every card
+  // having to say when it changed.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (el.querySelector('.am-entry, .am-q, .am-rcpt')) {
+        endRef.current?.scrollIntoView({ block: 'end' });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const ready = settings ? isConfigured(settings) : false;
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || !settings) return;
+  const patchFlow = (id: number, patch: Partial<FlowItem>) =>
+    setThread((t) => t.map((x) => (x.kind === 'flow' && x.id === id ? { ...x, ...patch } : x)));
+
+  const startPill = (pill: Pill) => {
+    const id = nextId.current++;
+    const typed = pill !== 'doses';
+    setThread((t) => [
+      // A question the person walked away from is dropped, not left hanging
+      // above the one they actually chose.
+      ...t.filter((x) => !(x.kind === 'flow' && x.id === awaiting)),
+      { kind: 'flow', pill, id, at: Date.now(), said: null, savedId: null },
+    ]);
+    setAwaiting(typed ? id : null);
+    if (typed) inputRef.current?.focus();
+  };
+
+  const send = async (typed = input) => {
+    const text = typed.trim();
+    if (!text || !settings || busy) return;
     setInput('');
     setError(null);
+
+    // The bar is answering a pill's question: the words go to its card, and
+    // to no model. A symptom still passes the red flags first, and an
+    // emergency is saved here, in the tap, before its card is drawn.
+    const flow = thread.find((x): x is FlowItem => x.kind === 'flow' && x.id === awaiting);
+    if (flow) {
+      setAwaiting(null);
+      const urgent = flow.pill === 'symptom' && triage(text).triggered;
+      const savedId = urgent ? await logSymptom(text) : null;
+      patchFlow(flow.id, { said: text, savedId });
+      if (urgent) void refresh();
+      return;
+    }
 
     // R1: this runs before anything else, and can end the turn on its own.
     const flagged = triage(text);
     if (flagged.triggered) {
       setThread((t) => [
         ...t,
-        { role: 'user', content: text },
-        { role: 'triage', content: flagged.message },
+        { kind: 'asked', text, at: Date.now() },
+        { kind: 'stop', text: flagged.message, at: Date.now() },
       ]);
       await appendMessage('doctor', 'user', text);
       await appendMessage('doctor', 'assistant', flagged.message);
       return;
     }
 
-    setThread((t) => [...t, { role: 'user', content: text }]);
+    // Past the red flags, nothing can be answered without a provider. The
+    // check sits here and not above triage so that a stop still reaches
+    // someone who never set one up.
+    if (!ready) {
+      setInput(text);
+      return;
+    }
+
+    setThread((t) => [...t, { kind: 'asked', text, at: Date.now() }]);
     setBusy(true);
     try {
       await appendMessage('doctor', 'user', text);
       // Rebuild the slice now rather than trusting what was loaded on mount.
-      // Logging a meal in another tab and coming back here must not leave the
-      // Doctor answering from stale facts — which is exactly how it ends up
+      // Logging a meal in another tab and coming back here must not leave
+      // Ask Mealo answering from stale facts — which is exactly how it ends up
       // giving textbook advice about a dinner it cannot see.
       const freshFacts = await collectFacts();
       const freshSlice = renderSlice(freshFacts);
@@ -144,7 +230,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         console.warn('[R2] stripped dosing sentences:', filtered.removed);
       }
       await appendMessage('doctor', 'assistant', reply);
-      setThread((t) => [...t, { role: 'assistant', content: reply }]);
+      setThread((t) => [...t, { kind: 'answer', text: reply, at: Date.now() }]);
       void maybeSummarise('doctor', settings).catch(() => {});
     } catch (e) {
       if (e instanceof LlmError) setError({ title: e.message, detail: e.body });
@@ -154,85 +240,179 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
     }
   };
 
-  const noteSymptom = async () => {
-    const text = input.trim();
-    if (!text) return;
-    await logSymptom(text);
-    setInput('');
-    await refresh();
-  };
+  const empty = loaded && thread.length === 0;
+  const waiting = thread.find((x): x is FlowItem => x.kind === 'flow' && x.id === awaiting);
+  const ask = waiting ? PILLS[waiting.pill] : null;
 
   return (
-    <>
-      <BackHome go={go} label="Doctor" />
-      <div className="stack">
-      {symptoms.length > 0 && (
-        <section className="card">
-          <h2>Open symptoms</h2>
-          <ul className="med-list">
-            {symptoms.map((s) => (
-              <li key={s.id} className="med">
-                <div>
-                  <div className="dose-name">{s.label ?? s.raw_text}</div>
-                  <p className="muted small">
-                    noted{' '}
-                    {new Date(s.noted_at).toLocaleDateString(undefined, {
-                      day: 'numeric',
-                      month: 'short',
-                    })}
-                  </p>
+    <div className="am">
+      <div className="top">
+        <button className="back" onClick={() => go('home')}>
+          <Chevron />
+          Home
+        </button>
+        <div className="grow" />
+        {/* The first page carries the name in its own body; once there is a
+            thread the header takes it over. */}
+        {!empty && <span className="am-ttl">Ask Mealo</span>}
+        <div className="grow" />
+        {/* In words on the first page, where nobody yet knows what an eye
+            would mean here; the icon once there is a title to make room for. */}
+        {empty ? (
+          <button className="am-see-link" onClick={() => setShowSlice((v) => !v)}>
+            What it can see
+          </button>
+        ) : (
+          <button
+            className="icon-btn am-eye"
+            aria-label="What it can see"
+            aria-pressed={showSlice}
+            onClick={() => setShowSlice((v) => !v)}
+          >
+            <Eye />
+          </button>
+        )}
+      </div>
+
+      {showSlice && (
+        <div className="am-see">
+          <div className="am-eyeb">Exactly what leaves this device</div>
+          <pre>{slice || '(nothing yet)'}</pre>
+          <p>
+            No name and no identifiers. A symptom you logged appears in your
+            own words, cut to 60 characters. Assembled fresh each time you ask,
+            from your records.
+          </p>
+          {symptoms.length > 0 && (
+            <>
+              <div className="am-eyeb">Open symptoms</div>
+              {symptoms.map((s) => (
+                <div key={s.id} className="am-sym">
+                  <span>{s.label ?? s.raw_text}</span>
+                  <button
+                    className="link"
+                    onClick={async () => {
+                      await resolveSymptom(s.id);
+                      await refresh();
+                    }}
+                  >
+                    Resolved
+                  </button>
                 </div>
-                <button
-                  onClick={async () => {
-                    await resolveSymptom(s.id);
-                    await refresh();
-                  }}
-                >
-                  Resolved
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+              ))}
+            </>
+          )}
+          {thread.length > 0 && (
+            <button
+              className="link link--muted am-clear"
+              onClick={async () => {
+                await clearThread('doctor');
+                setThread([]);
+                setShowSlice(false);
+              }}
+            >
+              Clear this conversation
+            </button>
+          )}
+        </div>
       )}
 
-      <section className="card">
-        <div className="today-head">
-          <h2>Doctor</h2>
-          <button className="link" onClick={() => setShowSlice((v) => !v)}>
-            {showSlice ? 'hide' : 'what it can see'}
-          </button>
-        </div>
-
-        {showSlice && (
-          <div className="policy">
-            <strong>Exactly what leaves this device</strong>
-            <pre style={{ whiteSpace: 'pre-wrap' }}>{slice || '(nothing yet)'}</pre>
-            <p className="small">
-              No name, no identifiers, no raw symptom text — assembled fresh each
-              turn from the local record.
-            </p>
-          </div>
-        )}
-
-        {thread.length === 0 && (
-          <p className="muted small">
-            Ask about how your week has gone, an interaction you're unsure of, or
-            something that's been bothering you. It reads your logs; it does not
-            diagnose and it will not give you a dose.
-          </p>
-        )}
-
-        <div className="chat">
-          {thread.map((m, i) => (
-            <div key={i} className={`bubble bubble--${m.role}`}>
-              {m.role === 'triage' && <strong>Seek care now</strong>}
-              <p>{m.content}</p>
+      <div ref={threadRef} className={`am-thread${empty ? ' am-thread--first' : ''}`}>
+        {/* Until the first message, and then gone. It has to be read before
+            someone starts talking; in every conversation after that it would
+            be a notice nobody sees any more. Waits for the stored thread, so
+            it does not flash up over a conversation that is about to load. */}
+        {empty && (
+          <>
+            <div className="am-hello">
+              <div className="am-orb">
+                <Bubble />
+              </div>
+              <h1>Ask Mealo</h1>
+              <p>
+                Ask about what you have tracked: your meals, medicines, weight
+                and symptoms.
+              </p>
+              <div className="am-not">
+                <strong>What this is not</strong>
+                <p>
+                  <b>Not a doctor.</b> It does not diagnose, and it never gives a
+                  dose.
+                </p>
+                <p>
+                  <b>Not for emergencies.</b> If something feels serious, see a
+                  doctor or call your local emergency number.
+                </p>
+                <p>
+                  <b>Not always right.</b> It is an AI. Check anything that
+                  matters with a professional.
+                </p>
+              </div>
             </div>
-          ))}
-          {busy && <p className="muted small">thinking…</p>}
-          <div ref={endRef} />
-        </div>
+            <div>
+              <div className="am-eyeb am-try-h">Try asking</div>
+              {TRY_ASKING.map((q) => (
+                <button key={q} className="am-try" onClick={() => void send(q)}>
+                  {q}
+                  <Chevron dir="right" />
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {thread.map((e, i) =>
+          e.kind === 'flow' ? (
+            (() => {
+              const Flow = e.pill === 'meal' ? MealFlow : e.pill === 'doses' ? DosesFlow : SymptomFlow;
+              return (
+                <Flow
+                  key={`f${e.id}`}
+                  at={e.at}
+                  said={e.said}
+                  savedId={e.savedId}
+                  onRetype={() => {
+                    setInput(e.said ?? '');
+                    patchFlow(e.id, { said: null });
+                    setAwaiting(e.id);
+                    inputRef.current?.focus();
+                  }}
+                  onCancel={() => {
+                    setThread((t) => t.filter((x) => x !== e));
+                    if (awaiting === e.id) setAwaiting(null);
+                  }}
+                  onWrote={() => void refresh()}
+                  onAddDish={() => go('log')}
+                />
+              );
+            })()
+          ) : e.kind === 'asked' ? (
+            <div key={i} className="am-q">
+              <div className="am-q-t">{entryTime(e.at)}</div>
+              <div className="am-q-x">{e.text}</div>
+            </div>
+          ) : e.kind === 'stop' ? (
+            <div key={i} className="am-entry">
+              <div className="am-eyeb am-eyeb--bad">
+                <i />
+                Stopped by the app · not sent to any AI
+              </div>
+              <div className="am-stop">
+                <div className="am-stop-t">Seek care now</div>
+                <p>{e.text}</p>
+              </div>
+            </div>
+          ) : (
+            <div key={i} className="am-entry">
+              <div className="am-src">
+                <span className="am-ai">AI</span>
+                <span className="am-eyeb">Ask Mealo</span>
+              </div>
+              <p className="am-a">{e.text}</p>
+            </div>
+          ),
+        )}
+        {busy && <p className="am-wait">Reading your records…</p>}
 
         {error && (
           <div className="result result--fail">
@@ -240,63 +420,51 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
             {error.detail && <pre>{error.detail}</pre>}
           </div>
         )}
+        <div ref={endRef} />
+      </div>
 
-        <label className="field" style={{ marginTop: 12 }}>
-          <span>Message</span>
-          <textarea
-            id="doctor-input"
-            rows={2}
-            value={input}
-            placeholder="how has my week looked?"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send();
-            }}
-          />
-        </label>
-        <div className="row">
-          <button
-            className="primary"
-            onClick={() => void send()}
-            disabled={busy || !ready || !input.trim()}
-          >
-            Send
-          </button>
-          <button onClick={() => void noteSymptom()} disabled={!input.trim()}>
-            Log as symptom
-          </button>
-          {thread.length > 0 && (
-            <button
-              onClick={async () => {
-                await clearThread('doctor');
-                setThread([]);
-              }}
-            >
-              Clear
+      <div className="am-dock">
+        {settings && !ready && (
+          <p className="am-nokey">
+            Ask Mealo needs a model provider.{' '}
+            <button className="link" onClick={() => go('dev')}>
+              Set one up in Dev
             </button>
-          )}
-        </div>
-        {!ready && (
-          <p className="small muted">
-            Configure a provider in Settings first.
           </p>
         )}
-      </section>
-    </div>
-    </>
-  );
-}
-
-/** Header for a screen reached from the home grid. */
-function BackHome({ go, label }: { go: (s: Screen) => void; label: string }) {
-  return (
-    <div className="top">
-      <button className="back" onClick={() => go('home')}>
-        <Chevron />
-        Home
-      </button>
-      <div className="grow" />
-      <span className="small muted">{label}</span>
+        <div className="am-pills">
+          <button onClick={() => startPill('meal')}>{PILLS.meal.label}</button>
+          {/* Only while a dose is waiting. A pill that opens onto "nothing is
+              due" most of the day teaches people not to press it. */}
+          {dueNow && <button onClick={() => startPill('doses')}>{PILLS.doses.label}</button>}
+          <button onClick={() => startPill('symptom')}>{PILLS.symptom.label}</button>
+        </div>
+        <div className="am-bar">
+          <textarea
+            id="doctor-input"
+            ref={inputRef}
+            rows={1}
+            value={input}
+            placeholder={ask?.asks ?? 'Ask about your records'}
+            aria-label={ask?.asks ?? 'Ask about your records'}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <button
+            className="am-send"
+            aria-label="Send"
+            onClick={() => void send()}
+            disabled={busy || !input.trim()}
+          >
+            <ArrowUp />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
