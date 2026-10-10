@@ -8,7 +8,7 @@
  * Three rules decide every line in here.
  *
  * **It suggests adding, not cutting.** "28g of protein left" is a thing you
- * can act on. "You're 600 over" is a verdict, and the Nutritionist's spec says
+ * can act on. "You're 600 over" is a verdict, and Thali's spec says
  * it never frames a suggestion in terms of restriction. When a number does run
  * high the line names it once, warmly, and points at tomorrow — a day you have
  * already finished is not a problem anyone can still solve.
@@ -390,16 +390,22 @@ const HUE: Record<Situation, Hue> = {
   meds: 'violet',
 };
 
+/**
+ * Whose line it is, as the card's label. Thali speaks about food and Dawa
+ * about medicines: both are plain code, and neither name is a profession.
+ * They were "Nutritionist" and "Pharmacist" until Oct 2026, which put a
+ * licensed job title over a sentence a function wrote.
+ */
 const WHO: Record<Situation, string> = {
   'no-targets': 'Setup',
-  empty: 'Nutritionist',
-  short: 'Nutritionist',
-  'short-past': 'Nutritionist',
-  high: 'Nutritionist',
-  'all-hit': 'Nutritionist',
+  empty: 'Thali',
+  short: 'Thali',
+  'short-past': 'Thali',
+  high: 'Thali',
+  'all-hit': 'Thali',
   weight: 'Weight',
-  steady: 'Nutritionist',
-  meds: 'Pharmacist',
+  steady: 'Thali',
+  meds: 'Dawa',
 };
 
 /**

@@ -6,6 +6,11 @@ specific trap that kills it. Weekend counts assume part-time work.
 Tick things off as they land. A phase is done when its exit criterion is true —
 not when the code is written.
 
+**On names.** Since October 2026 the app says **Ask Mealo** where this file says
+Doctor, **Thali** for Nutritionist and **Dawa** for Pharmacist. The job titles
+left the screen because each claims an authority the app does not have. The
+phases below keep the names they were written with.
+
 ---
 
 ## Phase 0 — Skeleton, adapter, storage decision · 1–2 weekends

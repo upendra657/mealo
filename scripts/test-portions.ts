@@ -83,6 +83,7 @@ import {
   planDay,
   progress,
   resizeDoses,
+  tileNote,
   unitFor,
   UNITS_FOR,
   type TimeOfDay,
@@ -1429,6 +1430,26 @@ section('Medicines: what is due on a day');
   check('a past day\'s unticked doses are missed, not due',
     planDay('2026-10-01', meds, doses, [], [], at2pm).groups.flatMap((g) => g.doses)
       .every((p) => p.state === 'missed'), true);
+
+  // The line under "Track meds" on Home, from the same plan.
+  check('the tile counts today\'s doses, none ticked', tileNote(well), '0 of 3 taken');
+  const tick = (id: string, dose_id: string, status: 'taken' | 'skipped') => ({ id, dose_id, status, updated_at: 1 });
+  check('a taken dose counts', tileNote(planDay(day, meds, doses, [lastMonth], [tick('a', 'd-thy', 'taken')], at2pm)),
+    '1 of 3 taken');
+  check('a skipped dose is answered but was not taken',
+    tileNote(planDay(day, meds, doses, [lastMonth], [tick('a', 'd-thy', 'taken'), tick('b', 'd-cre', 'skipped')], at2pm)),
+    '1 of 3 taken');
+  check('all of them', tileNote(planDay(day, meds, doses, [lastMonth],
+    [tick('a', 'd-thy', 'taken'), tick('b', 'd-cre', 'taken'), tick('c', 'd-una', 'taken')], at2pm)), '3 of 3 taken');
+  check('a missed dose still counts as one of the day\'s', tileNote(planDay('2026-10-01', meds, doses, [], [], at2pm)),
+    '0 of 3 taken');
+  check('no medicines at all', tileNote(planDay(day, [], [], [], [], at2pm)), 'No medicines yet');
+  check('medicines, but none with a dose today',
+    tileNote(planDay(day, [med('old vitamin', null)], [], [], [], at2pm)), 'Nothing due today');
+  check('everything paused by a sickness with no medicine of its own',
+    tileNote(planDay(day, [med('creatine', 0)], [dose('d-cre', 'creatine', 'morning')], [fever], [], at2pm)),
+    'Nothing due today');
+  check('the tile never states an amount or a name', /mg|tablet|thyroxine/i.test(tileNote(well)), false);
 }
 
 section('The scroll wheel reports only a real choice');
@@ -1630,13 +1651,26 @@ section('The banner: one medicines card');
   check('a running sickness comes first', medsCard(g({ due: 1, dueNames: ['Cough syrup'], sick: { name: 'Viral fever', day: 3, of: 7 } }))?.text,
     'Viral fever, day 3 of 7. Cough syrup is due now.');
   const card = medsCard(g({ due: 1, dueNames: ['Thyronorm'] }))!;
-  check('it is the Pharmacist speaking, in violet', [card.who, card.hue], ['Pharmacist', 'violet']);
+  check('it is Dawa speaking, in violet', [card.who, card.hue], ['Dawa', 'violet']);
   check('it never states an amount', [card, medsCard(g({ done: 1 }))!].every((c) => !/\d\s*(mg|mcg|ml|g|tablet)/i.test(c.text)), true);
   const base = { now: new Date(2026, 9, 6, 9).getTime(), totals: [0, 0, 0, 0, 0] as Macros, itemCount: 0,
     targets: { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null } as never, lookingBack: false };
   check('it joins the deck even when the food card is the only one', deck({ ...base, meds: g({ done: 1 }) }).map((c) => c.situation),
     ['no-targets', 'meds']);
   check('and the deck without medicines is as it was', deck(base).map((c) => c.situation), ['no-targets']);
+
+  // The labels people read. A job title over a line a function wrote claims
+  // an authority the app does not have; these were renamed in Oct 2026.
+  const fed = { ...base, totals: [900, 30, 20, 120, 10] as Macros, itemCount: 3,
+    targets: { energy_kcal: 1900, protein_g: 90, fat_g: 60, carbs_g: 230, fibre_g: 30 } as never };
+  const labels = [
+    ...deck({ ...fed, meds: g({ due: 1, dueNames: ['Thyronorm'] }) }),
+    ...deck({ ...fed, totals: [2600, 95, 90, 300, 31] as Macros }),
+    ...deck({ ...base, targets: fed.targets }),
+    ...deck(base),
+  ].map((c) => c.who);
+  check('food cards are Thali\'s', labels.includes('Thali'), true);
+  check('no card carries a job title', labels.filter((w) => /doctor|nutritionist|pharmacist/i.test(w)), []);
 }
 
 section('Medicines: how often');

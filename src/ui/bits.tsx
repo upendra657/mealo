@@ -92,12 +92,17 @@ export function SearchIcon({ size = 16 }: IconProps) {
   );
 }
 
-export function Stethoscope({ size = 24 }: IconProps) {
+/**
+ * Ask Mealo's tile. A speech bubble, because that is what the screen is: a
+ * place to ask. It was a stethoscope while the tile said "Doctor", and went
+ * with the name for the same reason — it claimed an authority the app does
+ * not have.
+ */
+export function Bubble({ size = 24 }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} {...stroke} strokeWidth={1.5}>
-      <path d="M9 3v6a5 5 0 0 0 10 0V3" />
-      <path d="M6 3v7a7 7 0 0 0 7 7" />
-      <circle cx="19" cy="17" r="3" />
+      <path d="M20 11.5a7.5 7.5 0 0 1-11 6.6L4 19.5l1.5-4.3A7.5 7.5 0 1 1 20 11.5z" />
+      <path d="M9 10.5h6M9 13.5h3.5" />
     </svg>
   );
 }

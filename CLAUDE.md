@@ -1,7 +1,10 @@
 # Mealo
 
-A local-first personal health PWA with three scoped AI agents — Doctor,
-Nutritionist, Pharmacist — over one on-device SQLite database. Built by Upendra
+A local-first personal health PWA over one on-device SQLite database, with one
+AI chat, **Ask Mealo**, and two plain-code agents, **Thali** (meals) and **Dawa**
+(medicines). Those are the names people see and the names comments use; in
+code the ids are still `doctor`, `nutritionist` and `pharmacist`, and the chat
+screen is still the `Doctor` component. The map is in `db/scope.ts`. Built by Upendra
 for himself and his partner. Public repo. **Hard constraint: zero recurring cost
 to anyone, ever.**
 
@@ -26,8 +29,8 @@ left open — from the change list Upendra approves.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + e2e
-npm run test:portions  # 548 pure-logic assertions, node, fast
-npm run test:e2e       # 257 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 636 pure-logic assertions, node, fast
+npm run test:e2e       # 341 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -210,7 +213,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v12**. **Shipped means any database has run it — a dev browser included.**
+at **v13**. **Shipped means any database has run it — a dev browser included.**
 v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
 database never re-ran it, and every medicine save failed with "no column named
 freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum
@@ -261,14 +264,17 @@ right about his own kitchen.
 
 Phases 0–4 complete, including R5. Phase 4.5 (two people) done. **Phase 5 ~30%** —
 encrypted delta sync works for the food and medicine libraries; passphrase, encrypted export,
-health-table sync and web push are open. **Phase 6 not started** — no LICENSE, no
-CONTRIBUTING, no CI, and `README.md` still opens with "Status: Phase 0. No agents
-yet." See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
+health-table sync and web push are open. **Phase 6 barely started** — the LICENSE (MIT) is in
+and the README's facts were corrected in Oct 2026; no CONTRIBUTING, no CI, and the
+README's full rewrite waits for the demo. See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
 rough edges.
 
 Track meds was rebuilt in v10–v11: the medicine definition/regimen split (shared
 library, per-person regimens), sick mode, non-daily schedules and the medicine
 log. Parked, to discuss: reading a prescription from an image or PDF (needs a
-decision on whether an image may leave the phone — P2), and a meds summary on
-the Home tile. Not yet written into any phase: the remaining Doctor and
-Pharmacist work.
+decision on whether an image may leave the phone — P2).
+
+Next is making the app smart: Ask Mealo with Thali and Dawa as tools, reports,
+and the safety gates and their test suite. The plan and what Upendra has
+approved are in `Approved Ideas.md` (gitignored, local only); it is not yet
+written into `ROADMAP.md`.

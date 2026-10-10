@@ -8,22 +8,20 @@
 
 import { useEffect, useState } from 'react';
 import { deck, focusDay, greeting, type MedsGlance, type Phrase } from '../domain/banner';
-import { progress } from '../domain/doses';
-import { readMedsDay } from '../domain/medications';
+import { progress, tileNote } from '../domain/doses';
+import { readMedsDay, type MedsDay } from '../domain/medications';
 import { readDay, type DayView } from '../domain/day';
 import { loadTargets, standing, type Targets } from '../domain/targets';
 import { weightsSince, byDay } from '../domain/weight';
 import { Banner } from './Banner';
-import { Code, Cutlery, Flame, Pill, Scale, Stethoscope } from './bits';
+import { Bubble, Code, Cutlery, Flame, Pill, Scale } from './bits';
 import type { Screen } from '../App';
 
 /**
  * Today's medicines in four numbers and a few names, for the banner. From the
- * Meds screen's own plan, so the card and the screen cannot disagree. A
- * failure here costs the card, never the home screen.
+ * Meds screen's own plan, so the card and the screen cannot disagree.
  */
-async function medsGlance(): Promise<MedsGlance | null> {
-  const plan = await readMedsDay();
+function medsGlance(plan: MedsDay): MedsGlance | null {
   const doses = plan.groups.flatMap((g) => g.doses);
   if (doses.length === 0 && !plan.episode) return null;
   const dueNames = doses
@@ -50,6 +48,8 @@ export function Home({
   const [day, setDay] = useState<DayView | null>(null);
   const [targets, setTargets] = useState<Targets | null>(null);
   const [cards, setCards] = useState<Phrase[]>([]);
+  /** Under "Track meds". Null until read; empty if the read failed. */
+  const [medsNote, setMedsNote] = useState<string | null>(null);
   /**
    * Ticks once a minute, only so the banner can notice midnight while the
    * screen is open. Cheap, and the alternative is a line about "today" that
@@ -74,7 +74,12 @@ export function Home({
       const focus = focusDay(now, todayView.items.length);
       const view = focus.lookingBack ? await readDay(focus.dayStart) : todayView;
       const recent = byDay(await weightsSince(now - 30 * 86_400_000));
-      const meds = await medsGlance().catch(() => null);
+      // One read of the day's plan feeds both the banner card and the tile,
+      // so they cannot disagree. A failure costs those two lines, never the
+      // home screen.
+      const plan = await readMedsDay().catch(() => null);
+      const meds = plan ? medsGlance(plan) : null;
+      setMedsNote(plan ? tileNote(plan) : '');
 
       setCards(
         deck({
@@ -147,10 +152,10 @@ export function Home({
 
       <div className="grid2">
         <button className="tile" onClick={() => go('doctor')}>
-          <Stethoscope />
+          <Bubble />
           <div>
-            <div className="name">Doctor</div>
-            <div className="note">Ask about your week</div>
+            <div className="name">Ask Mealo</div>
+            <div className="note">Ask about your records</div>
           </div>
         </button>
 
@@ -166,7 +171,7 @@ export function Home({
           <Pill />
           <div>
             <div className="name">Track meds</div>
-            <div className="note">Pharmacist</div>
+            <div className="note">{medsNote ?? '\u2026'}</div>
           </div>
         </button>
 

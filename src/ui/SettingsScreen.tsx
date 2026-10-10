@@ -295,8 +295,7 @@ export function SettingsScreen({
         </div>
         {showOutbound && outbound.length === 0 && (
           <p className="muted small">
-            Nothing sent yet this session. Ask the Doctor something and come
-            back.
+            Nothing sent yet this session. Ask Mealo something and come back.
           </p>
         )}
         {showOutbound &&

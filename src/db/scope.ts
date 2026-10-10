@@ -1,9 +1,9 @@
 /**
  * Per-agent table access, enforced in code.
  *
- * The product idea is three agents with asymmetric access: the Doctor sees
- * everything, the Nutritionist and Pharmacist each own their own tables and can
- * read only one thing from the Doctor — `current_state`.
+ * The product idea is three agents with asymmetric access: Ask Mealo sees
+ * everything, Thali and Dawa each own their own tables and can
+ * read only one thing from Ask Mealo — `current_state`.
  *
  * SQLite has no row-level security and every agent runs in the same process, so
  * that boundary has to live somewhere. It lives here. An agent asking for a
@@ -20,6 +20,19 @@
 import { activeProfile } from '../lib/active-profile';
 import { bulkInsert, insert, query, run, softDelete, update } from './client';
 
+/**
+ * Internal ids, never shown to anyone. What people see, since Oct 2026:
+ *
+ *   doctor        Ask Mealo   the one AI chat
+ *   nutritionist  Thali       meals, plain code
+ *   pharmacist    Dawa        medicines, plain code
+ *
+ * The job titles left the screen because each claims an authority the app
+ * does not have, and pharmacist is a licensed profession. The ids stay
+ * because `messages.agent` has carried a CHECK on these three words since v1
+ * and they key the thread summaries ("<profile>:doctor"): renaming them means
+ * rebuilding a table and rewriting chat history, for a word nobody reads.
+ */
 export type Agent = 'doctor' | 'nutritionist' | 'pharmacist';
 
 type Scope = { read: readonly string[]; write: readonly string[] };
@@ -111,8 +124,8 @@ export const SCOPES: Record<Agent, Scope> = {
       'medications',
       'intake_events',
       'med_doses',
-      // Which sickness is running decides which medicines are due, so the
-      // Pharmacist owns it. The Doctor still reads it, as it reads everything.
+      // Which sickness is running decides which medicines are due, so
+      // Dawa owns it. Ask Mealo still reads it, as it reads everything.
       'sick_episodes',
       'med_products',
       'med_product_ingredients',
@@ -137,11 +150,11 @@ export const SCOPES: Record<Agent, Scope> = {
       'food_portions',
       'food_aliases',
       'current_state',
-      // Read, never written. Weight is a body measurement, so the Doctor owns
-      // it; the Nutritionist sees it because the home banner speaks in its
+      // Read, never written. Weight is a body measurement, so Ask Mealo owns
+      // it; Thali sees it because the home banner speaks in its
       // voice and a trend is part of how a day reads.
       'weights',
-      // Same: the Doctor owns what the body did, the Nutritionist may read it
+      // Same: Ask Mealo owns what the body did, Thali may read it
       // when asked about a day. Read access here is not permission for the
       // banner to bring it up — the banner is a pure function in
       // domain/banner.ts and composes no burn card, deliberately. And it is
@@ -173,7 +186,7 @@ export const SCOPES: Record<Agent, Scope> = {
  * because of what the failure would look like rather than how likely it is: a
  * missing `profile_id` in a WHERE clause does not crash, does not look wrong in
  * review, and does not show up in testing with one profile. It shows up as one
- * person's meals appearing in the other's day, and as the Doctor advising him
+ * person's meals appearing in the other's day, and as Ask Mealo advising him
  * about her symptoms. There is no safe default to fall back on, so the query
  * fails instead.
  */

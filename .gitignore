@@ -47,5 +47,9 @@ Development_report.md
 # names the two of us and is about him, not the code.
 mealo_prompt.md
 
+# What Upendra has approved for making the app smart, and why — including the
+# resume and the liability worry. Planning notes about him, not code.
+/Approved Ideas.md
+
 # wrangler dev --local keeps its miniflare state (the local D1) here
 .wrangler

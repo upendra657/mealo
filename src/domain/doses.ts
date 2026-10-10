@@ -3,10 +3,10 @@
  * and the one function that decides what is due on a day.
  *
  * Pure — no database, no clock read anywhere but the defaults. The Meds screen
- * and the Doctor's slice both need "what is this person taking today", and
+ * and Ask Mealo's slice both need "what is this person taking today", and
  * they read through different agents' handles, so the deciding is done here
  * once and both feed it their own rows. Two copies of that rule would drift,
- * and the drift would be the Doctor thinking a finished course of antibiotics
+ * and the drift would be Ask Mealo thinking a finished course of antibiotics
  * is still running.
  */
 
@@ -492,10 +492,31 @@ export type DayPlan<M extends PlanMed> = {
   /** Medicines from before dose slots, shown as written until given some. */
   unscheduled: M[];
   /** Being taken, but not due on this day — a weekly medicine on a Tuesday.
-      Not on the screen, which shows only what is due; the Doctor still needs
+      Not on the screen, which shows only what is due; Ask Mealo still needs
       to know it is being taken. */
   notToday: { med: M; doses: PlanDose[] }[];
 };
+
+/**
+ * The line under "Track meds" on Home: how far through today's doses.
+ *
+ * Counts taken only. A skipped dose is answered, and the banner's "ticked
+ * off" rightly includes it, but "3 of 4 taken" must not say a medicine was
+ * taken when the person said it was not.
+ *
+ * With nothing due there are two different days: no medicines at all, and
+ * medicines that simply do not fall today (a weekly one on a Tuesday, or the
+ * regular ones set aside while a sickness runs).
+ */
+export function tileNote<M extends PlanMed>(plan: DayPlan<M>): string {
+  const doses = plan.groups.flatMap((g) => g.doses);
+  if (doses.length > 0) {
+    const taken = doses.filter((p) => p.state === 'taken').length;
+    return `${taken} of ${doses.length} taken`;
+  }
+  const any = plan.paused.length + plan.unscheduled.length + plan.notToday.length > 0;
+  return any ? 'Nothing due today' : 'No medicines yet';
+}
 
 /** The schedule a dose row carries. */
 export function scheduleOfDose(d: PlanDose): Schedule {
