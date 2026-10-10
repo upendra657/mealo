@@ -28,7 +28,7 @@ import {
 } from '../../src/domain/foods';
 import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
-import { collectFacts, renderSlice } from '../../src/domain/state';
+import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
   burnOn,
@@ -192,11 +192,24 @@ async function main() {
     JSON.stringify(items.map((i) => i.net_weight_g)),
   );
 
-  // ---- what the Doctor sees ---------------------------------------------
+  // ---- what Ask Mealo sees ---------------------------------------------
   step('slice');
   const slice = renderSlice(await collectFacts());
   check('slice names the dish', slice.toLowerCase().includes('dal tadka'), slice);
   check('slice carries the weight', /\(\d+g\)/.test(slice), slice);
+
+  // Two refreshes at once, before any row exists: what the dev server does
+  // the first time the chat opens. The second used to fail on the primary key.
+  const both = await Promise.allSettled([refreshCurrentState(), refreshCurrentState()]);
+  check('two refreshes at once both succeed', both.every((r) => r.status === 'fulfilled'),
+    both.map((r) => (r.status === 'rejected' ? String(r.reason) : 'ok')).join(' | '));
+  const stateRows = await query<{ id: string; summary: string }>('SELECT id, summary FROM current_state');
+  check('and leave one row, for this profile', stateRows.length === 1 && stateRows[0].id === PRIMARY_PROFILE,
+    JSON.stringify(stateRows.map((r) => r.id)));
+  check('holding the slice', stateRows[0]?.summary === renderSlice(await collectFacts()));
+  await refreshCurrentState();
+  const stateAfter = await query<{ n: number }>('SELECT COUNT(*) AS n FROM current_state');
+  check('a later refresh updates that row rather than adding one', Number(stateAfter[0].n) === 1, String(stateAfter[0].n));
 
   // ---- the boundary still holds -----------------------------------------
   let threw = false;
@@ -674,7 +687,7 @@ async function main() {
     }
     check('an unfiltered read of burns throws too', burnThrew);
 
-    // The Nutritionist may read it when asked about a day, and may not write.
+    // Thali may read it when asked about a day, and may not write.
     let nutWrote = false;
     try {
       await scopedDb('nutritionist').insert('burns', { kcal: 1, measured_at: morning });

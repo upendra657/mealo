@@ -8,8 +8,8 @@
  *
  * Two things this function is careful about:
  *
- *   1. It is written by the Doctor and read by everyone. The Nutritionist and
- *      Pharmacist see this summary and never the symptom log behind it.
+ *   1. It is written by Ask Mealo and read by everyone. Thali and
+ *      Dawa see this summary and never the symptom log behind it.
  *
  *   2. Its output is what crosses the network to a model provider, so it
  *      carries no name, no identifier, no timestamps finer than a day, and no
@@ -90,7 +90,7 @@ function daysAgo(ts: number): number {
 export async function collectFacts(): Promise<StateFacts> {
   const me = activeProfile();
 
-  // The same plan the Meds screen draws, from the Doctor's own reads. Not
+  // The same plan the Meds screen draws, from Ask Mealo's own reads. Not
   // "every row not stopped": a finished course of antibiotics is not stopped,
   // it is over, and a regular supplement paused for a fever is not being taken.
   const today = medDay();
@@ -436,11 +436,11 @@ export function deriveFlags(facts: StateFacts): string[] {
 }
 
 /**
- * Recompute and store. Only the Doctor may call this — scope enforces it.
+ * Recompute and store. Only Ask Mealo may call this — scope enforces it.
  *
  * One row per profile, keyed by the profile id. `current_state` is the only
  * thing the other two agents can read about the person's condition, so mixing
- * two people into one row would put her symptoms in front of his Nutritionist.
+ * two people into one row would put her symptoms in front of his Thali.
  */
 export async function refreshCurrentState(): Promise<CurrentState> {
   const me = activeProfile();
@@ -448,25 +448,29 @@ export async function refreshCurrentState(): Promise<CurrentState> {
   const summary = renderSlice(facts);
   const flags = JSON.stringify(deriveFlags(facts));
 
-  const existing = await db.query<CurrentState>(
-    'SELECT * FROM current_state WHERE id = ?',
-    [me],
+  // One statement rather than "look, then insert or update". Two refreshes
+  // started together both looked, both found no row, and the second insert
+  // failed on the primary key. The dev server does exactly that the first
+  // time the chat opens for a profile, because StrictMode runs the mount
+  // effect twice; the built app runs it once, so the phones never saw it.
+  const updated_at = Date.now();
+  await db.run(
+    `INSERT INTO current_state (id, summary, flags, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         summary = excluded.summary,
+         flags = excluded.flags,
+         updated_at = excluded.updated_at`,
+    [me, summary, flags, updated_at],
   );
 
-  if (existing[0]) {
-    await db.update('current_state', me, { summary, flags });
-  } else {
-    await db.insert('current_state', { id: me, summary, flags });
-  }
-
-  return { id: me, summary, flags, updated_at: Date.now() };
+  return { id: me, summary, flags, updated_at };
 }
 
 /**
  * What the other two agents read.
  *
  * Note the scope: nutritionist and pharmacist have `current_state` in their
- * read list and nothing else of the Doctor's. If this returns null they get
+ * read list and nothing else of Ask Mealo's. If this returns null they get
  * nothing — they do not fall back to reading the tables themselves, because
  * they cannot.
  */
