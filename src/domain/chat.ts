@@ -125,6 +125,13 @@ export function figuresFor(
     return { title: 'Last 7 days', cells };
   }
 
+  // "What did I eat yesterday?" has "eat" in it and is not about today. It
+  // got today's table on Upendra's phone, over an answer about yesterday.
+  // Any other day named means no table: the app has today's figures and the
+  // week's ready, and a table for the wrong day is worse than none.
+  if (/\b(?:yesterday|tomorrow|last night|day before|days? ago|ago|last (?:mon|tue|wed|thu|fri|sat|sun)\w*|on (?:mon|tue|wed|thu|fri|sat|sun)\w*|\d{1,2}(?:st|nd|rd|th)? (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*)\b/.test(q)) {
+    return null;
+  }
   if (/\b(?:today|so far|eaten|ate|eat)\b/.test(q)) {
     if (facts.mealsToday.length === 0) return null;
     const t = facts.todayTotals;
@@ -151,6 +158,60 @@ export function figuresNote(f: Figures): string {
     'If you mention one of these figures, give it exactly as it is here.'
   );
 }
+
+// ------------------------------------------------- said, not asked
+//
+// "I just had 2 roti and dal" is not a question, and on 11 Oct 2026 a model
+// given it answered "Meals logged: 2 roti and dal." with nothing logged. It
+// had a tool for showing the meal card and did not call it. Whether a meal
+// gets its card cannot hang on a model choosing to help, so the app reads
+// these two kinds of sentence itself, as it reads a request for a report,
+// and opens the card with no model involved. It works with no key at all.
+
+/** A question is for answering, never for logging. */
+const ASKS = /\?\s*$|^(?:what|how|why|when|which|who|where|did|do|does|is|are|was|were|can|could|should|would|will|shall|may|have i|has|tell me|show me|explain)\b/i;
+const LEAD = '(?:(?:ok|okay|so|hey|hi|well|also|and|oh|update|fyi)[,:.]?\\s+)*';
+
+/**
+ * The food in a sentence that says something was eaten, or null.
+ *
+ * "I just had 2 roti and dal" gives "2 roti and dal". The caller still has
+ * to find a dish in it before treating it as a meal: "I had a headache" has
+ * the same shape, and only the food table can tell them apart.
+ */
+export function mealStatement(text: string): string | null {
+  const t = text.trim().replace(/\s+/g, ' ');
+  if (!t || ASKS.test(t)) return null;
+  const said =
+    new RegExp(`^${LEAD}(?:i(?:'ve| have)?\\s+)?(?:just\\s+|already\\s+|only\\s+)*(?:had|ate|eaten|have eaten|finished|drank|drunk|am having|'m having|having|khaya|kha liya|khayi)\\s+(.+)$`, 'i').exec(t) ??
+    new RegExp(`^${LEAD}for\\s+(?:breakfast|lunch|dinner|a snack|snack)[,]?\\s+(?:i\\s+)?(?:just\\s+)?(?:had|ate)\\s+(.+)$`, 'i').exec(t) ??
+    new RegExp(`^${LEAD}(?:please\\s+)?(?:log|add|record)\\s+(?:a\\s+meal|meal|my\\s+meal)?[:,]?\\s*(.+)$`, 'i').exec(t);
+  if (!said) return null;
+  const food = said[1]
+    .replace(/[.!]+$/, '')
+    .replace(/\s+(?:for|at|as|to|in)\s+(?:my\s+)?(?:breakfast|lunch|dinner|snack|a snack|meals?)\b.*$/i, '')
+    .replace(/\s+(?:just now|right now|today|this morning|this afternoon|this evening|tonight|a while ago|earlier)$/i, '')
+    .trim();
+  return food.length >= 2 ? food : null;
+}
+
+/** "I took my morning medicines", "skipped my tablets": the doses card, not a model. */
+export function doseStatement(text: string): boolean {
+  const t = text.trim().replace(/\s+/g, ' ');
+  if (!t || ASKS.test(t)) return false;
+  return new RegExp(
+    `^${LEAD}(?:i(?:'ve| have)?\\s+)?(?:just\\s+|already\\s+)*(?:took|taken|have taken|had|skipped|missed|le li|kha li)\\s+(?:my\\s+|the\\s+|all\\s+(?:of\\s+)?(?:my\\s+)?)?(?:(?:morning|afternoon|evening|night|today'?s)\\s+)?(?:medicines?|medications?|meds|tablets?|pills?|doses?|dawa|dawai|goli)\\b`,
+    'i',
+  ).test(t);
+}
+
+/**
+ * What the model is told when someone says they ate something the food
+ * table does not have. Without it the model fills the gap, and the gap it
+ * filled on 11 Oct was "Meals logged".
+ */
+export const NOTHING_LOGGED =
+  'The person says they ate something. The app could not find it in their food table, so NOTHING has been logged. Do not say or imply that anything was logged, saved or recorded. Tell them plainly that it is not in their food table yet, and that they can add the dish in Track meals and then log it.';
 
 // ------------------------------------------------------------- elaborate
 //
@@ -334,6 +395,17 @@ export function mealSummary(items: { food: unknown | null; energy_kcal: number |
         ? 'None of this is in your food table yet. Add the dish in Track meals first.'
         : `${unknown === 1 ? 'One dish is' : `${unknown} dishes are`} not in your food table and will not be logged.`;
   return { known: known.length, unknown, kcal, action, hint };
+}
+
+/**
+ * The receipt for a meal logged from the chat, written from the rows read
+ * back out of Track meals after the save. "In Track meals" is a claim about
+ * the record, so it is made from the record. If fewer dishes are there than
+ * the card set out to save, it says that instead of a tidy total.
+ */
+export function storedReceipt(slotLabel: string, stored: number, kcal: number, meant: number): string {
+  if (stored !== meant) return `Check Track meals \u00b7 ${stored} of ${plural(meant, 'dish', 'dishes')} saved to ${slotLabel.toLowerCase()}`;
+  return `In Track meals \u00b7 ${slotLabel} \u00b7 ${plural(stored, 'dish', 'dishes')} \u00b7 ${kcal.toLocaleString('en-US')} Cal`;
 }
 
 export function mealReceipt(slotLabel: string, dishes: number, kcal: number): string {

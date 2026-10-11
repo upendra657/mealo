@@ -20,7 +20,7 @@ import {
   dosesAction,
   dosesReceipt,
   entryTime,
-  mealReceipt,
+  storedReceipt,
   mealSummary,
   nextMark,
   PILLS,
@@ -29,7 +29,7 @@ import {
   type Pill,
 } from '../domain/chat';
 import { timeLabel, type PlannedDose } from '../domain/doses';
-import { deleteMeal, draftFromText, saveMeal, type DraftItem } from '../domain/meals';
+import { deleteMeal, draftFromText, itemsFor, saveMeal, type DraftItem } from '../domain/meals';
 import { describeMeasure } from '../domain/measures';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
 import { guessSlot, slot } from '../domain/slots';
@@ -50,6 +50,8 @@ export type FlowProps = {
   /** Something was written or taken back; the caller re-reads the record. */
   onWrote: () => void;
   onAddDish: () => void;
+  /** Open Track meals, where what was just logged can be seen. */
+  onView?: () => void;
   /**
    * Symptom only: the row already written, when the words were an emergency.
    * The caller writes it, in the tap that sent the words, never this
@@ -81,7 +83,7 @@ const ToConfirm = () => (
 );
 
 /** What a confirmed card leaves behind. Undo takes the write back, once. */
-function Receipt({ text, onUndo }: { text: string; onUndo: () => Promise<void> }) {
+function Receipt({ text, onUndo, onView }: { text: string; onUndo: () => Promise<void>; onView?: () => void }) {
   const [undone, setUndone] = useState(false);
   return (
     <div className="am-rcpt" data-undone={undone ? '1' : undefined}>
@@ -91,6 +93,11 @@ function Receipt({ text, onUndo }: { text: string; onUndo: () => Promise<void> }
         </span>
       )}
       <span className="grow">{undone ? `Undone: ${text.charAt(0).toLowerCase()}${text.slice(1)}` : text}</span>
+      {!undone && onView && (
+        <button className="am-rcpt-undo" onClick={onView}>
+          View
+        </button>
+      )}
       {!undone && (
         <button
           className="am-rcpt-undo"
@@ -108,7 +115,7 @@ function Receipt({ text, onUndo }: { text: string; onUndo: () => Promise<void> }
 
 // ------------------------------------------------------------------ a meal
 
-export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish }: FlowProps) {
+export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish, onView }: FlowProps) {
   const [draft, setDraft] = useState<DraftItem[] | null>(null);
   const [done, setDone] = useState<{ mealId: string; text: string } | null>(null);
   const [now] = useState(() => new Date());
@@ -128,6 +135,7 @@ export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish }: F
     return (
       <Receipt
         text={done.text}
+        onView={onView}
         onUndo={async () => {
           await deleteMeal(done.mealId);
           onWrote();
@@ -195,7 +203,12 @@ export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish }: F
                       mealType: where.id,
                       eatenAt: now.getTime(),
                     });
-                    setDone({ mealId, text: mealReceipt(where.label, sum.known, sum.kcal) });
+                    // The receipt is written from what Track meals now
+                    // holds, read back, not from what the card meant to
+                    // save. If the two ever differ the receipt says so.
+                    const stored = await itemsFor([mealId]);
+                    const kcal = Math.round(stored.reduce((n, i) => n + (i.energy_kcal ?? 0), 0));
+                    setDone({ mealId, text: storedReceipt(where.label, stored.length, kcal, known.length) });
                     onWrote();
                   }}
                 >

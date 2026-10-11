@@ -15,7 +15,8 @@
  * apostrophes, misspelt, in Hinglish, wrapped in excuses.
  */
 
-import { answerBlocks, canElaborate, ELABORATE, entriesFrom, figuresFor } from '../src/domain/chat';
+import { answerBlocks, canElaborate, doseStatement, ELABORATE, entriesFrom, figuresFor, mealStatement, NOTHING_LOGGED, storedReceipt } from '../src/domain/chat';
+import { checkClaims, dishesIn, NOT_SAVED } from '../src/safety/claims';
 import { reportRequest } from '../src/domain/export';
 import { filterDoses, R2_MUST_BLOCK, R2_MUST_KEEP } from '../src/safety/dosefilter';
 import {
@@ -1101,6 +1102,81 @@ section('Symptom history: counted by label');
   check('nothing logged, nothing counted', countByLabel([]), []);
 }
 
+// ===================================== said, not asked: read by the app
+
+section('"I just had...": the app opens the card, not the model');
+{
+  check('his own sentence', mealStatement('I just had 2 roti and dal'), '2 roti and dal');
+  const eats: [string, string][] = [
+    ['i had 2 roti and 1 katori dal tadka', '2 roti and 1 katori dal tadka'], ['just ate a banana', 'a banana'], ['I ate poha for breakfast', 'poha'],
+    ["I've had 2 egg omelette with cheese", '2 egg omelette with cheese'], ['had dal and rice for lunch today', 'dal and rice'], ['ate 2 idli', '2 idli'],
+    ['ok so i just had a bowl of curd.', 'a bowl of curd'], ['for dinner I had paneer bhurji and 3 roti', 'paneer bhurji and 3 roti'], ['I drank 1 cup milk', '1 cup milk'],
+    ['having 2 slices of toast', '2 slices of toast'], ['log 2 roti and dal', '2 roti and dal'], ['add 1 bowl poha to breakfast', '1 bowl poha'],
+    ['log a meal: rajma chawal', 'rajma chawal'], ['I already had lunch, dal and 2 roti', 'lunch, dal and 2 roti'], ['i have eaten 1 plate biryani', '1 plate biryani'],
+    ['finished 1 katori sambar just now', '1 katori sambar'], ['2 roti khaya', null as unknown as string],
+  ];
+  for (const [said, food] of eats) check(`eaten: ${said}`, mealStatement(said), food);
+  for (const q of ['What did I eat yesterday?', 'what have i eaten today', 'did I have dal yesterday', 'how much protein did I have', 'I had 2 roti and dal, is that enough protein?',
+    'should I have eaten more', 'can i have curd at night', 'Elaborate on that', 'how has my week looked so far?', 'is dal a good source of protein', '', '   ', 'had', 'I had']) {
+    check(`not a meal to log: ${JSON.stringify(q)}`, mealStatement(q), null);
+  }
+  // Same shape, not food. The screen decides by looking the words up in the
+  // food table; this only has to hand them over.
+  check('"I had a headache" is handed over like any other', mealStatement('I had a headache since morning'), 'a headache since morning');
+  check('and reads as a symptom when no dish is found', suggestLabel('I had a headache since morning'), 'Headache');
+
+  for (const d of ['I took my morning medicines', 'took my tablets', 'I have taken my meds', "i've taken all my medicines", 'just took my night dose', 'skipped my morning tablet', 'I missed my evening pills', 'ok i took my dawa', 'had my medicines']) {
+    check(`doses: ${d}`, doseStatement(d), true);
+  }
+  for (const d of ['did I take my morning medicines?', 'which doses are left today', 'should I take my tablet now', 'I took a walk', 'took my time over lunch', 'I had my lunch', 'my medicines are finished', 'what medicines am i on', '']) {
+    check(`not doses to tick: ${JSON.stringify(d)}`, doseStatement(d), false);
+  }
+  // A dose question that must be stopped is stopped before this is ever read.
+  check('"missed my dose, what now" is the gate\'s, and the gate comes first', gateOf('i missed my morning dose, what should i do'), 'medicine-change');
+  check('the model is told nothing was logged', [NOTHING_LOGGED.includes('NOTHING has been logged'), NOTHING_LOGGED.includes('Do not say or imply')], [true, true]);
+  check('the receipt is what Track meals holds', storedReceipt('Lunch', 2, 298, 2), 'In Track meals · Lunch · 2 dishes · 298 Cal');
+  check('and says so when it holds less than the card meant', storedReceipt('Lunch', 1, 170, 2), 'Check Track meals · 1 of 2 dishes saved to lunch');
+}
+
+section('A table for today is not shown for another day');
+{
+  const facts = { nutrition7d: { daysLogged: 3, avgEnergy: 900, avgProtein: 30, avgFat: 30, avgCarbs: 110, avgFibre: 14 }, adherence7d: { taken: 0, skipped: 0, missed: 0 },
+    todayTotals: { energy: 858, protein: 28, fat: 31, carbs: 115, fibre: 15 }, mealsToday: [{ type: 'Dinner', time: '12:00', items: ['1 piece Boss Burrito Veg (446g)'], energy: 858, protein: 28, fat: 31, carbs: 115, fibre: 15 }] };
+  const none = { energy_kcal: 2200, protein_g: 135, fat_g: 70, carbs_g: 250, fibre_g: 30 };
+  check('his question about yesterday gets no table', figuresFor('What did I eat yesterday?', facts, none), null);
+  for (const q of ['what did i eat last night', 'what did i eat on monday', 'what did i eat 3 days ago', 'what did i eat the day before', 'what will i eat tomorrow', 'what did i eat on 9 oct']) {
+    check(`nor does: ${q}`, figuresFor(q, facts, none), null);
+  }
+  check('a question about today still does', figuresFor('What have I eaten today?', facts, none)?.title, 'Today so far');
+  check('and one about the week', figuresFor('how was my week', facts, none)?.title, 'Last 7 days');
+}
+
+section('Claims: a model cannot say something was saved');
+{
+  // The two answers from his phone, 11 Oct 2026.
+  const real = '**Meals logged**: Dinner at 12:00 pm – 1 piece Boss Burrito Veg (446 g)\n**Calories**: 858 kcal\n**Protein**: 27.7 g';
+  check('a true "Meals logged" line, naming a dish in the record, stays', checkClaims(real, ['Boss Burrito Veg']), { text: real, removed: [] });
+  check('the false one, naming nothing in the record, goes', checkClaims('**Meals logged**: 2 roti and dal.', ['Boss Burrito Veg']), { text: '', removed: ['**Meals logged**: 2 roti and dal.'] });
+  check('and with nothing in the record at all', checkClaims('Meals logged: 2 roti and dal.', []).removed.length, 1);
+  check('"dal" is too short to vouch for a line', checkClaims('Meals logged: 2 roti and dal.', ['dal']).removed.length, 1);
+  check('a longer dish name does vouch', checkClaims('Meals logged: 2 roti and dal tadka.', ['Dal Tadka']).removed.length, 0);
+  const gone = (t: string) => checkClaims(t, ['Boss Burrito Veg']).removed.length === 1;
+  for (const t of ["I've logged 2 roti and dal for you.", 'I have saved your meal.', 'I logged that as lunch.', 'I have added it to your food log.', 'Your meal has been logged.', 'It has been recorded.',
+    'Your lunch is now saved.', 'Successfully logged 2 roti and dal.', "I'll log that for you.", 'I will record this as dinner.', 'I have ticked your morning dose.', 'Logged it to your lunch.',
+    'Your symptom has been recorded.', 'Dose recorded: Calcium, morning.', '- **Meal logged**: roti and dal', 'Food added: paneer tikka', 'We have updated your record.', 'I have gone ahead and logged it.']) {
+    check(`removed: ${t}`, gone(t), true);
+  }
+  for (const t of ['You logged 3 meals this week.', 'Nothing has been logged today.', 'I cannot log meals; use the card below.', 'That meal was not recorded in the app.', "I haven't saved anything.",
+    'Meals are logged on 4 of 7 days.', 'You have logged bloating twice.', 'The app logs a meal when you press the button.', 'Your record shows dinner at 12:00 pm.', 'Protein is the gap this week.',
+    'I have put a card below for you to confirm.', 'Nothing is saved until you press the button.', 'No doses were recorded yesterday.']) {
+    check(`kept: ${t}`, gone(t), false);
+  }
+  check('one false line loses that line, not the answer', checkClaims('Here is your day.\nMeals logged: 2 roti and dal.\nYou are under your protein target.', []),
+    { text: 'Here is your day.\nYou are under your protein target.', removed: ['Meals logged: 2 roti and dal.'] });
+  check('what the screen says', [NOT_SAVED.includes('Nothing was'), NOT_SAVED.includes('only by the button on a card')], [true, true]);
+  check('dish names are read out of a tool result', dishesIn({ meals: [{ dishes: [{ dish: 'Rajma', calories: 320 }, { dish: 'Rice' }] }], top: { calories: [{ dish: 'Dal tadka' }] }, note: 'x' }), ['Rajma', 'Rice', 'Dal tadka']);
+}
+
 // ================================================= the numbers check
 
 section('Numbers: a figure must be one the app gave');
@@ -1176,7 +1252,8 @@ section('The loop: lookups, a cap, and a model that will not take tools');
 
   const greedy = scripted([reply('', [call('x', 'thali_summary', { days: 7 })])]);
   const r3 = await chatWithTools(greedy.ask, base);
-  check('a model that only ever asks for tools is cut off', [MAX_TOOL_STEPS, r3.requests, r3.runs.length], [3, 4, 3]);
+  // Three rounds of lookups, the request with no tools, and the one nudge for having said nothing.
+  check('a model that only ever asks for tools is cut off', [MAX_TOOL_STEPS, r3.requests, r3.runs.length], [3, 5, 3]);
   check('the last request offers no tools, so it has to answer', [greedy.seen.slice(0, 3).every((o) => !!o.tools?.length), greedy.seen[3].tools], [true, undefined]);
 
   const none = scripted([reply('Hello.')]);
@@ -1205,6 +1282,15 @@ section('The loop: lookups, a cap, and a model that will not take tools');
     threw = e instanceof Error ? e.message : String(e);
   }
   check('nor is a server error', threw, 'Server error');
+  // A real model, 11 Oct 2026: a lookup, then no words at all.
+  const silent = scripted([reply('', [call('s1', 'thali_day', { days_ago: 1 })]), reply(''), reply('Dinner: one Boss Burrito Veg.')]);
+  const r7 = await chatWithTools(silent.ask, base);
+  check('a lookup answered with silence is asked once more, without tools', [r7.text, r7.requests, silent.seen[2].tools, silent.seen[2].messages[silent.seen[2].messages.length - 1].role],
+    ['Dinner: one Boss Burrito Veg.', 3, undefined, 'system']);
+  const mute = scripted([reply('', [call('s2', 'thali_day', { days_ago: 1 })]), reply(''), reply('')]);
+  check('but only once', [(await chatWithTools(mute.ask, base)).requests, mute.seen.length], [3, 3]);
+  const quiet = scripted([reply('')]);
+  check('silence with no lookup is not retried', [(await chatWithTools(quiet.ask, base)).requests, quiet.seen.length], [1, 1]);
   const noTools = scripted([reply('Plain.')]);
   check('with no tools to offer, none are sent', [(await chatWithTools(noTools.ask, { ...base, tools: [] })).text, noTools.seen[0].tools], ['Plain.', undefined]);
 }

@@ -90,6 +90,7 @@ export async function chatWithTools(
   const messages = [...opts.messages];
   const runs: ToolRun[] = [];
   let requests = 0;
+  let asked = false;
 
   for (let step = 0; ; step++) {
     // Past the cap the tools are withheld: the model has what it asked for
@@ -110,7 +111,22 @@ export async function chatWithTools(
       throw e;
     }
 
-    if (!offer || res.toolCalls.length === 0) return { text: res.text, runs, requests, withoutTools: false };
+    if (!offer || res.toolCalls.length === 0) {
+      // Words did not come back, after lookups that did. Seen on a real
+      // model on 11 Oct 2026: it called a tool, was sent the result, and
+      // answered with nothing, most likely having spent its allowance
+      // thinking. The lookups are already paid for, so it is asked once
+      // more, with no tools, to say the answer. Once: a model that stays
+      // silent twice will stay silent a third time.
+      if (res.text.trim() === '' && runs.length > 0 && !asked) {
+        asked = true;
+        messages.push({ role: 'system', content: 'You returned no words. Answer the person now, briefly, from the data above.' });
+        requests++;
+        const again = await ask({ messages, temperature, maxTokens });
+        return { text: again.text, runs, requests, withoutTools: false };
+      }
+      return { text: res.text, runs, requests, withoutTools: false };
+    }
 
     messages.push({ role: 'assistant', content: res.text ?? '', tool_calls: res.toolCalls });
     for (const call of res.toolCalls) {

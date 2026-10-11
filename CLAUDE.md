@@ -30,7 +30,7 @@ npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
 npm run test:portions  # 846 pure-logic assertions, node, fast
-npm run test:safety    # 1017 assertions: the gates, the tools, the numbers check, the lookup loop, AI insights
+npm run test:safety    # 1124 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
 npm run test:e2e       # 407 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -152,6 +152,16 @@ to the model under a line saying it is data and never instructions, because
 a dish can be named anything. `safety/numbers.ts` then removes any sentence
 of the answer whose figure is in nothing the model was given, and the screen
 says so.
+
+**Whether something gets logged never depends on a model choosing to help.**
+A real model, given "I just had 2 roti and dal" and a tool for the meal
+card, ignored the tool and answered "Meals logged" with nothing logged
+(11 Oct 2026). So the app reads those sentences itself (`mealStatement`,
+`doseStatement` in `domain/chat.ts`) and opens the card with no model,
+looking the words up in the food table first. `safety/claims.ts` removes any
+sentence in which a model says it saved something, and keeps a "Meals
+logged" line only if it names a dish the record holds. A meal's receipt is
+written from the rows read back out of Track meals after the save.
 
 **Portions.** A dish carries weighed anchors `(measure, quantity, net_weight_g)`
 with macros per 100 g; other measures derive through implied density. A

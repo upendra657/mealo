@@ -45,8 +45,11 @@ import {
   ELABORATE,
   entriesFrom,
   entryTime,
+  doseStatement,
   figuresFor,
   figuresNote,
+  mealStatement,
+  NOTHING_LOGGED,
   PILLS,
   TRY_ASKING,
   type Entry,
@@ -68,6 +71,8 @@ import { collectExport, type ExportInput } from '../domain/export';
 import { pairsOf, runTool, toolLabel, TOOLS, type OpenReport, type ProposedCard } from '../domain/tools';
 import { chatWithTools } from '../llm/toolloop';
 import { checkNumbers, numbersIn, numbersOf, removedNote } from '../safety/numbers';
+import { checkClaims, dishesIn, NOT_SAVED } from '../safety/claims';
+import { draftFromText } from '../domain/meals';
 
 /**
  * One use of a pill, in the thread beside the questions. Held in this
@@ -318,6 +323,37 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       return;
     }
 
+    // Said, not asked. "I just had 2 roti and dal" and "I took my morning
+    // medicines" open their card here, in code, with no model: a model given
+    // the first sentence once answered that the meal was logged when it was
+    // not. The meal card only opens when the food table has a dish for the
+    // words; "I had a headache" has the same shape and becomes a symptom
+    // card instead.
+    let unlogged = false;
+    const ate = mealStatement(text);
+    const card = (pill: Pill, said: string | null, what: string) =>
+      setThread((t) => [
+        ...t,
+        { kind: 'note', id: nextId.current++, text: `Read by the app as ${what} \u00b7 not sent to any AI` },
+        { kind: 'flow', pill, id: nextId.current++, at: Date.now(), said, savedId: null },
+      ]);
+    if (ate) {
+      if ((await draftFromText(ate)).some((d) => d.food !== null)) {
+        card('meal', ate, 'a meal');
+        return;
+      }
+      if (suggestLabel(text)) {
+        card('symptom', text, 'a symptom');
+        return;
+      }
+      // Food the table does not have. The model answers, and is told in so
+      // many words that nothing was logged.
+      unlogged = true;
+    } else if (doseStatement(text) && dueNow) {
+      card('doses', null, 'doses taken');
+      return;
+    }
+
     // A request for a report is read by code and opens the sheet filled in.
     // After the red flags, before any model: making a file needs neither a
     // provider nor a request, and the person still sees the dates and
@@ -370,7 +406,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       const messages = await buildContext({
         agent: 'doctor',
         systemPrompt: SYSTEM_PROMPT,
-        stateSlice: [freshSlice, figures && figuresNote(figures)].filter(Boolean).join('\n\n') || null,
+        stateSlice: [freshSlice, figures && figuresNote(figures), unlogged && NOTHING_LOGGED].filter(Boolean).join('\n\n') || null,
         userMessage: text,
       });
       // Each period is read once per question, however many tools ask for it.
@@ -397,7 +433,11 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         temperature: 0.3,
         // The long answer is asked for, so it is given room; the first one
         // is a summary and 700 has always been enough for it.
-        maxTokens: text === ELABORATE ? 1200 : 700,
+        // Raised from 700 and 1,200 on 11 Oct 2026. A model that thinks
+        // before it speaks spends this allowance on the thinking, and after
+        // a lookup it came back with no words at all. Only what is used is
+        // paid for.
+        maxTokens: text === ELABORATE ? 2500 : 1500,
       });
       if (open) setSheet({ open: true, ...(open as OpenReport) });
 
@@ -428,7 +468,17 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
           ...loop.runs.flatMap((r) => pairsOf(r.result)),
         ],
       });
-      const reply = checked.text || (checked.removed.length ? 'The app removed this answer: the figures in it were not in your records. Please ask again.' : '(empty response)');
+      // And the claims: a model here cannot save, so it may not say it did,
+      // and a "Meals logged" line stays only if the record holds that meal.
+      const eatenNames = freshFacts.mealsToday.flatMap((m) => m.items.map((i) => i.replace(/^[\d.]+ \S+ /, '').replace(/ \(\d+g\)$/, '')));
+      const claims = checkClaims(checked.text, [...eatenNames, ...loop.runs.flatMap((r) => dishesIn(r.result))]);
+      const reply =
+        claims.text ||
+        (claims.removed.length
+          ? 'Nothing was saved. Use Log a meal below, or add the dish in Track meals first.'
+          : checked.removed.length
+            ? 'The app removed this answer: the figures in it were not in your records. Please ask again.'
+            : 'The model returned no words. Please ask again.');
       // What the app did on the way, said plainly above the answer: which
       // records it read for the model, and anything it took out.
       // Reading the record and putting a card on screen are different things
@@ -441,6 +491,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         lookedUp.length > 0 && `Looked up by the app \u00b7 ${labels(lookedUp)}`,
         putUp.length > 0 && `Put on screen by the app \u00b7 ${labels(putUp)}`,
         checked.removed.length > 0 && removedNote(checked.removed.length),
+        claims.removed.length > 0 && NOT_SAVED,
       ].filter((x): x is string => typeof x === 'string');
       if (notes.length) setThread((t) => [...t, ...notes.map((note) => ({ kind: 'note' as const, id: nextId.current++, text: note }))]);
       await appendMessage('doctor', 'assistant', reply);
@@ -611,6 +662,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
                   }}
                   onWrote={() => void refresh()}
                   onAddDish={() => go('log')}
+                  onView={() => go('day')}
                 />
               );
             })()
