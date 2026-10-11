@@ -16,8 +16,15 @@
  * person: the reads underneath go through the scoped database, which
  * refuses any query on a body table that does not name a profile.
  *
- * None of these writes anything. Tools that write (log a meal, tick a dose)
- * come with their confirmation card, and not before.
+ * None of these writes anything, and none ever will. The three "propose"
+ * tools are how a model starts an entry: each puts the app's own confirm
+ * card on screen, the same card the pills under the chat bar open, filled
+ * with the person's words. The card shows exactly what would be saved, and
+ * the person presses the button or does not. A model can ask for a card;
+ * only a tap can write. That is rule two of the four ("the AI suggests, the
+ * person confirms") built so that it cannot be broken from the model's side:
+ * there is no tool here that takes a dose amount, a target or a weight, so
+ * there is nothing for a model to fill in.
  *
  * Dates go out as whole days and times as a clock time, never a timestamp.
  */
@@ -68,13 +75,27 @@ export const TOOLS: ToolDef[] = [
   fn('symptom_log',
     'Symptoms logged over a period, each with its day and whether it is still open, in the person\'s own words.',
     { days: DAYS }, ['days']),
+  fn('propose_meal',
+    'Put a "log a meal" card on screen for the person to confirm, when they say they ate or drank something. Pass their own words for the food. The app matches the dishes and works out the calories; nothing is saved unless they press the button. Do not add dishes or amounts they did not say.',
+    { text: { type: 'string', description: 'What they said they had, in their words, e.g. "2 roti and 1 katori dal".' } }, ['text']),
+  fn('propose_doses',
+    'Put the "tick my doses" card on screen, listing the doses due now, when the person says they took or skipped their medicines. They tick each one themselves. Never say what to take or how much.',
+    {}),
+  fn('propose_symptom',
+    'Put a "log a symptom" card on screen for the person to confirm, when they describe how they feel and want it recorded. Pass their own words.',
+    { words: { type: 'string', description: 'The symptom in their words.' } }, ['words']),
   fn('prepare_report',
     'Open the report sheet for the person, already filled in. Use when they ask for a report or an export. You do not write the report: the app does, after the person has seen the dates and pressed the button.',
     { scope: { type: 'string', enum: ['meals', 'meds', 'full'] }, days: DAYS,
       for: { type: 'string', enum: ['human', 'ai'], description: '"human" for a report to read, "ai" for a file to give another AI.' } }, ['scope', 'days']),
 ];
 
-export type ToolName = 'thali_summary' | 'thali_day' | 'thali_before_symptom' | 'dawa_adherence' | 'weight_trend' | 'symptom_log' | 'prepare_report';
+export type ToolName =
+  | 'thali_summary' | 'thali_day' | 'thali_before_symptom' | 'dawa_adherence' | 'weight_trend' | 'symptom_log'
+  | 'propose_meal' | 'propose_doses' | 'propose_symptom' | 'prepare_report';
+
+/** A confirm card a tool asked for: which one, and the words to fill it with. */
+export type ProposedCard = { pill: 'meal' | 'doses' | 'symptom'; said: string | null };
 
 /** A request to open the report sheet: the one thing a tool asks the screen to do. */
 export type OpenReport = { scope: Scope; days: number; aud: 'human' | 'ai' };
@@ -220,7 +241,9 @@ export function symptomLog(x: ExportInput) {
   };
 }
 
-export type ToolOutcome = { result: unknown; open?: OpenReport };
+export type ToolOutcome = { result: unknown; open?: OpenReport; card?: ProposedCard };
+
+const CARD_SHOWN = 'A card is on screen under your answer. Nothing has been saved: the person saves it by pressing the button on the card, or cancels. Tell them that in one short line and say nothing about what the card will show.';
 
 /**
  * Run one tool call.
@@ -253,6 +276,20 @@ export async function runTool(name: string, args: Record<string, unknown>, read:
       return { result: weightTrend(await read(daysArg(args.days, 30))) };
     case 'symptom_log':
       return { result: symptomLog(await read(daysArg(args.days, 30))) };
+    case 'propose_meal': {
+      const text = typeof args.text === 'string' ? args.text.trim().slice(0, 300) : '';
+      if (!text) return { result: { error: 'Say what was eaten, in the person\'s words.' } };
+      return { result: { shown: true, note: CARD_SHOWN }, card: { pill: 'meal', said: text } };
+    }
+    case 'propose_doses':
+      // No arguments are read. Which doses are due is the app's to say, and
+      // which were taken is the person's.
+      return { result: { shown: true, note: CARD_SHOWN }, card: { pill: 'doses', said: null } };
+    case 'propose_symptom': {
+      const words = typeof args.words === 'string' ? args.words.trim().slice(0, 500) : '';
+      if (!words) return { result: { error: 'Say what the person is feeling, in their words.' } };
+      return { result: { shown: true, note: CARD_SHOWN }, card: { pill: 'symptom', said: words } };
+    }
     case 'prepare_report': {
       const scope: Scope = args.scope === 'meals' || args.scope === 'meds' ? args.scope : 'full';
       const days = daysArg(args.days, 30);
@@ -310,6 +347,12 @@ export function toolLabel(name: string, args: Record<string, unknown>): string {
       return `weight, ${days(30)}`;
     case 'symptom_log':
       return `symptoms, ${days(30)}`;
+    case 'propose_meal':
+      return 'a meal card';
+    case 'propose_doses':
+      return 'the doses card';
+    case 'propose_symptom':
+      return 'a symptom card';
     case 'prepare_report':
       return 'the report sheet';
     default:

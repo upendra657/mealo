@@ -36,7 +36,7 @@ import {
   type Signals,
 } from '../src/safety/gates';
 import { R1_TEST_PHRASES, RED_FLAGS, triage } from '../src/safety/redflags';
-import { suggestLabel } from '../src/domain/symptomlabels';
+import { countByLabel, suggestLabel } from '../src/domain/symptomlabels';
 import type { ExportInput, ExportItem } from '../src/domain/export';
 import { dawaAdherence, daysArg, FEW_EPISODES, pairsOf, runTool, symptomLog, thaliBeforeSymptom, thaliDay, thaliSummary, toolLabel, TOOLS, weightTrend } from '../src/domain/tools';
 import { chatWithTools, DATA_HEADER, MAX_TOOL_STEPS } from '../src/llm/toolloop';
@@ -1044,7 +1044,7 @@ section('Tools: what Dawa works out');
 section('Tools: running a call');
 {
   const names = TOOLS.map((t) => t.function.name);
-  check('seven tools, none of which writes', names, ['thali_summary', 'thali_day', 'thali_before_symptom', 'dawa_adherence', 'weight_trend', 'symptom_log', 'prepare_report']);
+  check('ten tools, none of which writes', names, ['thali_summary', 'thali_day', 'thali_before_symptom', 'dawa_adherence', 'weight_trend', 'symptom_log', 'propose_meal', 'propose_doses', 'propose_symptom', 'prepare_report']);
   check('no tool can log, tick, set, change or delete', names.some((n) => /log_|tick|set_|update|delete|write|save|target|dose_change/.test(n)), false);
   check('every tool refuses extra arguments', TOOLS.every((t) => (t.function.parameters as { additionalProperties?: boolean }).additionalProperties === false), true);
   check('days are held to the range', [daysArg(0), daysArg(1), daysArg(90), daysArg(9999), daysArg(-5), daysArg('14'), daysArg('abc'), daysArg(undefined), daysArg(7.6)], [1, 1, 90, 90, 1, 14, 7, 7, 8]);
@@ -1057,9 +1057,48 @@ section('Tools: running a call');
   check('a report request opens the sheet and writes nothing', (await run('prepare_report', { scope: 'meals', days: 21 })).open, { scope: 'meals', days: 21, aud: 'human' });
   check('for another AI when asked', (await run('prepare_report', { scope: 'full', days: 400, for: 'ai' })).open, { scope: 'full', days: 90, aud: 'ai' });
   check('a made-up scope falls back to full', (await run('prepare_report', { scope: 'everything; DROP TABLE meals', days: 7 })).open, { scope: 'full', days: 7, aud: 'human' });
-  check('only prepare_report asks the screen to do anything', (await Promise.all(names.filter((n) => n !== 'prepare_report').map((n) => run(n, { days: 7, days_ago: 0, symptom: 'bloating' })))).some((o) => o.open), false);
+  check('only prepare_report opens the sheet', (await Promise.all(names.filter((n) => n !== 'prepare_report').map((n) => run(n, { days: 7, days_ago: 0, symptom: 'bloating', text: 'dal', words: 'tired' })))).some((o) => o.open), false);
+  check('only the three propose tools ask for a card', (await Promise.all(names.map(async (n) => [n, !!(await run(n, { days: 7, days_ago: 0, symptom: 'bloating', text: 'dal', words: 'tired', scope: 'full' })).card]))).filter((x) => x[1]).map((x) => x[0]),
+    ['propose_meal', 'propose_doses', 'propose_symptom']);
   check('labels for the "looked up" line', [toolLabel('thali_summary', { days: 14 }), toolLabel('thali_day', { days_ago: 1 }), toolLabel('dawa_adherence', { days: 1 }), toolLabel('thali_before_symptom', { symptom: 'Bloating' })],
     ['Thali: meals, 14 days', 'Thali: meals, yesterday', 'Dawa: doses, 1 day', 'Thali: meals before bloating']);
+}
+
+section('Tools: a model can ask for a card, only a tap can write');
+{
+  // The record is never read by a propose tool, and nothing can be written
+  // by one: this reader throws if any of them so much as looks.
+  const sealed = async (): Promise<ExportInput> => { throw new Error('a propose tool read the record'); };
+  const ask = (name: string, args: Record<string, unknown>) => runTool(name, args, sealed);
+  check('a meal card carries the person\'s words and nothing else', await ask('propose_meal', { text: ' 2 roti and dal ' }),
+    { result: { shown: true, note: 'A card is on screen under your answer. Nothing has been saved: the person saves it by pressing the button on the card, or cancels. Tell them that in one short line and say nothing about what the card will show.' }, card: { pill: 'meal', said: '2 roti and dal' } });
+  check('the doses card takes nothing from the model', (await ask('propose_doses', { taken: ['Calcium'], amount: '2 tablets', dose: 500 })).card, { pill: 'doses', said: null });
+  check('a symptom card carries the words', (await ask('propose_symptom', { words: 'headache since morning' })).card, { pill: 'symptom', said: 'headache since morning' });
+  check('extra arguments are ignored, not honoured', (await ask('propose_meal', { text: 'dal', calories: 50, target: 800, save: true, confirmed: true })).card, { pill: 'meal', said: 'dal' });
+  check('no words, no card', [(await ask('propose_meal', {})).card, (await ask('propose_meal', { text: '   ' })).card, (await ask('propose_symptom', { words: 42 })).card], [undefined, undefined, undefined]);
+  check('very long words are held to a length', (await ask('propose_meal', { text: 'dal '.repeat(500) })).card!.said!.length <= 300, true);
+  check('the model is told nothing was saved', JSON.stringify((await ask('propose_doses', {})).result).includes('Nothing has been saved'), true);
+  // Confirmation-card integrity, from the plan: no tool takes a dose amount,
+  // a target, a weight or a calorie figure, so there is nothing to fill in.
+  const params = (n: string) => Object.keys((TOOLS.find((t) => t.function.name === n)!.function.parameters as { properties: Record<string, unknown> }).properties);
+  check('what each propose tool can be told', [params('propose_meal'), params('propose_doses'), params('propose_symptom')], [['text'], [], ['words']]);
+  check('no tool has a parameter for an amount, a dose, a target or a weight',
+    TOOLS.flatMap((t) => Object.keys((t.function.parameters as { properties: Record<string, unknown> }).properties)).filter((k) => /dose|amount|mg|tablet|target|goal|kcal|calorie|weight|kg|quantity/i.test(k)), []);
+  check('and none is named for saving, setting or deleting', TOOLS.map((t) => t.function.name).filter((n) => /^(?:log|save|set|write|delete|update|tick|add|remove)_/.test(n)), []);
+  check('labels for the line above the answer', [toolLabel('propose_meal', {}), toolLabel('propose_doses', {}), toolLabel('propose_symptom', {})], ['a meal card', 'the doses card', 'a symptom card']);
+  // What the person typed still went through the gates first; the words a
+  // model passes on are gated by the card itself (an emergency is shown as one).
+  check('words a model passes on are still triaged by the card', triage('chest pain since lunch').triggered, true);
+}
+
+section('Symptom history: counted by label');
+{
+  const s = (label: string | null) => ({ label });
+  check('most often first', countByLabel([s('Headache'), s('Bloating'), s('Bloating'), s('Bloating'), s('Headache'), s('Cough')]), [{ label: 'Bloating', n: 3 }, { label: 'Headache', n: 2 }, { label: 'Cough', n: 1 }]);
+  check('a tie goes in the list\'s own order', countByLabel([s('Headache'), s('Bloating')]).map((c) => c.label), ['Bloating', 'Headache']);
+  check('no label is counted, and comes last however many', countByLabel([s(null), s(null), s(null), s('Cough'), s('')]), [{ label: 'Cough', n: 1 }, { label: 'No label', n: 4 }]);
+  check('the counts add up to what was logged', countByLabel([s('A'), s(null), s('Bloating'), s('A')]).reduce((n, c) => n + c.n, 0), 4);
+  check('nothing logged, nothing counted', countByLabel([]), []);
 }
 
 // ================================================= the numbers check

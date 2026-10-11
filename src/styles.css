@@ -4052,6 +4052,64 @@ button.am-opt {
 @page {
   margin: 8mm;
 }
+/* Symptom history, in the chat's own dark sheet. */
+.am-hist {
+  margin-top: 10px;
+}
+.am-hist-c {
+  margin-bottom: 8px;
+}
+.am-hist-c span {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13px;
+  color: #c9d3cd;
+}
+.am-hist-c b {
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--am-g);
+}
+.am-hist-r {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.am-hist-t {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.am-hist-l {
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 500;
+}
+.am-hist-w {
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+/* Over and done with: still in the record, quieter. */
+.am-hist-r[data-done] .am-hist-l {
+  font-weight: 400;
+  color: var(--muted);
+}
+.am-hist-r .link {
+  flex: none;
+  padding-top: 14px;
+  font-size: 13.5px;
+}
+
 /* The AI insights switch on the report sheet. Looks like a switch because it
    is one: a thing that stays how it was left, for this visit. */
 .am-sw {

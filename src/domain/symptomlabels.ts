@@ -245,3 +245,20 @@ export function wordsForModel(raw: string, max = WORDS_FOR_MODEL): string {
   const space = head.lastIndexOf(' ');
   return `${head.slice(0, space > 0 ? space : max).replace(/[,;:]$/, '')}…`;
 }
+
+/**
+ * How often each label was logged, most often first; a tie in the list's own
+ * order. A symptom with no label is counted under "No label", last, so the
+ * total always adds up to what was logged and nothing is quietly left out.
+ */
+export function countByLabel(symptoms: readonly { label: string | null }[]): { label: string; n: number }[] {
+  const tally = new Map<string, number>();
+  for (const s of symptoms) {
+    const key = s.label && s.label.trim() ? s.label.trim() : '';
+    tally.set(key, (tally.get(key) ?? 0) + 1);
+  }
+  const rank = (l: string) => (SYMPTOM_LABELS.indexOf(l) === -1 ? SYMPTOM_LABELS.length : SYMPTOM_LABELS.indexOf(l));
+  return [...tally]
+    .sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : b[1] - a[1] || rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])))
+    .map(([label, n]) => ({ label: label || 'No label', n }));
+}

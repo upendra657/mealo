@@ -60,11 +60,12 @@ import { suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
 import { readMedsDay } from '../domain/medications';
 import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
+import { SymptomHistory } from './SymptomHistory';
 import { DEFAULT_DAYS, reportRequest, type Scope } from '../domain/export';
 import { FileIcon, ReportCard, ReportSheet, type Audience, type Report } from './ReportSheet';
 import { wantsAiFile } from '../domain/report';
 import { collectExport, type ExportInput } from '../domain/export';
-import { pairsOf, runTool, toolLabel, TOOLS, type OpenReport } from '../domain/tools';
+import { pairsOf, runTool, toolLabel, TOOLS, type OpenReport, type ProposedCard } from '../domain/tools';
 import { chatWithTools } from '../llm/toolloop';
 import { checkNumbers, numbersIn, numbersOf, removedNote } from '../safety/numbers';
 
@@ -157,6 +158,12 @@ const SYSTEM_PROMPT = [
   'there. When a tool says things turn up together, say that, never that one',
   'causes the other.',
   '',
+  'You cannot save anything. When the person says they ate or drank',
+  'something, took or skipped their medicines, or wants a symptom recorded,',
+  'call the matching "propose" tool: it puts a card on their screen and they',
+  'press the button themselves. Pass their words as they said them. Then say',
+  'in one line that the card is there to confirm.',
+  '',
   `When the person says "${ELABORATE}", go deeper into your previous answer:`,
   'what stands out, how each figure sits against its target, what is missing',
   'from the record and how that limits what can be said. The hard rules above',
@@ -173,6 +180,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
   const [thread, setThread] = useState<Item[]>([]);
   /** The pill whose question the bar is answering, if any. */
   const [awaiting, setAwaiting] = useState<number | null>(null);
+  const [history, setHistory] = useState(false);
   /** Whether "Tick my doses" has anything to offer right now. */
   const [dueNow, setDueNow] = useState(false);
   /** The report sheet: closed, or open on these settings. */
@@ -372,12 +380,18 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         return periods.get(days)!;
       };
       let open: OpenReport | undefined;
+      // Cards a tool asked for. Drawn after the answer, and only then: a card
+      // above the words that explain it reads as something already done.
+      const cards: ProposedCard[] = [];
       const loop = await chatWithTools((o) => chat(settings, o), {
         messages,
         tools: TOOLS,
         run: async (name, args) => {
           const out = await runTool(name, args, read);
           if (out.open) open = out.open;
+          // One of each at most. A model that asks three times for a meal
+          // card gets one card.
+          if (out.card && !cards.some((c) => c.pill === out.card!.pill)) cards.push(out.card);
           return out.result;
         },
         temperature: 0.3,
@@ -417,13 +431,28 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       const reply = checked.text || (checked.removed.length ? 'The app removed this answer: the figures in it were not in your records. Please ask again.' : '(empty response)');
       // What the app did on the way, said plainly above the answer: which
       // records it read for the model, and anything it took out.
+      // Reading the record and putting a card on screen are different things
+      // to have done, and "looked up a meal card" said neither.
+      const shows = (name: string) => name.startsWith('propose_') || name === 'prepare_report';
+      const labels = (runs: typeof loop.runs) => [...new Set(runs.map((r) => toolLabel(r.name, r.args)))].join(' \u00b7 ');
+      const lookedUp = loop.runs.filter((r) => !shows(r.name));
+      const putUp = loop.runs.filter((r) => shows(r.name));
       const notes = [
-        loop.runs.length > 0 && `Looked up by the app \u00b7 ${[...new Set(loop.runs.map((r) => toolLabel(r.name, r.args)))].join(' \u00b7 ')}`,
+        lookedUp.length > 0 && `Looked up by the app \u00b7 ${labels(lookedUp)}`,
+        putUp.length > 0 && `Put on screen by the app \u00b7 ${labels(putUp)}`,
         checked.removed.length > 0 && removedNote(checked.removed.length),
       ].filter((x): x is string => typeof x === 'string');
       if (notes.length) setThread((t) => [...t, ...notes.map((note) => ({ kind: 'note' as const, id: nextId.current++, text: note }))]);
       await appendMessage('doctor', 'assistant', reply);
       setThread((t) => [...t, { kind: 'answer', text: reply, at: Date.now() }]);
+      // The same cards the pills open, already holding the person's words.
+      // Nothing is written by putting one on screen; see AskPills.tsx.
+      if (cards.length) {
+        setThread((t) => [
+          ...t,
+          ...cards.map((c) => ({ kind: 'flow' as const, pill: c.pill, id: nextId.current++, at: Date.now(), said: c.said, savedId: null })),
+        ]);
+      }
       void maybeSummarise('doctor', settings).catch(() => {});
     } catch (e) {
       if (e instanceof LlmError) setError({ title: e.message, detail: e.body });
@@ -671,6 +700,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
               due" most of the day teaches people not to press it. */}
           {dueNow && <button onClick={() => startPill('doses')}>{PILLS.doses.label}</button>}
           <button onClick={() => startPill('symptom')}>{PILLS.symptom.label}</button>
+          <button onClick={() => setHistory(true)}>Symptom history</button>
         </div>
         <div className="am-bar">
           <textarea
@@ -699,6 +729,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         </div>
       </div>
 
+      <SymptomHistory open={history} onClose={() => setHistory(false)} onLog={() => startPill('symptom')} onChanged={() => void refresh()} />
       <ReportSheet
         open={sheet.open}
         scope={sheet.scope}
