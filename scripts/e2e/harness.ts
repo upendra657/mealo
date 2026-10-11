@@ -29,6 +29,7 @@ import {
 import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
+import { appendMessage, buildContext, clearThread, loadThread } from '../../src/llm/conversation';
 import { logSymptom, openSymptoms, removeSymptom } from '../../src/domain/symptoms';
 import { buildExport, collectExport } from '../../src/domain/export';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
@@ -231,6 +232,28 @@ async function main() {
   await refreshCurrentState();
   const stateAfter = await query<{ n: number }>('SELECT COUNT(*) AS n FROM current_state');
   check('a later refresh updates that row rather than adding one', Number(stateAfter[0].n) === 1, String(stateAfter[0].n));
+
+  // The request a model is sent ends with the new question, once. The chat
+  // stores the question first, and the builder then read it back from the
+  // thread and added it again.
+  {
+    const ask = (text: string) => buildContext({ agent: 'doctor', systemPrompt: 'P', stateSlice: null, userMessage: text });
+    const users = (ms: { role: string; content: string }[], text: string) => ms.filter((m) => m.role === 'user' && m.content === text).length;
+    const fresh = await ask('how was my week?');
+    check('a question not yet stored is in the request once', users(fresh, 'how was my week?') === 1, JSON.stringify(fresh));
+    await appendMessage('doctor', 'user', 'how was my week?');
+    const stored = await ask('how was my week?');
+    check('stored first, as the chat does, it is still there once', users(stored, 'how was my week?') === 1, JSON.stringify(stored));
+    check('and it is the last thing in the request', stored[stored.length - 1]?.content === 'how was my week?' && stored[stored.length - 1]?.role === 'user');
+    await appendMessage('doctor', 'assistant', 'Two days logged.');
+    await appendMessage('doctor', 'user', 'how was my week?');
+    const again = await ask('how was my week?');
+    check('asked a second time after an answer, both askings are kept', users(again, 'how was my week?') === 2, JSON.stringify(again));
+    check('in order: question, answer, question',
+      again.slice(-3).map((m) => m.role).join(',') === 'user,assistant,user', again.map((m) => m.role).join(','));
+    await clearThread('doctor');
+    check('the test leaves no messages behind', (await loadThread('doctor')).length === 0);
+  }
 
   // A symptom logged from the chat, and its Undo. Undo is not "resolved":
   // the row must leave the open list and the slice, and stay in the table.

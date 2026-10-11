@@ -214,12 +214,21 @@ export async function buildContext(
     ? thread.findIndex((m) => m.id === summary.uptoMsgId) + 1
     : Math.max(0, thread.length - VERBATIM_TURNS);
 
-  for (const m of thread.slice(startIdx)) {
-    if (m.role === 'user' || m.role === 'assistant') {
-      messages.push({ role: m.role, content: m.content });
-    }
-  }
+  const recent = thread.slice(startIdx).filter((m) => m.role === 'user' || m.role === 'assistant');
+  for (const m of recent) messages.push({ role: m.role, content: m.content });
 
-  messages.push({ role: 'user', content: userMessage });
+  // The new message goes last, once. The chat stores a question before it
+  // asks for the answer, so that a failed request still leaves the question
+  // in the thread, and the stored thread read just above therefore already
+  // ends with it. Appending it again sent every question twice: more tokens
+  // on the person's key each time, and a model shown the same line twice
+  // sometimes answers it twice. Seen in a captured request on 11 Oct 2026,
+  // and as old as this function.
+  //
+  // Only the last stored turn is compared. Someone asking the same thing a
+  // second time has an answer between the two, and both belong.
+  const last = recent[recent.length - 1];
+  const alreadyThere = last?.role === 'user' && last.content === userMessage;
+  if (!alreadyThere) messages.push({ role: 'user', content: userMessage });
   return messages;
 }
