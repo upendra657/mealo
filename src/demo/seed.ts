@@ -12,27 +12,27 @@
  * app would no longer produce. Three things those functions will not do are
  * done with a plain UPDATE afterwards, each because the function stamps
  * "now" and a history needs a past: when a symptom was noted, when a dose
- * was ticked, and the day a medicine was started. Nothing else is written
- * behind the app's back.
+ * was ticked, and the day a medicine was started. The only other statement
+ * that goes round the app is the wipe of a run that was cut short (`wipe`).
  *
- * Dates are counted back from the day the demo is first opened, so the three
- * weeks always end today.
+ * Dates are counted back from the day the demo is first opened, so the
+ * history always ends today.
  *
  * The same person every time: the choices come from a small seeded
  * generator, not Math.random, so the screens in the README are the screens a
  * visitor gets.
  */
 
-import { run } from '../db/client';
+import { query, run } from '../db/client';
 import { kvGet, kvSet } from '../lib/kv';
 import { PRIMARY_PROFILE, renameProfile } from '../profiles/store';
-import { burnOn, recordBurn, setGoalBurn } from '../domain/burn';
+import { recordBurn, setGoalBurn } from '../domain/burn';
 import { addDays, medDay, scheduleOf } from '../domain/doses';
 import { saveDishFromPortion } from '../domain/import';
 import { listCustomFoods } from '../domain/foods';
-import { draftFromText, mealsBetween, mealsOn, saveMeal } from '../domain/meals';
-import { addMedicine, listActive, markDose, readMedsDay, type MedForm } from '../domain/medications';
-import { logSymptom, openSymptoms } from '../domain/symptoms';
+import { draftFromText, mealsBetween, saveMeal, type DraftItem } from '../domain/meals';
+import { addMedicine, markDose, readMedsDay, type MedForm } from '../domain/medications';
+import { logSymptom } from '../domain/symptoms';
 import { suggestLabel } from '../domain/symptomlabels';
 import { saveTargets } from '../domain/targets';
 import { recordWeight, setGoalWeight } from '../domain/weight';
@@ -41,8 +41,19 @@ import type { SlotId } from '../domain/slots';
 const SEEDED = 'demo.seeded';
 /** Set before the first row: the database was empty, and what is in it since is ours. */
 const SEEDING = 'demo.seeding';
-export const DEMO_NAME = 'Asha';
-const DAYS_BACK = 21;
+export const DEMO_NAME = 'User';
+/**
+ * How far back the person's history goes.
+ *
+ * Forty-five days, so that the report's default of thirty is full from its
+ * first day to its last, the month view of every chart is complete, and the
+ * four weeks a plan is built from all hold meals. It began as twenty-one,
+ * which left the first nine days of a thirty-day report empty; and the
+ * supplements were ticked for fourteen days of the thirty they had been
+ * taken, so the medicine log showed a fortnight of doses as missed that
+ * nobody had been meant to miss. Everything now covers the same days.
+ */
+const DAYS_BACK = 45;
 
 /** mulberry32: small, seeded, and the same in every browser. */
 function seeded(seed: number): () => number {
@@ -91,7 +102,7 @@ const MEALS: Record<Exclude<SlotId, 'other'>, { hour: number; often: number; sai
   dinner: { hour: 20.25, often: 0.9, said: ['2 piece roti, 1 katori paneer bhurji', '1 katori khichdi, 1 katori curd', '1 katori chicken curry, 1 katori jeera rice', '2 piece roti, 1 katori mixed veg sabzi, 1 katori dal tadka'] },
 };
 /** Days back with nothing logged at all: a record with no gaps would not look like anyone's. */
-const BLANK_DAYS = new Set([9, 16]);
+const BLANK_DAYS = new Set([9, 16, 27, 38]);
 
 const midnight = (daysAgo: number, now: Date) => {
   const d = new Date(now);
@@ -118,22 +129,51 @@ export function seedDemo(now = new Date()): Promise<boolean> {
 }
 
 /**
- * Each step can be run again and write nothing it has already written.
+ * Tables the demo's person is never in, and a wipe must leave alone: who the
+ * profiles are, and the two reference lists the app loads for itself.
+ */
+const NOT_OURS = new Set(['profiles', 'foods', 'med_ref_sets', 'med_ref_items']);
+
+/**
+ * Empty every table the person could be in.
  *
- * The first version could not, and the first run of it showed why it had
- * to: a reload two seconds in left seven dishes and no meals, and the next
- * open, finding a database that was no longer empty, took it for somebody's
- * data and left it like that for good. Now a second marker says "this
- * database was empty and the writing is ours", so an interrupted run is
- * picked up where it stopped.
+ * Only ever called on a database this file was already writing to: the
+ * marker that leads here is set after the database was found empty, so what
+ * is in it now is the first half of this person and nothing else. Nobody
+ * can have added to it in between, because the app shows "Setting up the
+ * demo" and nothing else until the writing is done.
  *
- * To land on the same person, every random draw is made whether or not its
- * row is written. Skipping a draw along with its row would shift every
- * choice after it.
+ * The tables are read from the database rather than listed, so a table
+ * added to the app next year is wiped without anyone remembering this file.
+ */
+async function wipe(): Promise<void> {
+  const tables = await query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+  for (const { name } of tables) {
+    if (!NOT_OURS.has(name)) await run(`DELETE FROM ${name}`);
+  }
+}
+
+/**
+ * A run that was cut short starts again from nothing.
+ *
+ * The first version did not allow for being cut short at all, and the first
+ * run of it showed why it had to: a reload two seconds in left seven dishes
+ * and no meals, and the next open, finding a database that was no longer
+ * empty, took it for somebody's data and left it like that for good. The
+ * second version made each step skip what was already there. It nearly
+ * worked: a reload that fell between a meal's two dishes left a lunch of one,
+ * and the same gap exists between a dish and its portion, a medicine and its
+ * doses, a tick and its time. Rather than close each, a second marker says
+ * "this database was empty and the writing is ours", and a run that finds it
+ * wipes what the last one left and writes the whole person again. Opened
+ * cleanly and opened with three reloads mid-way, the two now hold the same
+ * rows.
  */
 async function write(now: Date): Promise<boolean> {
   if (await kvGet<boolean>(SEEDED)) return false;
-  if (!(await kvGet<boolean>(SEEDING))) {
+  if (await kvGet<boolean>(SEEDING)) {
+    await wipe();
+  } else {
     const anyMeals = (await mealsBetween(0, now.getTime() + 30 * 86_400_000)).length > 0;
     if (anyMeals || (await listCustomFoods()).length > 0) {
       // Somebody's data. Not ours to add to, now or on any later open.
@@ -142,21 +182,57 @@ async function write(now: Date): Promise<boolean> {
     }
     await kvSet(SEEDING, true);
   }
+
+  // One transaction for the whole person. Each write on its own is a flush
+  // to the phone's storage, and some twelve hundred of them were most of the
+  // wait; inside one transaction there is one flush at the end. It also
+  // makes the person all-or-nothing: a reload half-way leaves the database
+  // as it was found, and the wipe above has nothing to do. It is safe only
+  // because nothing else can write meanwhile: the app is still showing
+  // "Setting up the demo", and its own start-up work has not begun.
+  await run('BEGIN');
+  try {
+    await person(now);
+    await run('COMMIT');
+  } catch (e) {
+    // Left open, the transaction would swallow everything the visitor did
+    // for the rest of the visit.
+    await run('ROLLBACK').catch(() => {});
+    throw e;
+  }
+  await kvSet(SEEDED, true);
+  return true;
+}
+
+/** The person, row by row. Called inside the transaction `write` opens. */
+async function person(now: Date): Promise<void> {
   const pick = seeded(20261011);
 
   await renameProfile(PRIMARY_PROFILE, DEMO_NAME);
-  // Refuses a name it already has, so a second pass adds only what is missing.
   for (const [name, measure, netWeightG, energy, protein, fat, carbs, fibre] of DISHES) {
     await saveDishFromPortion({ name, quantity: 1, measure, netWeightG, energy, protein, fat, carbs, fibre });
   }
   await saveTargets({ energy_kcal: 1900, protein_g: 75, fat_g: 65, carbs_g: 240, fibre_g: 30 });
 
-  // ---- three weeks of meals, ending now
+  // ---- the meals, ending now
+  //
+  // Each sentence is read by the food matcher once and the rows it gives are
+  // used every time after. There are eighteen sentences and some hundred and
+  // seventy meals; reading each meal afresh was most of the time a visitor
+  // spent looking at "Setting up the demo". The first use goes in as the
+  // matcher returned it, so the alias it teaches is learned as it would be;
+  // later uses are marked as picked, which is what they are.
+  const read = new Map<string, DraftItem[]>();
+  const rowsFor = async (said: string): Promise<DraftItem[]> => {
+    const had = read.get(said);
+    if (had) return had.map((d) => ({ ...d, source: 'direct' as const }));
+    const fresh = await draftFromText(said);
+    read.set(said, fresh);
+    return fresh;
+  };
   const rajmaDays: number[] = [];
   for (let ago = DAYS_BACK; ago >= 0; ago--) {
     if (BLANK_DAYS.has(ago)) continue;
-    // By meal time, not by day: a run cut short at lunch has still to write dinner.
-    const have = new Set((await mealsOn(midnight(ago, now))).map((m) => m.meal_type));
     for (const [slot, m] of Object.entries(MEALS) as [Exclude<SlotId, 'other'>, (typeof MEALS)['lunch']][]) {
       const at = midnight(ago, now) + Math.round((m.hour + (pick() - 0.5) * 0.6) * 3_600_000);
       const eaten = pick() < m.often;
@@ -164,39 +240,33 @@ async function write(now: Date): Promise<boolean> {
       const said = m.said[Math.floor(pick() * pick() * m.said.length)];
       if (!eaten || at > now.getTime()) continue;
       if (slot === 'lunch' && said.includes('rajma')) rajmaDays.push(ago);
-      if (!have.has(slot)) await saveMeal(await draftFromText(said), { rawText: said, mealType: slot, eatenAt: at });
+      await saveMeal(await rowsFor(said), { rawText: said, mealType: slot, eatenAt: at });
     }
   }
   // Tomorrow, planned ahead, so the plan-ahead circles have something to show.
-  if ((await mealsOn(dayAt(1, now))).length === 0) {
-    for (const [slot, said] of [['lunch', '1 katori dal tadka, 1 katori jeera rice, 1 katori curd'], ['dinner', '2 piece roti, 1 katori paneer bhurji']] as const) {
-      await saveMeal(await draftFromText(said), { rawText: said, mealType: slot, eatenAt: dayAt(1, now) + 12 * 3_600_000, planned: true });
-    }
+  for (const [slot, said] of [['lunch', '1 katori dal tadka, 1 katori jeera rice, 1 katori curd'], ['dinner', '2 piece roti, 1 katori paneer bhurji']] as const) {
+    await saveMeal(await rowsFor(said), { rawText: said, mealType: slot, eatenAt: dayAt(1, now) + 12 * 3_600_000, planned: true });
   }
 
-  // ---- weight and burn. A second weight on a day replaces the first; a
-  // second burn would be added to it, so that one is looked for.
+  // ---- weight and burn
   await setGoalWeight(70);
   await setGoalBurn(450);
   for (let ago = DAYS_BACK; ago >= 0; ago -= 3) {
-    const kg = 71.4 + (ago / DAYS_BACK) * 1.2 + (pick() - 0.5) * 0.3;
+    const kg = 71.4 + (ago / DAYS_BACK) * 1.8 + (pick() - 0.5) * 0.3;
     const at = midnight(ago, now) + 7.2 * 3_600_000;
     if (at <= now.getTime()) await recordWeight(Math.round(kg * 10) / 10, at);
   }
   for (let ago = DAYS_BACK; ago >= 1; ago--) {
     const skip = pick() < 0.2;
     const kcal = Math.round((300 + pick() * 260) / 10) * 10;
-    if (skip || (await burnOn(midnight(ago, now)))) continue;
-    await recordBurn(kcal, midnight(ago, now) + 19 * 3_600_000);
+    if (!skip) await recordBurn(kcal, midnight(ago, now) + 19 * 3_600_000);
   }
 
-  // ---- three supplements, started a month ago
+  // ---- three supplements, taken for as long as the meals go back
   const today = medDay(now);
-  const started = addDays(today, -30);
+  const started = addDays(today, -DAYS_BACK);
   const dose = (time_of_day: 'morning' | 'night') => ({ amount: 1, unit: 'tablet' as const, time_of_day, meal: 'after' as const });
-  const have = new Set((await listActive()).map((m) => m.name));
   const supplement = async (f: MedForm) => {
-    if (have.has(f.name)) return;
     const id = await addMedicine(f);
     await run('UPDATE medications SET started_on = ? WHERE id = ?', [started, id]);
     await run('UPDATE med_doses SET from_day = NULL WHERE medication_id = ?', [id]);
@@ -206,39 +276,37 @@ async function write(now: Date): Promise<boolean> {
   await supplement({ ...always, name: 'Calcium + Vitamin D3', strength: '500 mg', doses: [dose('night')], schedule: scheduleOf('daily', null, null) });
   await supplement({ ...always, name: 'Vitamin D3', strength: '60000 IU', doses: [dose('morning')], schedule: scheduleOf('weekdays', String(now.getDay()), null) });
 
-  // Two weeks of ticks: most taken, a few skipped, a few never answered.
-  for (let ago = 14; ago >= 0; ago--) {
+  // A tick for every day since they were started: most taken, a few
+  // skipped, a few never answered. A day left out would read as missed.
+  for (let ago = DAYS_BACK; ago >= 0; ago--) {
     const day = addDays(today, -ago);
     const plan = await readMedsDay(day, now);
     for (const g of plan.groups) {
       for (const p of g.doses) {
         const at = midnight(ago, now) + (g.time === 'morning' ? 8.2 : 21.7) * 3_600_000;
         const roll = pick();
-        if (at > now.getTime() || roll > 0.94 || p.eventId) continue;
+        if (at > now.getTime() || roll > 0.94) continue;
         const eventId = await markDose(p, day, roll > 0.86 ? 'skipped' : 'taken');
         await run('UPDATE intake_events SET taken_at = ? WHERE id = ?', [at, eventId]);
       }
     }
   }
 
-  // ---- symptoms, last and all together: if any is there, all are. Bloating
-  // after the rajma lunches, so "what was eaten before each time" has a
-  // pattern to find; the app will still say it cannot show a cause.
-  if ((await openSymptoms()).length === 0) {
-    const noted = async (text: string, ago: number, hour: number, open: boolean) => {
-      const at = midnight(ago, now) + hour * 3_600_000;
-      if (at > now.getTime()) return;
-      const id = await logSymptom(text, { label: suggestLabel(text) ?? undefined });
-      await run('UPDATE symptoms SET noted_at = ?, resolved_at = ? WHERE id = ?', [at, open ? null : at + 5 * 3_600_000, id]);
-    };
-    for (const ago of rajmaDays.slice(0, 4)) await noted('Bloating after lunch', ago, 15.5, false);
-    await noted('Headache in the evening', 11, 18.5, false);
-    await noted('Acidity at night', 5, 22, false);
-    // The one left open, and written last: its being there is what says the
-    // others are.
-    await noted('Feeling tired, slept badly', 1, 21.5, true);
-  }
-
-  await kvSet(SEEDED, true);
-  return true;
+  // ---- symptoms. Bloating after the rajma lunches, so "what was eaten
+  // before each time" has a pattern to find; the app will still say it
+  // cannot show a cause.
+  const noted = async (text: string, ago: number, hour: number, open: boolean) => {
+    const at = midnight(ago, now) + hour * 3_600_000;
+    if (at > now.getTime()) return;
+    const id = await logSymptom(text, { label: suggestLabel(text) ?? undefined });
+    await run('UPDATE symptoms SET noted_at = ?, resolved_at = ? WHERE id = ?', [at, open ? null : at + 5 * 3_600_000, id]);
+  };
+  // The most recent six. Five is where the app stops warning that a pattern
+  // rests on too few entries to mean much (FEW_EPISODES).
+  for (const ago of rajmaDays.slice(-6)) await noted('Bloating after lunch', ago, 15.5, false);
+  await noted('Headache in the evening', 31, 18.5, false);
+  await noted('Headache in the evening', 11, 18.5, false);
+  await noted('Acidity at night', 22, 22, false);
+  await noted('Acidity at night', 5, 22, false);
+  await noted('Feeling tired, slept badly', 1, 21.5, true);
 }
