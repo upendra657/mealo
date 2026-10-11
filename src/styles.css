@@ -3081,6 +3081,11 @@ textarea {
   background: var(--surface);
   padding: 10px 12px;
 }
+/* An odd number of figures: the last takes the whole row, or the grid's own
+   background shows through as an empty cell that looks like a missing one. */
+.am-figs > div:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
 .am-fig-v {
   font-family: var(--mono);
   font-size: 16px;
@@ -3705,4 +3710,386 @@ textarea {
    the screen, and a greyed-out version read as the screen being broken. */
 .am-send:disabled {
   cursor: default;
+}
+
+/* ============================================================ the report
+   "For human": a layer over the app, and the one thing in it that prints.
+   It borrows the Ask Mealo screen's quiet green, so the tokens are given
+   to it by name rather than by living inside .am. */
+.rp {
+  --am-g: #7cc4ad;
+  --am-g-bg: rgba(79, 209, 169, 0.16);
+  --am-g-ink: #a3e2ce;
+  --am-g-bd: rgba(79, 209, 169, 0.38);
+  --am-g-tint: rgba(79, 209, 169, 0.075);
+  --am-g-tl: rgba(79, 209, 169, 0.27);
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--ink);
+  padding: env(safe-area-inset-top, 0px) max(16px, calc((100vw - 460px) / 2 + 16px)) calc(28px + env(safe-area-inset-bottom, 0px));
+}
+html.rp-open,
+html.rp-open body {
+  overflow: hidden;
+}
+.rp-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding-block: 14px 10px;
+  background: linear-gradient(var(--ink) 80%, transparent);
+}
+.rp-pdf {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--am-g-bd);
+  background: var(--am-g-bg);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--am-g-ink);
+}
+.rp-head h1 {
+  margin: 8px 0 2px;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.rp-head p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.rp-sec {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.rp-sec h2 {
+  margin: 0 0 12px;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.rp-sec h3 {
+  margin: 22px 0 9px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--am-g);
+}
+.rp-note {
+  margin: 9px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.rp-chart {
+  padding: 12px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.rp-read {
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.rp-plot {
+  position: relative;
+  height: 132px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--line);
+}
+/* The target is a line across the plot with its own label, so it is never
+   mistaken for a bar and never needs a second axis. */
+.rp-target {
+  position: absolute;
+  inset-inline: 0;
+  border-top: 1px dashed var(--muted);
+  pointer-events: none;
+}
+.rp-target span {
+  position: absolute;
+  right: 0;
+  bottom: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.rp-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  /* The gap is the surface showing through: bars that touch read as one
+     shape, and a week of them as a block. */
+  gap: 2px;
+}
+.rp-bars[data-dense] {
+  gap: 1px;
+}
+.rp-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+}
+.rp-bar {
+  display: block;
+  width: 100%;
+  max-width: 22px;
+  /* Rounded at the data end only; the baseline end is square because that
+     is where the bar starts. */
+  border-radius: 4px 4px 0 0;
+  background: var(--am-g);
+}
+.rp-bars[data-dense] .rp-bar {
+  border-radius: 2px 2px 0 0;
+}
+.rp-col[aria-pressed='true'] .rp-bar {
+  background: var(--ink-text);
+}
+/* Nothing logged: a mark on the baseline, not a bar of zero. */
+.rp-none {
+  display: block;
+  width: 100%;
+  max-width: 22px;
+  height: 5px;
+  border-radius: 2px 2px 0 0;
+  background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 4px);
+}
+.rp-col[aria-pressed='true'] .rp-none {
+  outline: 1px solid var(--ink-text);
+}
+.rp-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.rp-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rp-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rp-key i {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 3px;
+}
+.rp-k-bar {
+  background: var(--am-g);
+}
+.rp-k-none {
+  background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px);
+}
+.rp-key i.rp-k-line {
+  height: 0;
+  width: 14px;
+  border-radius: 0;
+  border-top: 1px dashed var(--muted);
+}
+.rp-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rp-row-h {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14.5px;
+}
+.rp-row-h .num {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+.rp-track {
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.rp-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--am-g);
+}
+.rp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.rp-table th,
+.rp-table td {
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.rp-table tr:first-child th,
+.rp-table tr:first-child td {
+  border-top: 0;
+}
+.rp-table th {
+  width: 38%;
+  padding-right: 12px;
+  font-weight: 400;
+  color: var(--ink-text);
+}
+.rp-table th small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rp-table td {
+  color: #c9d3cd;
+  overflow-wrap: anywhere;
+}
+/* Doses: parts of one whole. Taken is the app's green, missed the amber the
+   medicine log already uses for it, skipped a neutral; each is named with
+   its count in the key below, so colour is never the only way to tell. */
+.rp-stack {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  margin-top: 12px;
+}
+.rp-stack i {
+  min-width: 4px;
+  border-radius: 3px;
+}
+.rp-stack i[data-part='taken'],
+.rp-key i[data-part='taken'] {
+  background: var(--am-g);
+}
+.rp-stack i[data-part='skipped'],
+.rp-key i[data-part='skipped'] {
+  background: var(--muted);
+}
+.rp-stack i[data-part='missed'],
+.rp-key i[data-part='missed'] {
+  background: var(--warn);
+}
+.rp-stack i[data-part='pending'],
+.rp-key i[data-part='pending'] {
+  background: none;
+  border: 1px dashed var(--muted);
+}
+.rp-line {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.rp-line polyline {
+  fill: none;
+  stroke: var(--am-g);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.rp-line circle {
+  fill: var(--am-g);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.rp-line text {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--ink-text);
+}
+.rp-foot {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.rp .am-figs + .rp-chart,
+.rp .am-figs + .rp-stack {
+  margin-top: 12px;
+}
+button.am-opt {
+  text-align: left;
+}
+
+@page {
+  margin: 14mm;
+}
+/* On paper: the report alone, dark ink on white. The app has one theme and
+   it is dark; a printed page is not the app, and a page of black costs a
+   cartridge and reads worse. */
+@media print {
+  html.rp-open body > *:not(.rp) {
+    display: none !important;
+  }
+  html.rp-open,
+  html.rp-open body {
+    overflow: visible;
+    background: #fff;
+  }
+  .rp {
+    --ink: #fff;
+    --surface: #fff;
+    --line: #cfd6d2;
+    --ink-text: #111614;
+    --muted: #55615b;
+    --am-g: #1f7a63;
+    --warn: #9a6a00;
+    position: static;
+    overflow: visible;
+    padding: 0;
+    background: #fff;
+    color: #111614;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .rp-top,
+  .rp-read {
+    display: none;
+  }
+  /* A day tapped on screen must not print as the one black bar. */
+  .rp-col[aria-pressed='true'] .rp-bar {
+    background: var(--am-g);
+  }
+  .rp-col[aria-pressed='true'] .rp-none {
+    outline: 0;
+  }
+  .rp-table td {
+    color: #111614;
+  }
+  .rp-sec {
+    break-inside: avoid;
+  }
+  .rp-chart,
+  .rp .am-figs {
+    break-inside: avoid;
+  }
 }

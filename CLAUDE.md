@@ -29,7 +29,7 @@ left open — from the change list Upendra approves.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
-npm run test:portions  # 798 pure-logic assertions, node, fast
+npm run test:portions  # 822 pure-logic assertions, node, fast
 npm run test:safety    # 861 assertions: what Ask Mealo must stop before a model, and must not
 npm run test:e2e       # 376 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local

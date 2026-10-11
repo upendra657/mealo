@@ -7,12 +7,17 @@
  * already filled in. Either way the person sees the real dates and presses
  * the button, so the app never acts on its own reading of "past 3 weeks".
  *
- * "For human" is drawn and switched off until that report exists. Hiding it
- * would have the sheet change shape the day it arrives; a choice that is
- * visibly not ready yet is the more honest picture of what is coming.
+ * Two readers, one sheet. "For human" makes the report to read, with its
+ * charts, and is what the sheet opens on: it is what "my food report" means
+ * to most people. "For AI" makes the text file. Both are built from the same
+ * collected records, so they cannot disagree. The note under the choice
+ * follows it, because the two differ in the one thing the note is about:
+ * whether anything leaves the app.
  */
 
 import { useState } from 'react';
+import { humanReport, type HumanReport } from '../domain/report';
+import { ReportView } from './ReportView';
 import { saveFile } from '../db/client';
 import { entryTime } from '../domain/chat';
 import {
@@ -30,7 +35,10 @@ import {
 import { localDayKey } from '../domain/day';
 import { Sheet } from './bits';
 
-export type Report = { scope: Scope; days: string[]; name: string; text: string };
+export type Audience = 'human' | 'ai';
+export type Report =
+  | { kind: 'ai'; scope: Scope; days: string[]; name: string; text: string }
+  | { kind: 'human'; scope: Scope; days: string[]; data: HumanReport };
 
 const stroke = {
   fill: 'none',
@@ -56,15 +64,19 @@ export function ReportSheet({
   open,
   scope,
   days,
+  aud,
   onScope,
   onDays,
+  onAud,
   onClose,
   onMade,
 }: {
   open: boolean;
   scope: Scope;
   days: number;
+  aud: Audience;
   onScope: (s: Scope) => void;
+  onAud: (a: Audience) => void;
   onDays: (n: number) => void;
   onClose: () => void;
   onMade: (r: Report) => void;
@@ -115,23 +127,25 @@ export function ReportSheet({
 
       <div className="am-eyeb am-sh-l">For</div>
       <div className="am-opts">
-        <div className="am-opt" aria-disabled="true">
+        <button className="am-opt" data-on={aud === 'human' ? '1' : undefined} aria-pressed={aud === 'human'} onClick={() => onAud('human')}>
           <PersonIcon />
-          <div className="am-opt-t">
-            For human <span className="am-soon">Soon</span>
-          </div>
+          <div className="am-opt-t">For human</div>
           <div className="am-opt-d">Charts and figures to read. Prints to PDF.</div>
-        </div>
-        <div className="am-opt" data-on="1">
+        </button>
+        <button className="am-opt" data-on={aud === 'ai' ? '1' : undefined} aria-pressed={aud === 'ai'} onClick={() => onAud('ai')}>
           <FileIcon />
           <div className="am-opt-t">For AI</div>
           <div className="am-opt-d">A text file to give to another AI.</div>
-        </div>
+        </button>
       </div>
 
-      <p className="am-sh-n am-sh-n--warn">
-        Once downloaded, the file is outside Mealo&rsquo;s protection. Your name is left out.
-      </p>
+      {aud === 'human' ? (
+        <p className="am-sh-n">Worked out by the app. No AI is used, and nothing leaves this phone.</p>
+      ) : (
+        <p className="am-sh-n am-sh-n--warn">
+          Once downloaded, the file is outside Mealo&rsquo;s protection. Your name is left out.
+        </p>
+      )}
       {failed && <p className="am-sh-n bad-text">{failed}</p>}
 
       <button
@@ -142,7 +156,11 @@ export function ReportSheet({
           setFailed(null);
           try {
             const input = await collectExport(scope, days);
-            onMade({ scope, days: input.days, name: fileName(scope, input.days), text: buildExport(input) });
+            onMade(
+              aud === 'human'
+                ? { kind: 'human', scope, days: input.days, data: humanReport(input) }
+                : { kind: 'ai', scope, days: input.days, name: fileName(scope, input.days), text: buildExport(input) },
+            );
           } catch (e) {
             setFailed(e instanceof Error ? e.message : String(e));
           } finally {
@@ -150,7 +168,7 @@ export function ReportSheet({
           }
         }}
       >
-        {busy ? 'Reading your records…' : 'Create file'}
+        {busy ? 'Reading your records…' : aud === 'human' ? 'Create report' : 'Create file'}
       </button>
     </Sheet>
   );
@@ -159,7 +177,45 @@ export function ReportSheet({
 /** A finished report, in the thread. Lasts for the visit, like every card. */
 export function ReportCard({ at, report }: { at: number; report: Report }) {
   const [preview, setPreview] = useState(false);
+  const [shown, setShown] = useState<null | 'read' | 'print'>(null);
   const label = SCOPES.find((s) => s.id === report.scope)!.label;
+  if (report.kind === 'human') {
+    const n = report.days.length;
+    return (
+      <div className="am-entry">
+        <div className="am-q">
+          <div className="am-q-t">{entryTime(at)} · Generate a report</div>
+          <div className="am-q-x">
+            {label} · {n} {n === 1 ? 'day' : 'days'} · for human
+          </div>
+        </div>
+        <div className="am-eyeb am-eyeb--app">
+          <i />
+          Worked out by the app · {periodLabel(report.days)}
+        </div>
+        <div className="am-card am-card--file">
+          <div className="am-file">
+            <div className="am-file-i">
+              <PersonIcon />
+            </div>
+            <div>
+              <div className="am-file-n">{report.data.title}</div>
+              <div className="am-file-d">{scopeHolds(report.scope)} · charts and figures · no AI used</div>
+            </div>
+          </div>
+          <div className="am-btns">
+            <button className="am-btn" onClick={() => setShown('print')}>
+              Save as PDF
+            </button>
+            <button className="am-btn am-btn--go" onClick={() => setShown('read')}>
+              Open report
+            </button>
+          </div>
+        </div>
+        {shown && <ReportView report={report.data} print={shown === 'print'} onClose={() => setShown(null)} />}
+      </div>
+    );
+  }
   // Bytes, not characters: the file is full of "·" and "×", and the size a
   // person sees should be the size the download turns out to be.
   const kb = Math.max(1, Math.round(new Blob([report.text]).size / 1024));

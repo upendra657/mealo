@@ -61,7 +61,8 @@ import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domai
 import { readMedsDay } from '../domain/medications';
 import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
 import { DEFAULT_DAYS, reportRequest, type Scope } from '../domain/export';
-import { FileIcon, ReportCard, ReportSheet, type Report } from './ReportSheet';
+import { FileIcon, ReportCard, ReportSheet, type Audience, type Report } from './ReportSheet';
+import { wantsAiFile } from '../domain/report';
 
 /**
  * One use of a pill, in the thread beside the questions. Held in this
@@ -157,10 +158,11 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
   /** Whether "Tick my doses" has anything to offer right now. */
   const [dueNow, setDueNow] = useState(false);
   /** The report sheet: closed, or open on these settings. */
-  const [sheet, setSheet] = useState<{ open: boolean; scope: Scope; days: number }>({
+  const [sheet, setSheet] = useState<{ open: boolean; scope: Scope; days: number; aud: Audience }>({
     open: false,
     scope: 'full',
     days: DEFAULT_DAYS,
+    aud: 'human',
   });
   const nextId = useRef(1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -296,7 +298,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
     // presses the button themselves.
     const wanted = reportRequest(text);
     if (wanted) {
-      setSheet({ open: true, ...wanted });
+      setSheet({ open: true, ...wanted, aud: wantsAiFile(text) ? 'ai' : 'human' });
       return;
     }
 
@@ -634,6 +636,8 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         open={sheet.open}
         scope={sheet.scope}
         days={sheet.days}
+        aud={sheet.aud}
+        onAud={(aud) => setSheet((s) => ({ ...s, aud }))}
         onScope={(scope) => setSheet((s) => ({ ...s, scope }))}
         onDays={(days) => setSheet((s) => ({ ...s, days }))}
         onClose={() => setSheet((s) => ({ ...s, open: false }))}

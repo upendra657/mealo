@@ -40,6 +40,7 @@ import {
   type Identity,
 } from '../src/safety/deidentify';
 import { answerBlocks, canElaborate, ELABORATE, figuresFor, figuresNote, spansOf } from '../src/domain/chat';
+import { humanReport, wantsAiFile } from '../src/domain/report';
 import { SYMPTOM_GROUPS, SYMPTOM_LABELS, suggestLabel, wordsForModel, WORDS_FOR_MODEL } from '../src/domain/symptomlabels';
 import {
   average,
@@ -2066,6 +2067,47 @@ section('The "For AI" file');
     ['20 Sep \u2013 10 Oct 2026', '10 Oct 2026', '12 Dec 2025 \u2013 10 Jan 2026']);
   check('what each file holds', [scopeHolds('meals'), scopeHolds('meds'), scopeHolds('full')],
     ['Meals and targets', 'Medicines and doses', 'Meals, medicines, weight, symptoms']);
+
+  // ---- the same records, laid out for a person to read
+  const R = humanReport(FIX);
+  const round = (n: number | null) => (n == null ? null : Math.round(n * 10) / 10);
+  check('the report names itself and its period', [R.title, R.period, R.days], ['Full report', '4 Oct \u2013 10 Oct 2026', 7]);
+  check('averages are over logged days only', R.food!.averages.map((a) => [a.label, round(a.avg), a.target]),
+    [['Calories', 1195, 1900], ['Protein', 41, 90], ['Carbs', 157.5, 230], ['Fats', 37, 60], ['Fibre', 16.5, 30]]);
+  check('days logged, and days within the calorie target', [R.food!.daysLogged, R.food!.withinTarget], [2, { days: 1, of: 2 }]);
+  // The chart's whole point: an unlogged day is a gap, never a zero.
+  check('a day with nothing logged is null, not zero', R.food!.perDay.map((d) => d.kcal), [490, 1900, null, null, null, null, null]);
+  check('each day carries its label', R.food!.perDay[0].label, 'Sun 4 Oct');
+  check('a planned dish is counted in no total, and is reported as planned', [R.food!.planned, R.food!.skipped, R.food!.perDay[0].kcal], [1, 0, 490]);
+  check('the dishes behind the calories, largest first', R.food!.behind[0].dishes.map((d) => [d.name, d.amount, Math.round(d.share * 100)]),
+    [['Thali', 1900, 79], ['Dal tadka', 236, 10], ['Idli', 156, 7]]);
+  check('a tie is broken by name, the same way every time', R.food!.behind[1].dishes.map((d) => d.name), ['Thali', 'Dal tadka', 'Idli']);
+  check('never more than three', R.food!.behind.every((b) => b.dishes.length <= 3), true);
+  check('when meals are eaten: a slot with only a planned dish is left out', R.food!.slots.map((s) => [s.slot, s.meals, Math.round(s.avgKcal)]),
+    [['Breakfast', 1, 254], ['Lunch', 2, 1068]]);
+  check('doses add up to what was due', R.meds!.taken + R.meds!.skipped + R.meds!.missed + R.meds!.pending, R.meds!.due);
+  check('and match the file for another AI', [R.meds!.taken, R.meds!.skipped, R.meds!.missed, R.meds!.pending],
+    (['taken', 'skipped', 'missed', 'pending'] as const).map((k) => FIX.doseDays.reduce((s, d) => s + d[k], 0)));
+  check('doses not taken are gathered by medicine and time of day', R.meds!.notTaken,
+    [{ medicine: 'Calcium + D3 1250 mg', time: 'Night', skipped: 1, missed: 1 }]);
+  check('a stopped medicine says so, and what it was for', R.meds!.medicines[1], { name: 'Cough syrup', schedule: 'Every day', stoppedOn: '2026-10-06', sickness: 'Viral fever' });
+  check('a sick period ends when recovery was recorded', R.meds!.episodes, [{ name: 'Viral fever', from: '2026-10-03', to: '2026-10-06' }]);
+  check('weight: the change between first and last reading', [round(R.body!.change), R.body!.weights.length, R.body!.goalWeightKg], [-0.5, 2, 70]);
+  check('burn is averaged over days it was recorded', [R.body!.avgBurn, R.body!.burnDays, R.body!.goalBurnKcal], [310, 1, 400]);
+  check('symptoms in time order, open or resolved', R.body!.symptoms.map((s) => [s.day, s.resolved]), [['Mon 5 Oct', false], ['Fri 9 Oct', true]]);
+  check('a meals report has no medicines and no body', [humanReport({ ...FIX, scope: 'meals' }).meds, humanReport({ ...FIX, scope: 'meals' }).body], [null, null]);
+  check('a medicines report has no food and no body', [humanReport({ ...FIX, scope: 'meds' }).food, humanReport({ ...FIX, scope: 'meds' }).body], [null, null]);
+  const empty = humanReport({ ...FIX, meals: [], weights: [], burns: [], medicines: [], doseDays: [], notTaken: [], symptoms: [], episodes: [],
+    targets: { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null } });
+  check('an empty period makes a report of nothing, without dividing by it',
+    [empty.food!.daysLogged, empty.food!.averages[0].avg, empty.food!.withinTarget, empty.meds!.due, empty.body!.change, empty.body!.avgBurn], [0, null, null, 0, null, null]);
+  check('one weight reading has no change', humanReport({ ...FIX, weights: [{ day: '2026-10-04', kg: 72.4 }] }).body!.change, null);
+  // Reading is the default; the file has to be asked for by what it is for.
+  check('a typed request is for reading unless it says otherwise',
+    ['my food report from the past 3 weeks', 'generate a meds report', 'report for my doctor'].map(wantsAiFile), [false, false, false]);
+  check('and for another AI when it says so',
+    ['a report for ai, last month', 'my food report for chatgpt', 'export my full report since monday', 'report as a markdown file', 'full report to give to claude'].map(wantsAiFile),
+    [true, true, true, true, true]);
 
   // A typed request fills in the sheet. 10 Oct 2026 is a Saturday.
   const ask = (t: string) => reportRequest(t, '2026-10-10');
