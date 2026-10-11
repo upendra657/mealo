@@ -138,8 +138,37 @@ export function figuresNote(f: Figures): string {
   const cells = f.cells.map((c) => `${c.label} ${c.value}${c.of ? ` ${c.of}` : ''}`).join('; ');
   return (
     `The app is showing the person this table above your answer (${f.title}): ${cells}. ` +
-    'They can already see these figures. Do not list them again; say what they mean.'
+    'If you mention one of these figures, give it exactly as it is here.'
   );
+}
+
+// ------------------------------------------------------------- elaborate
+//
+// The first answer is a short summary; "Elaborate" under it asks for the
+// long one. Upendra chose the summary he was first given as the base, and
+// asked for the option to go further to be there the moment it arrives, so
+// nobody has to type "tell me more" to get past a five-line answer and
+// nobody is handed a page when a glance was wanted.
+
+/**
+ * What the button sends. An ordinary message on purpose: it goes through
+ * every gate a typed one does, is stored like one, and reads back as the
+ * question it was when the chat is opened again.
+ */
+export const ELABORATE = 'Elaborate on that';
+
+/**
+ * Whether the button belongs under the thread as it stands: the last thing
+ * in it is a model's answer, and that answer was not itself an elaboration.
+ * A second press would only ask for the same detail again, at the person's
+ * cost.
+ */
+export function canElaborate(thread: readonly { kind: string; text?: string }[]): boolean {
+  if (thread.length === 0 || thread[thread.length - 1].kind !== 'answer') return false;
+  for (let i = thread.length - 2; i >= 0; i--) {
+    if (thread[i].kind === 'asked') return thread[i].text !== ELABORATE;
+  }
+  return true;
 }
 
 // ------------------------------------------------------- an answer's shape

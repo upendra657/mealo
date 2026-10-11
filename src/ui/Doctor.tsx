@@ -39,6 +39,8 @@ import { triage } from '../safety/redflags';
 import { filterDoses } from '../safety/dosefilter';
 import {
   answerBlocks,
+  canElaborate,
+  ELABORATE,
   entriesFrom,
   entryTime,
   figuresFor,
@@ -125,9 +127,17 @@ const SYSTEM_PROMPT = [
   '',
   'Style: brief, concrete, no hedging padding. Ask one clarifying question when',
   'it would actually change your answer, otherwise answer.',
-  'Write plain sentences, with a short "-" list only when it helps. No',
-  'headings and no tables. When you are told the app is already showing the',
-  'person a table of figures, do not repeat the figures: say what they mean.',
+  '',
+  'Shape of a first answer: one short opening line, then up to five "-"',
+  'points, each starting with a bold label ("**Meals logged**: ..."), one or',
+  'two lines each. No headings and no tables. Give figures exactly as the',
+  'record has them; never work out a new one. Do not end by offering more:',
+  'the app puts an Elaborate button under your answer.',
+  '',
+  `When the person says "${ELABORATE}", go deeper into your previous answer:`,
+  'what stands out, how each figure sits against its target, what is missing',
+  'from the record and how that limits what can be said. The hard rules above',
+  'still hold.',
   '',
   'You are given the actual record below — meals eaten today by name, doses',
   'taken, open symptoms. Use it. If asked about a meal, refer to what was',
@@ -293,7 +303,9 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       const result = await chat(settings, {
         messages,
         temperature: 0.3,
-        maxTokens: 700,
+        // The long answer is asked for, so it is given room; the first one
+        // is a summary and 700 has always been enough for it.
+        maxTokens: text === ELABORATE ? 1200 : 700,
       });
       // R2 on the way out. The domain layer cannot produce a dose; this covers
       // the model, which can say anything.
@@ -507,6 +519,12 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
               <Answer text={e.text} />
             </div>
           ),
+        )}
+        {!busy && ready && canElaborate(thread) && (
+          <button className="am-more" onClick={() => void send(ELABORATE)}>
+            Elaborate
+            <Chevron dir="down" size={13} />
+          </button>
         )}
         {busy && <p className="am-wait">Reading your records…</p>}
 

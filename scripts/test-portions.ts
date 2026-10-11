@@ -39,7 +39,7 @@ import {
   scrubContacts,
   type Identity,
 } from '../src/safety/deidentify';
-import { answerBlocks, figuresFor, figuresNote, spansOf } from '../src/domain/chat';
+import { answerBlocks, canElaborate, ELABORATE, figuresFor, figuresNote, spansOf } from '../src/domain/chat';
 import { SYMPTOM_GROUPS, SYMPTOM_LABELS, suggestLabel, wordsForModel, WORDS_FOR_MODEL } from '../src/domain/symptomlabels';
 import {
   average,
@@ -2186,6 +2186,26 @@ section('Ask Mealo: the figures the app works out');
   check('"weekend" is not "week"', figuresFor('plans for the weekend', facts, set), null);
   check('the model is told the table is on screen',
     figuresNote(week).startsWith('The app is showing the person this table above your answer (Last 7 days): Calories a day 581 / 1,900 Cal; Protein a day 17 / 90 g;'), true);
+}
+
+section('Ask Mealo: Elaborate');
+{
+  const q = (text: string) => ({ kind: 'asked', text });
+  const a = { kind: 'answer', text: 'A summary.' };
+  check('under a first answer', canElaborate([q('How has my week looked so far?'), a]), true);
+  check('with the app\'s table between question and answer', canElaborate([q('my week'), { kind: 'figures' }, a]), true);
+  check('not under the elaboration itself', canElaborate([q('my week'), a, q(ELABORATE), a]), false);
+  check('back again after the next real question', canElaborate([q('my week'), a, q(ELABORATE), a, q('and today?'), a]), true);
+  check('not while a question has no answer yet', canElaborate([q('my week')]), false);
+  check('not under a red-flag stop', canElaborate([q('chest pain'), { kind: 'stop', text: 'Seek care now' }]), false);
+  check('not under a card or a receipt', canElaborate([q('my week'), a, { kind: 'flow' }]), false);
+  check('not on an empty chat', canElaborate([]), false);
+  // The button sends an ordinary message, so what it sends must not be read
+  // as a request for a report or a table of its own.
+  check('what it sends is not taken for anything else',
+    [reportRequest(ELABORATE, '2026-10-10'), figuresFor(ELABORATE, { nutrition7d: { daysLogged: 2, avgEnergy: 1, avgProtein: 1, avgFat: 1, avgCarbs: 1, avgFibre: 1 },
+      adherence7d: { taken: 0, skipped: 0, missed: 0 }, todayTotals: { energy: 1, protein: 1, fat: 1, carbs: 1, fibre: 1 }, mealsToday: [] },
+      { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null })], [null, null]);
 }
 
 section('Ask Mealo: an answer drawn, not shown as Markdown');

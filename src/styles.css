@@ -3046,6 +3046,22 @@ textarea {
   font-weight: 500;
   color: var(--ink-text);
 }
+/* "Elaborate", under a summary. The quiet green of this screen, not the
+   send button's: it is an offer, and the bar below is still the main way
+   to ask. */
+.am-more {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 7px 10px 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--am-g-tl);
+  background: var(--am-g-tint);
+  font-size: 13.5px;
+  color: var(--am-g);
+}
 /* -- the app's own figures, above what a model says about them */
 .am-eyeb--app {
   color: var(--am-g);
