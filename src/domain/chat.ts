@@ -12,6 +12,7 @@
  * that most needs to be believed as coming from the app.
  */
 
+import { stopOfMessage } from '../safety/gates';
 import { triage } from '../safety/redflags';
 import type { StateFacts } from './state';
 import type { Targets } from './targets';
@@ -21,8 +22,12 @@ export type Entry =
   | { kind: 'asked'; text: string; at: number }
   /** What the model said, after the dose filter. Tagged AI. */
   | { kind: 'answer'; text: string; at: number }
-  /** A red-flag stop. Written by code; no model saw the message. */
-  | { kind: 'stop'; text: string; at: number };
+  /**
+   * A stop: a red flag, or one of the gates in safety/gates.ts. Written by
+   * code; no model saw the message. A red flag has no title of its own and
+   * is drawn as "Seek care now"; a gate carries the one it was given.
+   */
+  | { kind: 'stop'; text: string; at: number; title?: string };
 
 type Stored = { role: string; content: string; created_at: number };
 
@@ -47,7 +52,12 @@ export function entriesFrom(stored: Stored[]): Entry[] {
     const before = stored[i - 1];
     const flagged = before?.role === 'user' ? triage(before.content) : null;
     const stop = !!flagged && flagged.triggered && flagged.message === m.content;
-    out.push({ kind: stop ? 'stop' : 'answer', text: m.content, at: m.created_at });
+    // A gate's stop is known by its words alone. Its texts are fixed and
+    // long, so a model's answer cannot be one by accident, and two of the
+    // gates read the record as it was then, which cannot be asked again now.
+    const gated = stop ? null : stopOfMessage(m.content);
+    if (gated) out.push({ kind: 'stop', text: m.content, at: m.created_at, title: gated.title });
+    else out.push({ kind: stop ? 'stop' : 'answer', text: m.content, at: m.created_at });
   });
   return out;
 }

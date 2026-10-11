@@ -28,8 +28,9 @@ left open — from the change list Upendra approves.
 ```bash
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
-npm run test           # portions + e2e
+npm run test           # portions + safety + e2e
 npm run test:portions  # 798 pure-logic assertions, node, fast
+npm run test:safety    # 861 assertions: what Ask Mealo must stop before a model, and must not
 npm run test:e2e       # 376 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -125,7 +126,17 @@ deterministic triage *before* any call and can end a turn alone. `dosefilter.ts`
 (R2) scans output for a dose adjacent to *instructional* language — quoting the
 user's own record and cited label text are allowed. `deidentify.ts` (R5) is the
 outbound boundary in `llm/adapter.ts`. **These are requirements with tests, not
-decoration.** R1–R3 and R5 are done; R4 is partial; R6 is documentation.
+decoration.** R1–R3, R5 and R7 are done; R4 is partial; R6 is documentation.
+
+**`safety/gates.ts` is R7 and the gates beside it**: disordered eating and
+extreme goals, a change to a medicine, a diagnosis, an empty record. Each
+ends the turn in code with a fixed message and no answer. Every threshold in
+it is quoted from a source read on 11 Oct 2026 and named in the file's
+header; none may be changed, and none added, without a source read the same
+way. Its messages are matched word for word to tell a stop from a model's
+answer when the chat is reopened, so rewording one is a change to stored
+history. A sentence that gets through, or an ordinary one that is stopped,
+goes into `scripts/test-safety.ts` before the pattern is touched.
 
 **Portions.** A dish carries weighed anchors `(measure, quantity, net_weight_g)`
 with macros per 100 g; other measures derive through implied density. A

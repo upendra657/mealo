@@ -36,6 +36,8 @@ import { chat } from '../llm/adapter';
 import { LlmError } from '../llm/types';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
 import { triage } from '../safety/redflags';
+import { emptyRecordStop, gate, type Stop } from '../safety/gates';
+import { weightsSince } from '../domain/weight';
 import { filterDoses } from '../safety/dosefilter';
 import {
   answerBlocks,
@@ -83,6 +85,8 @@ type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
  */
 type FiguresItem = { kind: 'figures'; id: number; figures: Figures };
 type Item = Entry | FlowItem | ReportItem | FiguresItem;
+
+const daysBack = (days: number) => Date.now() - days * 86_400_000;
 
 const spans = (ss: Span[]) => ss.map((s, i) => (s.bold ? <strong key={i}>{s.text}</strong> : s.text));
 
@@ -229,6 +233,17 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
     if (typed) inputRef.current?.focus();
   };
 
+  /** End the turn with a gate's words: shown, stored, and sent to no model. */
+  const stopWith = async (text: string, s: Stop) => {
+    setThread((t) => [
+      ...t,
+      { kind: 'asked', text, at: Date.now() },
+      { kind: 'stop', text: s.message, title: s.title, at: Date.now() },
+    ]);
+    await appendMessage('doctor', 'user', text);
+    await appendMessage('doctor', 'assistant', s.message);
+  };
+
   const send = async (typed = input) => {
     const text = typed.trim();
     if (!text || !settings || busy) return;
@@ -261,6 +276,20 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       return;
     }
 
+    // R7 and the gates beside it: disordered eating and extreme goals, a
+    // change to a medicine, a diagnosis. Like the red flags, each ends the
+    // turn here, in code, and reaches someone who never set up a provider.
+    const gated = gate(text, {
+      calorieTarget: (await loadTargets()).energy_kcal,
+      // Seven weeks back: the weight signal compares readings four to six
+      // weeks apart, and needs the older one.
+      weights: (await weightsSince(daysBack(49))).map((w) => ({ at: w.measured_at, kg: w.kg })),
+    });
+    if (gated) {
+      await stopWith(text, gated);
+      return;
+    }
+
     // A request for a report is read by code and opens the sheet filled in.
     // After the red flags, before any model: making a file needs neither a
     // provider nor a request, and the person still sees the dates and
@@ -279,15 +308,30 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       return;
     }
 
+    // Rebuild the slice now rather than trusting what was loaded on mount.
+    // Logging a meal in another tab and coming back here must not leave
+    // Ask Mealo answering from stale facts — which is exactly how it ends up
+    // giving textbook advice about a dinner it cannot see.
+    const freshFacts = await collectFacts();
+    // With nothing tracked there is nothing to answer from, and an assistant
+    // that answers anyway is a free stand-in doctor, which is what this is
+    // built not to be.
+    const empty = emptyRecordStop(
+      freshFacts.nutrition7d.daysLogged > 0 ||
+        freshFacts.mealsToday.length > 0 ||
+        freshFacts.medications.length > 0 ||
+        freshFacts.openSymptoms.length > 0 ||
+        (await weightsSince(0)).length > 0,
+    );
+    if (empty) {
+      await stopWith(text, empty);
+      return;
+    }
+
     setThread((t) => [...t, { kind: 'asked', text, at: Date.now() }]);
     setBusy(true);
     try {
       await appendMessage('doctor', 'user', text);
-      // Rebuild the slice now rather than trusting what was loaded on mount.
-      // Logging a meal in another tab and coming back here must not leave
-      // Ask Mealo answering from stale facts — which is exactly how it ends up
-      // giving textbook advice about a dinner it cannot see.
-      const freshFacts = await collectFacts();
       const freshSlice = renderSlice(freshFacts);
       setSlice(freshSlice);
       // The figures go up before the model is asked, so they are on screen
@@ -501,12 +545,14 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
             </div>
           ) : e.kind === 'stop' ? (
             <div key={i} className="am-entry">
-              <div className="am-eyeb am-eyeb--bad">
+              <div className={`am-eyeb ${e.title ? 'am-eyeb--warn' : 'am-eyeb--bad'}`}>
                 <i />
                 Stopped by the app · not sent to any AI
               </div>
-              <div className="am-stop">
-                <div className="am-stop-t">Seek care now</div>
+              {/* Red is for an emergency. A gate's stop is amber: it is a
+                  "not here", and must not be read as "go to hospital". */}
+              <div className="am-stop" data-gate={e.title ? '1' : undefined}>
+                <div className="am-stop-t">{e.title ?? 'Seek care now'}</div>
                 <p>{e.text}</p>
               </div>
             </div>

@@ -34,7 +34,7 @@ export const RED_FLAGS: RedFlag[] = [
   {
     id: 'chest-pain',
     pattern:
-      /(chest (pain|pressure|tight)|pain in (my |the )?chest|crushing chest)/,
+      /(chest (pain|pressure|tight)|chest (feels?|is|feeling|felt|getting|got) (so |very |really |quite |a bit )?(tight|heavy)|pain in (my |the )?chest|crushing chest)/,
     advice:
       'Chest pain needs assessing in person now, not by an app. Call emergency services or get to an emergency department. Do not drive yourself.',
     severity: 'emergency',
@@ -142,7 +142,11 @@ export type TriageResult = {
  * fires — the model is never consulted on these.
  */
 export function triage(input: string): TriageResult {
-  const text = input.toLowerCase();
+  // A phone types a curly apostrophe. "I can’t breathe" from an iPhone did
+  // not match a pattern written with a straight one, and the one screen that
+  // must never miss it is the one people type on. Found by the safety suite,
+  // 11 Oct 2026.
+  const text = input.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   for (const flag of RED_FLAGS) {
     if (flag.pattern.test(text)) {
       return {
