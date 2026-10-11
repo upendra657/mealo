@@ -3045,9 +3045,18 @@ textarea {
 }
 .am-sym {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   font-size: 14.5px;
+}
+/* The words under their label, so the list reads by what the app counts. */
+.am-sym small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 .am-sym .link {
   margin-left: auto;
@@ -3228,6 +3237,90 @@ textarea {
 .am-rcpt-undo {
   flex: none;
   color: var(--am-g);
+}
+
+/* -- a symptom's label: the chip on the card, and the list it opens */
+.am-kvv {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.am-lab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Pulled up into the row's own padding: a chip is taller than a line of
+     text, and unpulled it made this the one row on the card that was. */
+  margin-block: -4px 0;
+  padding: 5px 9px 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--am-g-tl);
+  background: var(--am-g-tint);
+  font-size: 14px;
+  color: var(--am-g-ink);
+}
+.am-lab svg {
+  opacity: 0.75;
+}
+/* No label yet, or none wanted: an outline waiting to be filled, not a
+   warning. Logging without one is allowed. */
+.am-lab[data-none] {
+  border-style: dashed;
+  border-color: var(--line);
+  background: none;
+  color: var(--muted);
+}
+.am-sug {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.am-sh-s {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+/* The list is longer than a phone is tall. It scrolls inside the sheet so
+   the title stays put and the sheet never grows past the top of the screen. */
+.am-labs-all {
+  max-height: min(62dvh, 560px);
+  margin-inline: -16px;
+  padding-inline: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.am-labs-all .am-sh-l {
+  margin: 14px 0 7px;
+}
+.am-labs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.am-labs button {
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  color: #c9d3cd;
+}
+.am-labs button[aria-pressed='true'] {
+  border-color: var(--am-g-bd);
+  background: var(--am-g-bg);
+  color: var(--am-g-ink);
+  font-weight: 500;
+}
+.am-labs button[data-none] {
+  border-style: dashed;
+  background: none;
+  color: var(--muted);
+}
+.am-labs button[data-none][aria-pressed='true'] {
+  border-style: solid;
+  border-color: var(--am-g-bd);
+  color: var(--am-g-ink);
 }
 
 /* -- the report: its pill, its sheet, its card */

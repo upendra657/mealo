@@ -24,6 +24,7 @@ import {
   mealSummary,
   nextMark,
   PILLS,
+  symptomReceipt,
   type Mark,
   type Pill,
 } from '../domain/chat';
@@ -32,10 +33,11 @@ import { deleteMeal, draftFromText, saveMeal, type DraftItem } from '../domain/m
 import { describeMeasure } from '../domain/measures';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
 import { guessSlot, slot } from '../domain/slots';
+import { SYMPTOM_GROUPS, suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, removeSymptom } from '../domain/symptoms';
 import { triage } from '../safety/redflags';
 import { DoseRow } from './MedLog';
-import { Tick, fmtQty } from './bits';
+import { Chevron, Sheet, Tick, fmtQty } from './bits';
 
 export type FlowProps = {
   at: number;
@@ -299,9 +301,13 @@ export function DosesFlow({ at, onCancel, onWrote }: FlowProps) {
 // ----------------------------------------------------------------- symptom
 
 export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: FlowProps) {
-  const [logged, setLogged] = useState<string | null>(null);
+  const [logged, setLogged] = useState<{ id: string; label: string | null } | null>(null);
   const [now] = useState(() => Date.now());
-  const saved = savedId ?? logged;
+  // What the person picked, kept with the words it was picked for. "Change"
+  // sends the words back to the bar, and a label chosen for the old ones
+  // must not be waiting on the card when different ones come back.
+  const [choice, setChoice] = useState<{ said: string; label: string | null } | null>(null);
+  const [picking, setPicking] = useState(false);
   const flagged = said !== null ? triage(said) : null;
   // An emergency arrives already saved (see savedId), with an Undo. It is the
   // one write in the app made without a confirmation: nobody should be asked
@@ -310,11 +316,15 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
   // record is for.
   const stop = flagged && flagged.triggered ? flagged.message : null;
 
-  const receipt = saved && (
+  const suggested = said !== null ? suggestLabel(said) : null;
+  const chose = choice !== null && choice.said === said;
+  const label = chose ? choice.label : suggested;
+
+  const receipt = (id: string, as: string | null) => (
     <Receipt
-      text="Saved to your symptoms"
+      text={symptomReceipt(as)}
       onUndo={async () => {
-        await removeSymptom(saved);
+        await removeSymptom(id);
         onWrote();
       }}
     />
@@ -332,12 +342,14 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
           <div className="am-stop-t">Seek care now</div>
           <p>{stop}</p>
         </div>
-        {receipt}
+        {/* Saved by the screen, in the tap, with the same suggestLabel on the
+            same words: nobody was asked to check a label here either. */}
+        {savedId && receipt(savedId, suggested)}
       </div>
     );
   }
 
-  if (saved) return receipt;
+  if (logged) return receipt(logged.id, logged.label);
 
   return (
     <div className="am-entry">
@@ -349,6 +361,29 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
             <div className="am-kv">
               <span className="am-kk">Your words</span>
               <span>{said}</span>
+            </div>
+            <div className="am-kv">
+              <span className="am-kk">Label</span>
+              <span className="am-kvv">
+                <button
+                  className="am-lab"
+                  data-none={label ? undefined : '1'}
+                  onClick={() => setPicking(true)}
+                >
+                  {label ?? (chose ? 'No label' : 'Choose a label')}
+                  <Chevron dir="down" size={13} />
+                </button>
+                {/* Says whose the label is. A suggestion that looks like a
+                    fact is how "my partner has a cough" gets filed under
+                    the wrong person without anyone deciding it. */}
+                {!chose && (
+                  <span className="am-sug">
+                    {suggested
+                      ? 'Suggested from your words. Tap to change.'
+                      : 'Nothing in the list matched. Choose one, or log it without.'}
+                  </span>
+                )}
+              </span>
             </div>
             <div className="am-kv">
               <span className="am-kk">When</span>
@@ -364,7 +399,7 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
               <button
                 className="am-btn am-btn--go"
                 onClick={async () => {
-                  setLogged(await logSymptom(said));
+                  setLogged({ id: await logSymptom(said, { label: label ?? undefined }), label });
                   onWrote();
                 }}
               >
@@ -372,6 +407,44 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
               </button>
             </div>
           </div>
+          <Sheet open={picking} onClose={() => setPicking(false)} label="What kind of symptom?">
+            <div className="am-sh-t">What kind of symptom?</div>
+            <p className="am-sh-s">One label. Your words are kept as you wrote them.</p>
+            <div className="am-labs-all">
+              {SYMPTOM_GROUPS.map((g) => (
+                <div key={g.group}>
+                  <div className="am-eyeb am-sh-l">{g.group}</div>
+                  <div className="am-labs">
+                    {g.labels.map((l) => (
+                      <button
+                        key={l}
+                        aria-pressed={l === label}
+                        onClick={() => {
+                          setChoice({ said, label: l });
+                          setPicking(false);
+                        }}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className="am-eyeb am-sh-l">None of these</div>
+              <div className="am-labs">
+                <button
+                  data-none="1"
+                  aria-pressed={chose && label === null}
+                  onClick={() => {
+                    setChoice({ said, label: null });
+                    setPicking(false);
+                  }}
+                >
+                  No label
+                </button>
+              </div>
+            </div>
+          </Sheet>
         </>
       )}
     </div>

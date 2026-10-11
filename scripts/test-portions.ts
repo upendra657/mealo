@@ -36,8 +36,10 @@ import { daysBetween, spanLabel, whenLabel } from '../src/domain/weight';
 import {
   deidentify,
   describeRedactions,
+  scrubContacts,
   type Identity,
 } from '../src/safety/deidentify';
+import { SYMPTOM_GROUPS, SYMPTOM_LABELS, suggestLabel, wordsForModel, WORDS_FOR_MODEL } from '../src/domain/symptomlabels';
 import {
   average,
   byDay as burnByDay,
@@ -2071,6 +2073,74 @@ section('The "For AI" file');
   check('a question about a report is not a request for one', ask('why does the number in my last report look different from the day screen?'), null);
   check('nor is a message with no report in it', [ask('how has my week looked?'), ask('what did I eat for the past 3 weeks')], [null, null]);
   check('"reported" is not "report"', ask('I reported a headache yesterday'), null);
+}
+
+section('A symptom: the label the app suggests');
+{
+  const label = (t: string) => suggestLabel(t);
+  check('the plain case', label('bloated and gassy since lunch, had rajma chawal'), 'Bloating');
+  // The miss that started this: "itch" found inside another word.
+  check('"twitching" is not itching', label('left eyelid keeps twitching since morning'), null);
+  check('nor is "pitching" or "switching" anything', [label('pitching in at work all day'), label('stomach is switching between fine and awful')], [null, null]);
+  check('the first one named wins', [label('headache, and a bit of nausea'), label('nauseous, then a headache')], ['Headache', 'Nausea']);
+  check('a symptom said to be absent is skipped', [label('no fever but a bad cough since last night'), label('not dizzy any more but nauseous')], ['Cough', 'Nausea']);
+  check('"no appetite" and "no energy" are symptoms, not denials', [label('no appetite since yesterday'), label('no energy at all')], ['Low appetite', 'Tiredness']);
+  check('cold needs its article', [label('I have a cold and a sore throat'), label('had a cold coffee and felt fine'), label('feeling cold in the AC')], ['Cold', null, null]);
+  check('romanised Hindi', [label('sir dard ho raha hai subah se'), label('pet mein dard after pani puri'), label('bukhar 101 since yesterday'), label('khansi aur zukam'), label('saans phool rahi hai')],
+    ['Headache', 'Stomach pain', 'Fever', 'Cough', 'Breathlessness']);
+  check('capitals do not matter', label('HEADACHE since morning'), 'Headache');
+  check('an emergency still gets its label', [label('chest pain going down my left arm'), label("can't breathe properly")], ['Chest pain', 'Breathlessness']);
+  check('words that fit nothing get none', [label('feels like something stuck in my throat'), label(''), label('   ')], [null, null, null]);
+  // Known, and the reason the card shows the label before saving: it reads
+  // words, not who they are about.
+  check('it cannot tell whose cough it is', label('my partner has a cough'), 'Cough');
+
+  check('every label in the list is one a suggestion can name, and only those',
+    [...new Set([
+      'bloated', 'gassy', 'acidity', 'indigestion', 'nauseous', 'vomiting', 'stomach ache', 'loose motions', 'constipated', 'no appetite',
+      'headache', 'migraine', 'dizzy', 'coughing', 'caught a cold', 'blocked nose', 'sore throat', 'short of breath', 'wheezing', 'chest pain', 'palpitations',
+      'fever', 'chills', 'tired', 'weak', 'body ache', 'swollen ankle', 'rash', 'itchy', 'pimples', 'back pain', 'stiff neck', 'joint pain', 'leg cramps', 'toothache', 'period pain',
+      'eye strain', 'ear ache', 'mouth ulcer', 'burning when I pee', 'peeing a lot', "couldn't sleep", 'feeling low', 'anxious', 'stressed',
+    ].map(label))].sort(),
+    [...SYMPTOM_LABELS].sort());
+  check('no label is listed twice', new Set(SYMPTOM_LABELS).size, SYMPTOM_LABELS.length);
+  check('the list he approved on the mock-up is all still there',
+    ['Bloating', 'Gas', 'Acidity', 'Nausea', 'Vomiting', 'Stomach pain', 'Loose motion', 'Constipation', 'Headache', 'Dizziness', 'Cough', 'Cold', 'Sore throat',
+      'Breathlessness', 'Chest pain', 'Fever', 'Tiredness', 'Body ache', 'Rash', 'Itching', 'Back pain', 'Joint pain', 'Poor sleep', 'Low mood', 'Anxiety']
+      .filter((l) => !SYMPTOM_LABELS.includes(l)), []);
+  check('every group has a name and something in it', SYMPTOM_GROUPS.every((g) => g.group.length > 0 && g.labels.length > 0), true);
+}
+
+section('A symptom: the words that travel');
+{
+  const scrub = (t: string) => scrubContacts(t).text;
+  check('an Indian mobile, the ways it is written',
+    [scrub('call 9820155512 now'), scrub('call 98201 55512'), scrub('call +91 98201 55512'), scrub('call 0 98201 55512'), scrub('call +91-98201-55512')],
+    ['call [phone] now', 'call [phone]', 'call [phone]', 'call [phone]', 'call [phone]']);
+  check('a landline with its code, and a foreign number', [scrub('clinic 022 2345 6789'), scrub('ring +65 9123 4567')], ['clinic [phone]', 'ring [phone]']);
+  check('an email address', scrub('wrote to dr.rao@clinic.co.in about it'), 'wrote to [email] about it');
+  check('and it counts what it took', scrubContacts('98201 55512 or rao@clinic.in').count, 2);
+  // What a symptom is full of, and none of it a phone number.
+  const kept = ['sugar 140 180 210 190', 'temp 101.5 at 10 pm', 'took 2 crocin 650 at 9', 'BP 140/90, pulse 88', 'weight 72.4 kg on 11 Oct 2026',
+    'for 3 days since 2026-10-08', 'between 2026-10-01 2026-10-11', '1850 1920 2010 1780 1990 2100 1700', 'pin 400050 flat 1203'];
+  check('readings, doses, dates and a week of calories are left alone', kept.map(scrub), kept);
+  check('a longer number is not cut into', scrub('ref 1234 5678 9012 3456'), 'ref 1234 5678 9012 3456');
+  check('ordinary words redact nothing', scrubContacts('bloated and gassy since lunch').count, 0);
+
+  check('the limit is the one he chose', WORDS_FOR_MODEL, 200);
+  check('short words go whole', wordsForModel('  bloated and gassy\n since lunch '), 'bloated and gassy since lunch');
+  const long = 'Headache again since the afternoon. Dr. Rao at the clinic said to call 98201 55512 if it lasts more than two days. '
+    + 'Took nothing for it yet because I wanted to see whether it passes after dinner and a proper night of sleep, which it usually does.';
+  check('long words stop at a sentence end, with the number gone',
+    wordsForModel(long), 'Headache again since the afternoon. Dr. Rao at the clinic said to call [phone] if it lasts more than two days.');
+  check('"Dr." does not end a sentence', wordsForModel('Felt faint at the gym and went to see Dr. Rao who said rest', 45), 'Felt faint at the gym and went to see Dr.\u2026');
+  check('with no sentence end it stops at a whole word and says there was more',
+    wordsForModel('dizzy every time I stand up from the desk and it has been going on all week', 40), 'dizzy every time I stand up from the\u2026');
+  check('a decimal point at the limit is not a sentence end', wordsForModel('ok. fever was 38.5 this morning', 17), 'ok.');
+  check('never longer than the limit, ellipsis aside', wordsForModel('word '.repeat(100)).length <= WORDS_FOR_MODEL + 1, true);
+  // Scrubbed first: cut first, and "98201 55512" split at the limit leaves
+  // five digits that no longer look like a number to remove.
+  check('a number straddling the limit does not leave half of itself', /\d{4}/.test(wordsForModel('call the clinic on 98201 55512 tomorrow', 26)), false);
 }
 
 // ------------------------------------------------------------------ done

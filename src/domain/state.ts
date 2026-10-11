@@ -12,15 +12,23 @@
  *      Dawa see this summary and never the symptom log behind it.
  *
  *   2. Its output is what crosses the network to a model provider, so it
- *      carries no name, no identifier, no timestamps finer than a day, and no
- *      raw symptom text — only labels the user chose. That is principle P2,
- *      enforced at the point the slice is built rather than hoped for in a
- *      prompt.
+ *      carries no name, no identifier and no timestamps finer than a day.
+ *      That is principle P2, enforced at the point the slice is built rather
+ *      than hoped for in a prompt.
+ *
+ *      A symptom does travel in the person's own words, beside its label.
+ *      This comment said "no raw symptom text" for a long time and the code
+ *      never agreed. Upendra decided it on 11 Oct 2026, with both versions
+ *      in front of him: a label alone lost every trigger and detail, and
+ *      those are what the model is there to read. The words go with phone
+ *      numbers and email addresses taken out and a length limit
+ *      (`wordsForModel`). Someone else's name in them still goes.
  */
 
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import { localDayKey } from './day';
+import { wordsForModel } from './symptomlabels';
 import {
   addDays,
   buildLog,
@@ -73,7 +81,8 @@ export type StateFacts = {
       "was my dinner alright" — only the dishes can. */
   mealsToday: MealSummary[];
   todayTotals: { energy: number; protein: number; fat: number; carbs: number; fibre: number };
-  openSymptoms: { label: string; daysAgo: number; severity: number | null }[];
+  /** `label` is one of the fixed list or null; `words` are already scrubbed and cut. */
+  openSymptoms: { label: string | null; words: string; daysAgo: number; severity: number | null }[];
   nutrition7d: {
     daysLogged: number;
     avgEnergy: number | null;
@@ -315,9 +324,8 @@ export async function collectFacts(): Promise<StateFacts> {
     mealsToday,
     todayTotals,
     openSymptoms: symptoms.map((s) => ({
-      // The label if the user gave one, otherwise a short excerpt. Never the
-      // full free text — that stays local.
-      label: s.label ?? s.raw_text.slice(0, 60),
+      label: s.label,
+      words: wordsForModel(s.raw_text),
       daysAgo: daysAgo(s.noted_at),
       severity: s.severity,
     })),
@@ -394,17 +402,17 @@ export function renderSlice(facts: StateFacts): string {
   }
 
   if (facts.openSymptoms.length) {
-    lines.push(
-      'Open symptoms: ' +
-        facts.openSymptoms
-          .map(
-            (s) =>
-              `${s.label} (noted ${s.daysAgo === 0 ? 'today' : `${s.daysAgo}d ago`}` +
-              (s.severity ? `, severity ${s.severity}/5` : '') +
-              ')',
-          )
-          .join('; '),
-    );
+    // One to a line now that each carries a sentence or two: joined with
+    // semicolons, a symptom's own punctuation made the list unreadable.
+    lines.push('Open symptoms:');
+    for (const s of facts.openSymptoms) {
+      lines.push(
+        `  - ${s.label ? `${s.label}: ` : ''}"${s.words}" ` +
+          `(noted ${s.daysAgo === 0 ? 'today' : `${s.daysAgo}d ago`}` +
+          (s.severity ? `, severity ${s.severity}/5` : '') +
+          ')',
+      );
+    }
   }
 
   const nu = facts.nutrition7d;

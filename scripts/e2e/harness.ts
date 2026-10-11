@@ -227,6 +227,24 @@ async function main() {
   check('the row is kept, marked deleted and not resolved',
     symRow.length === 1 && symRow[0].deleted_at !== null && symRow[0].resolved_at === null, JSON.stringify(symRow));
 
+  // A label beside the words. The slice sends both, and the words leave
+  // without the phone number or the address that were typed into them.
+  const labelled = await logSymptom('Headache again. Dr Rao said call 98201 55512 or rao@clinic.in if it lasts.', { label: 'Headache' });
+  const plain = await logSymptom('left eyelid keeps twitching since morning');
+  const symStored = await query<{ id: string; label: string | null; raw_text: string }>(
+    'SELECT id, label, raw_text FROM symptoms WHERE id IN (?, ?)', [labelled, plain]);
+  const stored = (id: string) => symStored.find((r) => r.id === id);
+  check('the label is saved with the symptom', stored(labelled)?.label === 'Headache', JSON.stringify(symStored));
+  check('a symptom may be saved with none', stored(plain)?.label === null, JSON.stringify(symStored));
+  check('the record keeps the words exactly as typed', stored(labelled)?.raw_text.includes('98201 55512') === true, stored(labelled)?.raw_text);
+  const symSlice = renderSlice(await collectFacts());
+  check('the slice gives the label, then the words',
+    symSlice.includes('  - Headache: "Headache again. Dr Rao said call [phone] or [email] if it lasts." (noted today)'), symSlice);
+  check('the number and the address do not leave', !symSlice.includes('98201') && !symSlice.includes('rao@clinic.in'), symSlice);
+  check('with no label, the words alone', symSlice.includes('  - "left eyelid keeps twitching since morning" (noted today)'), symSlice);
+  await removeSymptom(labelled);
+  await removeSymptom(plain);
+
   // ---- the boundary still holds -----------------------------------------
   let threw = false;
   try {

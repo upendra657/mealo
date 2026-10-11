@@ -147,6 +147,11 @@ export function mealReceipt(slotLabel: string, dishes: number, kcal: number): st
   return `Logged to ${slotLabel.toLowerCase()} \u00b7 ${plural(dishes, 'dish', 'dishes')} \u00b7 ${kcal.toLocaleString('en-US')} Cal`;
 }
 
+/** A symptom's receipt names its label, so a wrong one is seen while Undo is still there. */
+export function symptomReceipt(label: string | null): string {
+  return label ? `Saved to your symptoms · ${label}` : 'Saved to your symptoms';
+}
+
 /** What a dose's circle holds on the card, before anything is saved. */
 export type Mark = 'taken' | 'skipped' | null;
 

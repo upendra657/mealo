@@ -180,6 +180,70 @@ export function deidentify(
   return { messages: out, redactions };
 }
 
+/**
+ * Something a person wrote that reads as an email address.
+ */
+const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+
+/**
+ * A run of digits long enough to be a phone number, single spaces or hyphens
+ * allowed between them. What it is gets decided in `scrubContacts`, by
+ * counting; one pattern for every way a number is written was tried and
+ * could not tell "98201 55512" from "140 180 210 190".
+ *
+ * It refuses to start or stop inside a longer number, a decimal, or a longer
+ * row of groups, so a sixteen-digit number or a long list of readings is
+ * left whole rather than having ten digits taken out of its middle.
+ */
+const DIGIT_RUN = /(?<![\w.+]|\d[ -])\+?\d(?:[ -]?\d){7,14}(?![\w]|\.\d|[ -]\d)/g;
+
+/**
+ * Phone numbers and email addresses out of free text a person wrote, before
+ * the app puts that text into something it sends.
+ *
+ * Run where the free text enters, not inside `deidentify` on every message,
+ * and that is deliberate. The boundary also carries the app's own figures: a
+ * week of calories reads "1850 1920 2010 1780", and a rule loose enough to
+ * catch every phone number will sooner or later take a row of those for
+ * one. A missing figure in a payload is worse than the leak it prevents is
+ * likely, because the model is told the figures are exact. So the caller
+ * that quotes a person's words scrubs them (today: a symptom's words, in
+ * domain/symptomlabels.ts), and the figures never pass through here.
+ *
+ * It is also not run on the message a person is sending now. Those words are
+ * theirs, for the same reason a date they typed is left alone above.
+ *
+ * What counts as a phone number:
+ *   - anything written with a leading +, 8 to 15 digits (the E.164 limit);
+ *   - otherwise 10 to 12 digits in at most three groups: "9820155512",
+ *     "98201 55512", "022 2345 6789", "0 98201 55512". Four groups is how a
+ *     list of readings is written, and those are kept.
+ * A twelve-digit Aadhaar-style number in three groups goes too, as [phone].
+ * The wrong word for it, and still the right outcome.
+ *
+ * Other people's names are not caught. "Dr Rao's clinic" leaves as written:
+ * nothing here can tell a name from any other capitalised word, and Upendra
+ * decided (11 Oct 2026) that numbers and addresses are what must not travel.
+ */
+export function scrubContacts(text: string): { text: string; count: number } {
+  let count = 0;
+  const noMail = text.replace(EMAIL, () => {
+    count++;
+    return '[email]';
+  });
+  const out = noMail.replace(DIGIT_RUN, (run) => {
+    const digits = run.replace(/\D/g, '').length;
+    const groups = run.split(/[ -]/).length;
+    const phone = run.startsWith('+') ? digits <= 15 : digits >= 10 && digits <= 12 && groups <= 3;
+    // A date is eight digits and never reaches ten, but two dates side by
+    // side do: "2026-10-01 2026-10-11" is not a number to ring.
+    if (!phone || /\d{4}-\d{2}-\d{2}/.test(run)) return run;
+    count++;
+    return '[phone]';
+  });
+  return { text: out, count };
+}
+
 /** One line for the verification view. Empty when the payload was clean. */
 export function describeRedactions(rs: readonly Redaction[]): string {
   if (rs.length === 0) return '';

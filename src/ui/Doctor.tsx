@@ -13,9 +13,8 @@
  *   2. What crosses the network is a de-identified slice assembled from the
  *      local record — no name, no identifiers — plus a rolling summary
  *      rather than the full history. A logged symptom does travel in the
- *      person's own words, cut to 60 characters (domain/state.ts): the
- *      comment here said "no raw symptom text" for a long time and the code
- *      never agreed with it.
+ *      person's own words, beside its label, with phone numbers and email
+ *      addresses taken out (domain/state.ts says why).
  *
  * The screen is a notebook, not a messenger: each question is an entry, and
  * what the model wrote under it is marked AI. No bubbles and no avatar, on
@@ -40,6 +39,7 @@ import { triage } from '../safety/redflags';
 import { filterDoses } from '../safety/dosefilter';
 import { entriesFrom, entryTime, PILLS, TRY_ASKING, type Entry, type Pill } from '../domain/chat';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
+import { suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
 import { readMedsDay } from '../domain/medications';
 import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
@@ -183,7 +183,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
     if (flow) {
       setAwaiting(null);
       const urgent = flow.pill === 'symptom' && triage(text).triggered;
-      const savedId = urgent ? await logSymptom(text) : null;
+      const savedId = urgent ? await logSymptom(text, { label: suggestLabel(text) ?? undefined }) : null;
       patchFlow(flow.id, { said: text, savedId });
       if (urgent) void refresh();
       return;
@@ -299,16 +299,20 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
           <div className="am-eyeb">Exactly what leaves this device</div>
           <pre>{slice || '(nothing yet)'}</pre>
           <p>
-            No name and no identifiers. A symptom you logged appears in your
-            own words, cut to 60 characters. Assembled fresh each time you ask,
-            from your records.
+            No name and no identifiers. A symptom you logged appears as its
+            label and your own words, up to the end of a sentence, with phone
+            numbers and email addresses taken out. Assembled fresh each time
+            you ask, from your records.
           </p>
           {symptoms.length > 0 && (
             <>
               <div className="am-eyeb">Open symptoms</div>
               {symptoms.map((s) => (
                 <div key={s.id} className="am-sym">
-                  <span>{s.label ?? s.raw_text}</span>
+                  <span>
+                    {s.label ?? 'No label'}
+                    <small>{s.raw_text}</small>
+                  </span>
                   <button
                     className="link"
                     onClick={async () => {
