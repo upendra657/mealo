@@ -18,6 +18,7 @@
  */
 
 import { activeProfile } from '../lib/active-profile';
+import { noteChange } from '../lib/changes';
 import { bulkInsert, insert, query, run, softDelete, update } from './client';
 
 /**
@@ -262,6 +263,21 @@ export type ScopedDb = ReturnType<typeof scopedDb>;
  * follows the active profile instead of pinning whichever one was selected
  * when the module first ran.
  */
+/**
+ * Tables whose rows decide whether a reminder rings and what it says.
+ *
+ * A write to one is announced (`lib/changes.ts`) after it has succeeded, and
+ * the reminders are rebuilt from the record: a ticked dose must not ring.
+ * Announced here because this is the one place every agent's write passes,
+ * so a write path added next year cannot forget to. It changes nothing
+ * about what is allowed: the checks above it run first, exactly as before,
+ * and a write that is refused or fails is never announced.
+ */
+const RINGS = new Set(['medications', 'med_doses', 'intake_events', 'sick_episodes', 'meals', 'meal_items']);
+const rang = (tables: string[]) => {
+  if (tables.some((t) => RINGS.has(t))) noteChange();
+};
+
 export function scopedDb(agent: Agent, profileId: () => string = activeProfile) {
   return {
     agent,
@@ -278,9 +294,11 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
 
     /** Write raw SQL. Same check, against the write scope. */
     async run(sql: string, bind?: unknown[]): Promise<void> {
-      for (const t of tablesIn(sql)) assertAllowed(agent, t, 'write');
+      const tables = tablesIn(sql);
+      for (const t of tables) assertAllowed(agent, t, 'write');
       assertProfileFiltered(sql);
-      return run(sql, bind);
+      await run(sql, bind);
+      rang(tables);
     },
 
     async insert(
@@ -295,7 +313,9 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
         isProfileScoped(table) && values.profile_id === undefined
           ? { ...values, profile_id: profileId() }
           : values;
-      return insert(table, row);
+      const id = await insert(table, row);
+      rang([table]);
+      return id;
     },
 
     async update(
@@ -304,7 +324,8 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
       values: Record<string, unknown>,
     ): Promise<void> {
       assertAllowed(agent, table, 'write');
-      return update(table, id, values);
+      await update(table, id, values);
+      rang([table]);
     },
 
     /** Many rows at once, for the reference lists; refused for anyone's record. */
@@ -318,7 +339,8 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
 
     async softDelete(table: string, id: string): Promise<void> {
       assertAllowed(agent, table, 'write');
-      return softDelete(table, id);
+      await softDelete(table, id);
+      rang([table]);
     },
   };
 }

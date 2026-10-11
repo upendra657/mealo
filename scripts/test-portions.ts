@@ -2393,6 +2393,87 @@ import { stampFor } from '../src/domain/plan';
     ['Planned for Mon 12 Oct: 3 meals, 7 dishes, 1,640 Cal. In Track meals.', 'Planned for Mon 12 Oct: 1 meal, 1 dish, 300 Cal. In Track meals. The card showed 2 dishes; 1 were saved.']);
 }
 
+// ------------------------------------------------------------ reminders
+import { clockOn, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+{
+  const on: ReminderSettings = { ...DEFAULT_REMINDERS, on: true, profileId: 'primary' };
+  const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  // Sunday 11 Oct 2026, 10:00.
+  const now = at(11, 10);
+
+  check('a clock time on a day', clockOn('2026-10-11', '08:00'), at(11, 8));
+  check('before three is the night of the day before, so the next calendar day', clockOn('2026-10-11', '00:30'), at(12, 0, 30));
+  check('three itself is the morning of the day', clockOn('2026-10-11', '03:00'), at(11, 3));
+  check('what a clock time looks like', ['08:00', '23:59', '00:00', '8:00', '24:00', '12:60', '', null, 800].map(isClock), [true, true, true, false, false, false, false, false, false]);
+  check('each default sits inside its part of the day', Object.values(DEFAULT_REMINDERS.times).map((t) => partOfDay(new Date(clockOn('2026-10-11', t)))), ['morning', 'afternoon', 'evening', 'night']);
+  check('off until turned on, and names off until chosen', [DEFAULT_REMINDERS.on, DEFAULT_REMINDERS.names], [false, false]);
+  check('fourteen days, today first', [SCHEDULE_DAYS, scheduleDays('2026-10-11').length, scheduleDays('2026-10-11')[0], scheduleDays('2026-10-11')[13]], [14, 14, '2026-10-11', '2026-10-24']);
+
+  const days = [
+    { day: '2026-10-11', groups: [{ time: 'morning' as const, names: ['Metformin'] }, { time: 'night' as const, names: ['Metformin', 'Atorvastatin'] }, { time: 'evening' as const, names: [] }] },
+    { day: '2026-10-12', groups: [{ time: 'morning' as const, names: ['Metformin'] }] },
+  ];
+  const rings = doseRings(days, on, now);
+  check('one ring for each part of the day with something to take', rings.map((r) => r.at), [at(11, 21, 30), at(12, 8)]);
+  check('this morning has passed and does not ring', rings.some((r) => r.at === at(11, 8)), false);
+  check('a part of the day with nothing left does not ring', rings.some((r) => r.title.startsWith('Evening')), false);
+  check('the lock screen names no medicine unless asked', rings.map((r) => [r.title, r.body]), [['Night medicines', '2 to take. Open Mealo to tick them.'], ['Morning medicines', 'One to take. Open Mealo to tick it.']]);
+  const named = doseRings(days, { ...on, names: true }, now);
+  check('asked, it names them', named.map((r) => r.body), ['Metformin, Atorvastatin', 'Metformin']);
+  // R2: an amount is never the app's to state, least of all on a lock screen.
+  const loud = doseRings([{ day: '2026-10-12', groups: [{ time: 'morning' as const, names: ['Metformin 500 mg'] }] }], { ...on, names: true }, now);
+  check('and with names off, a strength in a medicine\'s name stays off the lock screen', /500|mg/.test(JSON.stringify(doseRings([{ day: '2026-10-12', groups: [{ time: 'morning' as const, names: ['Metformin 500 mg'] }] }], on, now))), false);
+  check('names on shows the name as the person wrote it, nothing added', loud[0].body, 'Metformin 500 mg');
+  check('no reminder text carries a number of tablets or a unit', [...rings, ...named].some((r) => /\b\d+(\.\d+)?\s*(mg|ml|tablets?|g|mcg|drops?|scoops?)\b/i.test(`${r.title} ${r.body}`)), false);
+  check('the same medicine twice at one time is named once', doseRings([{ day: '2026-10-12', groups: [{ time: 'morning' as const, names: ['Metformin', 'Metformin'] }] }], { ...on, names: true }, now)[0].body, 'Metformin');
+  check('doses switched off: none', doseRings(days, { ...on, doses: false }, now), []);
+  check('a chosen time is the time', doseRings(days, { ...on, times: { ...on.times, night: '22:15' } }, now)[0].at, at(11, 22, 15));
+
+  const meals = mealRings(['2026-10-11', '2026-10-12', '2026-10-13'], new Set(), on, now);
+  check('the evening nudge, each day', meals.map((r) => r.at), [at(11, 21), at(12, 21), at(13, 21)]);
+  check('not on a day that has a meal', mealRings(['2026-10-11', '2026-10-12'], new Set(['2026-10-11']), on, now).map((r) => r.at), [at(12, 21)]);
+  check('not once its time has passed', mealRings(['2026-10-11'], new Set(), on, at(11, 21, 1)), []);
+  check('switched off: none', mealRings(['2026-10-11'], new Set(), { ...on, meals: false }, now), []);
+  // His decision, 10 Oct: plain. No guilt, no streaks, nothing about calories.
+  const words = [...rings, ...named, ...meals].map((r) => `${r.title} ${r.body}`).join(' ').toLowerCase();
+  check('plain words: no guilt, no streak, no calories, no "should"', ['streak', 'calorie', 'kcal', 'should', 'forgot', 'missed', 'again', "don't", 'must', '!'].filter((w) => words.includes(w)), []);
+  check('soonest first, and no more than the relay holds', [inOrder([...meals, ...rings]).map((r) => r.at)[0], inOrder(Array.from({ length: 150 }, (_, i) => ({ ...meals[0], at: now + i }))).length], [at(11, 21), 100]);
+
+  check('stored settings are read back whole', readSettings({ on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30' }),
+    { on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30' });
+  check('nothing stored is the defaults', readSettings(undefined), DEFAULT_REMINDERS);
+  check('a broken time falls back to its default, the rest is kept', readSettings({ on: true, times: { morning: 'early', night: '23:00' }, mealTime: 9 }),
+    { ...DEFAULT_REMINDERS, on: true, times: { ...DEFAULT_REMINDERS.times, night: '23:00' } });
+  check('"on" is only ever a real true', [readSettings({ on: 'yes' }).on, readSettings({ on: 1 }).on, readSettings({ names: 'true' }).names], [false, false, false]);
+
+  // ---- the service worker's half, loaded from the file phones run
+  const sw = runInNewContext(`${readFileSync('public/push-sw.js', 'utf8')}; ({ pickRings, FALLBACK })`, {}) as {
+    pickRings: (note: unknown, now: number) => { at: number; title: string }[];
+    FALLBACK: { title: string; body: string };
+  };
+  const note = [
+    { at: at(11, 8), kind: 'doses', title: 'Morning medicines', body: 'x' },
+    { at: at(11, 21), kind: 'meals', title: 'Today’s meals', body: 'x' },
+    { at: at(11, 21, 30), kind: 'doses', title: 'Night medicines', body: 'x' },
+    { at: at(12, 8), kind: 'doses', title: 'Morning medicines', body: 'x' },
+  ];
+  const picked = (h: number, m = 0, n: unknown = note) => sw.pickRings(n, at(11, h, m)).map((r) => r.title);
+  check('a push on the minute shows that minute\'s ring', picked(21), ['Today’s meals']);
+  check('and not the one half an hour later', picked(21).includes('Night medicines'), false);
+  check('a push a minute early still finds it', picked(20, 59), ['Today’s meals']);
+  check('one delivered late, to a phone that was off, still finds it', picked(21, 50), ['Today’s meals', 'Night medicines']);
+  check('more than an hour late, it is not shown as if it were now', picked(22, 40), []);
+  check('a ring already shown is not shown again', picked(21, 0, note.map((r) => ({ ...r, shown: true }))), []);
+  check('no list, a broken list: nothing picked, and no crash', [picked(21, 0, null), picked(21, 0, 'x'), picked(21, 0, [null, 5, {}])], [[], [], []]);
+  // iOS withdraws a subscription after three pushes that show nothing.
+  check('there is always a line to show', [typeof sw.FALLBACK.title, sw.FALLBACK.body.length > 10], ['string', true]);
+  const src = readFileSync('public/push-sw.js', 'utf8');
+  check('the worker reads the key the app writes', [/NOTE_KEY = 'reminders\.note'/.test(src), /NOTE_KEY = 'reminders\.note'/.test(readFileSync('src/domain/remindersync.ts', 'utf8'))], [true, true]);
+  check('every push ends in showNotification, whatever happened before it', /if \(rings\.length === 0\) rings = \[FALLBACK\];\s+await Promise\.all\(\s+rings\.map\(\(r\) =>\s+self\.registration\.showNotification/.test(src), true);
+}
+
 // ------------------------------------------------------------------ done
 
 console.log(`\n${passed} passed, ${failed} failed`);

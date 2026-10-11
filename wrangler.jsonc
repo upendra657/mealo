@@ -28,7 +28,21 @@
 		// Without this the SPA fallback answers /sync/* with index.html and the
 		// client parses HTML as JSON. Assets still win everywhere else.
 		"run_worker_first": [
-			"/sync/*"
+			"/sync/*",
+			"/push/*"
+		]
+	},
+	// Reminders: once a minute the Worker sends an empty push to whichever
+	// phones are due (worker/index.ts, "Reminders"). One trigger of the five
+	// the free plan allows. It does nothing at all until the three VAPID
+	// secrets are set, which only whoever runs this deployment can do:
+	//   node scripts/vapid-keys.mjs
+	//   npx wrangler secret put VAPID_PUBLIC_KEY
+	//   npx wrangler secret put VAPID_PRIVATE_KEY
+	//   npx wrangler secret put VAPID_SUBJECT
+	"triggers": {
+		"crons": [
+			"* * * * *"
 		]
 	},
 	// Created with:  npx wrangler d1 create mealo-sync

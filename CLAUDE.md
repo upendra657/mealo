@@ -29,10 +29,10 @@ left open — from the change list Upendra approves.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
-npm run test:portions  # 901 pure-logic assertions, node, fast
+npm run test:portions  # 939 pure-logic assertions, node, fast
 npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 442 assertions against real OPFS SQLite, headless browser
-npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
+npm run test:e2e       # 456 assertions against real OPFS SQLite, headless browser
+npm run test:relay     # 48 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
 ```
@@ -219,6 +219,23 @@ copy back on any failure. Never weaken a step of that order. A backup holds
 no API key and no pairing code, on purpose: both live in IndexedDB, and a
 key in a file in Downloads has left the place built to keep it.
 
+**Reminders: the relay learns the times and nothing else.** Due doses and
+an evening meal nudge, by web push (`domain/reminders.ts`, `remindersync.ts`,
+`public/push-sw.js`, "Reminders" in `worker/index.ts`). The phone works out
+its next 14 days of rings from the record, keeps the list with its words in
+IndexedDB, and sends the relay only the minutes. The relay's cron sends an
+empty push at each; the service worker reads the phone's own list and shows
+what falls on that minute. The whole list is replaced each time, which is
+how a ticked dose stops ringing, and `db/scope.ts` announces every write to
+a table a ring depends on so no write path can forget to. Three things must
+stay true: a push always shows a notification (iOS withdraws a subscription
+after three that do not); no reminder ever carries an amount, names on or
+off (R2); the permission prompt is raised only by the tap on the switch.
+The VAPID keys are Worker secrets Upendra sets himself
+(`scripts/vapid-keys.mjs`); never generate, read or ask for the private one.
+`/__scheduled` does not reach this Worker in `wrangler dev` (the SPA
+fallback answers it); the test uses `/cdn-cgi/handler/scheduled`.
+
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.
 
@@ -319,8 +336,9 @@ right about his own kitchen.
 ## Status
 
 Phases 0–4 complete, including R5. Phase 4.5 (two people) done. **Phase 5 ~30%** —
-encrypted delta sync works for the food and medicine libraries; passphrase, encrypted export,
-health-table sync and web push are open. **Phase 6 barely started** — the LICENSE (MIT) is in
+encrypted delta sync works for the food and medicine libraries, and reminders by web push are
+built (asleep until the VAPID secrets are set); passphrase, encrypted export and health-table
+sync are open. **Phase 6 barely started** — the LICENSE (MIT) is in
 and the README's facts were corrected in Oct 2026; no CONTRIBUTING, no CI, and the
 README's full rewrite waits for the demo. See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
 rough edges.

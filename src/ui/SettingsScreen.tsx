@@ -22,6 +22,7 @@ import { describeRedactions } from '../safety/deidentify';
 import { LlmError } from '../llm/types';
 import { saveFile } from '../db/client';
 import { BackupCard } from './BackupCard';
+import { RemindersCard } from './RemindersCard';
 import { listSnapshots, snapshotFile, type Snapshot } from '../db/snapshots';
 import { formatBytes } from '../lib/persist';
 
@@ -109,6 +110,7 @@ export function SettingsScreen({
         <Chevron dir="right" />
       </button>
     <div className="stack">
+      <RemindersCard />
       <section className="card">
         <h2>Model provider</h2>
 

@@ -23,6 +23,7 @@ import { initFoodLibrary } from './domain/foods';
 import { syncLibrary } from './domain/relay';
 import { startLists } from './domain/refdata';
 import { startFoods } from './domain/seed';
+import { startReminders } from './domain/remindersync';
 import { BurnScreen } from './ui/BurnScreen';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
@@ -90,6 +91,12 @@ export default function App() {
         // is awaited — search simply has fewer suggestions until they finish
         // — and neither can stop the app opening.
         void startLists().catch((e) => console.warn('[meds] reference lists:', e));
+
+        // Reminders: bring this phone's next fortnight of rings in step with
+        // the record, now and after every change. Does nothing unless they
+        // were turned on here, and never raises the permission prompt: only
+        // the switch in settings does that.
+        startReminders();
       } catch (e) {
         setFailed(e instanceof Error ? e.message : String(e));
       }

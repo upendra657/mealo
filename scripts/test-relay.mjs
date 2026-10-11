@@ -15,6 +15,8 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { webcrypto } from 'node:crypto';
 
 /**
  * A free-ish port per run, so a wrangler left over from an interrupted run
@@ -70,8 +72,10 @@ const pull = (household, device, since) =>
 // by another. Now it runs the one pinned in package.json, or stops and says
 // so if `npm install` has not been run.
 try {
-  execFileSync('npx', ['--no', 'wrangler', 'd1', 'execute', 'mealo-sync', '--local',
-    '--file=migrations/0001_batches.sql'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  for (const file of ['migrations/0001_batches.sql', 'migrations/0002_push.sql']) {
+    execFileSync('npx', ['--no', 'wrangler', 'd1', 'execute', 'mealo-sync', '--local',
+      `--file=${file}`], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  }
 } catch (e) {
   const said = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim().slice(-600) || '(nothing)';
   console.error(
@@ -81,8 +85,65 @@ try {
   process.exit(1);
 }
 
+// ---- reminders: a key pair for this run, and a stand-in push service ------
+//
+// A throwaway pair, made here and gone when the run ends. The real one is a
+// Worker secret that only whoever runs the deployment ever sees.
+const b64url = (bytes) => Buffer.from(bytes).toString('base64url');
+const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+const VAPID_PUBLIC = b64url(new Uint8Array(await webcrypto.subtle.exportKey('raw', pair.publicKey)));
+const VAPID_PRIVATE = (await webcrypto.subtle.exportKey('jwk', pair.privateKey)).d;
+
+/**
+ * What Apple, Google and Mozilla are to the relay: a URL it POSTs to. This
+ * one writes down what it was sent and answers as told, so the run can see
+ * the exact request a real push service would have received.
+ */
+const PUSH_PORT = PORT + 500;
+const PUSH_ORIGIN = `http://127.0.0.1:${PUSH_PORT}`;
+const received = [];
+const answers = new Map();
+const pushService = createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => (body += c));
+  req.on('end', () => {
+    received.push({ path: req.url, method: req.method, headers: req.headers, body });
+    const queue = answers.get(req.url) ?? [];
+    res.statusCode = queue.length ? queue.shift() : 201;
+    res.end();
+  });
+});
+await new Promise((r) => pushService.listen(PUSH_PORT, '127.0.0.1', r));
+
 const dev = spawn('npx', ['--no', 'wrangler', 'dev', '--local', '--port', String(PORT),
-  '--ip', '127.0.0.1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  '--ip', '127.0.0.1', '--test-scheduled',
+  '--var', `VAPID_PUBLIC_KEY:${VAPID_PUBLIC}`, '--var', `VAPID_PRIVATE_KEY:${VAPID_PRIVATE}`,
+  '--var', 'VAPID_SUBJECT:mailto:relay-test@example.com', '--var', `PUSH_TEST_ORIGIN:${PUSH_ORIGIN}`],
+  { stdio: ['ignore', 'pipe', 'pipe'] });
+
+const post = (path, body) =>
+  fetch(`${BASE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    .then((r) => r.json().then((j) => ({ s: r.status, j })));
+/**
+ * One turn of the cron, as wrangler runs it for a test.
+ *
+ * Not `/__scheduled`, the path most guides give: this Worker serves a
+ * single-page app, so that path is answered by the asset fallback with
+ * index.html and a 200, and the handler never runs. Seventeen checks failed
+ * that way before the path was looked at. `/cdn-cgi/` is the runtime's own
+ * and is never handed to the assets.
+ */
+const tick = async () => {
+  const said = await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*+*+*+*+*`).then((r) => r.text());
+  if (said.trim() !== 'ok') throw new Error(`the cron did not run: ${said.slice(0, 80)}`);
+};
+/** Rows the relay holds for one browser, read straight from its database. */
+const ringsHeld = (endpoint) => {
+  const out = execFileSync('npx', ['--no', 'wrangler', 'd1', 'execute', 'mealo-sync', '--local', '--json',
+    `--command=SELECT COUNT(*) AS n FROM push_rings WHERE endpoint = '${endpoint}'`],
+    { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 }).toString();
+  return JSON.parse(out.slice(out.indexOf('[')))[0].results[0].n;
+};
 
 const ready = new Promise((res, rej) => {
   let log = '';
@@ -136,10 +197,86 @@ try {
   const quiet = await pull(H, 'phone-b', b2.j.cursor);
   ok('an empty pull returns nothing', quiet.j.batches.length === 0);
   ok('and never rewinds the cursor', quiet.j.cursor >= b2.j.cursor);
+
+  // ---- reminders ---------------------------------------------------------
+  const MIN = 60_000;
+  const now = Date.now();
+  const mine = `${PUSH_ORIGIN}/send/${b32()}`;
+
+  console.log('\nReminders: what the relay will and will not take');
+  ok('the public key is handed out', (await fetch(`${BASE}/push/key`).then((r) => r.json())).key === VAPID_PUBLIC);
+  ok('the private key is not in that answer', !(await fetch(`${BASE}/push/key`).then((r) => r.text())).includes(VAPID_PRIVATE));
+  ok('an endpoint that is no push service is refused', (await post('/push/schedule', { endpoint: 'https://example.com/hook', times: [now] })).s === 400);
+  ok('plain http at a real push host is refused', (await post('/push/schedule', { endpoint: 'http://fcm.googleapis.com/fcm/send/x', times: [now] })).s === 400);
+  ok('a real push host is accepted', (await post('/push/schedule', { endpoint: `https://fcm.googleapis.com/fcm/send/${b32()}`, times: [] })).s === 200);
+  ok('so is Apple\'s', (await post('/push/schedule', { endpoint: `https://web.push.apple.com/${b32()}`, times: [] })).s === 200);
+  ok('a host that only ends like one is refused', (await post('/push/schedule', { endpoint: 'https://evil-push.apple.com.example.org/x', times: [] })).s === 400);
+  ok('times must be a list', (await post('/push/schedule', { endpoint: mine, times: 'soon' })).s === 400);
+  ok('of numbers', (await post('/push/schedule', { endpoint: mine, times: ['08:00'] })).s === 400);
+  ok('no more than a hundred', (await post('/push/schedule', { endpoint: mine, times: Array.from({ length: 101 }, (_, i) => now + i * MIN) })).s === 400);
+  ok('and none more than fifteen days ahead', (await post('/push/schedule', { endpoint: mine, times: [now + 16 * 86_400_000] })).s === 400);
+  ok('an unknown push route', (await fetch(`${BASE}/push/nope`)).status === 404);
+
+  console.log('\nReminders: a ring');
+  const set = await post('/push/schedule', { endpoint: mine, times: [now, now + 3 * 86_400_000, now - 10 * MIN] });
+  ok('due now and in three days are kept, one already past is dropped', set.j.rings === 2, JSON.stringify(set.j));
+  await tick();
+  const got = received.filter((r) => r.path === new URL(mine).pathname);
+  ok('the push service is sent one request', got.length === 1, String(got.length));
+  ok('a POST with no body at all', got[0]?.method === 'POST' && got[0]?.body === '' && got[0]?.headers['content-length'] === '0', JSON.stringify(got[0]?.headers));
+  ok('kept for an hour if the phone is off', got[0]?.headers.ttl === '3600');
+  ok('marked urgent, so a sleeping phone is woken', got[0]?.headers.urgency === 'high');
+
+  // The signature is the part a real push service checks, and the part that
+  // cannot be seen to be wrong until Apple answers 403.
+  const auth = /^vapid t=([\w-]+\.[\w-]+\.[\w-]+), k=([\w-]+)$/.exec(got[0]?.headers.authorization ?? '');
+  ok('signed the VAPID way', !!auth, got[0]?.headers.authorization);
+  const [head, claims, sig] = (auth?.[1] ?? '..').split('.');
+  const parsed = (part) => JSON.parse(Buffer.from(part, 'base64url').toString() || '{}');
+  ok('with the key it hands to phones', auth?.[2] === VAPID_PUBLIC);
+  ok('the signature verifies against that key', await webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pair.publicKey,
+    Buffer.from(sig, 'base64url'), new TextEncoder().encode(`${head}.${claims}`)));
+  ok('an ES256 JWT', parsed(head).alg === 'ES256' && parsed(head).typ === 'JWT', JSON.stringify(parsed(head)));
+  ok('for this push service and no other', parsed(claims).aud === PUSH_ORIGIN, parsed(claims).aud);
+  const life = parsed(claims).exp - now / 1000;
+  ok('valid for under a day, as the RFC requires', life > 0 && life <= 24 * 3600, String(life));
+  ok('with someone to contact', parsed(claims).sub === 'mailto:relay-test@example.com');
+  ok('and nothing else: no name, no medicine, no time', Object.keys(parsed(claims)).sort().join() === 'aud,exp,sub');
+
+  await tick();
+  ok('a ring is sent once', received.filter((r) => r.path === new URL(mine).pathname).length === 1);
+  ok('the one three days off is still waiting', ringsHeld(mine) === 1);
+
+  console.log('\nReminders: ticked, failed, gone');
+  // A new schedule replaces the old one: this is how a ticked dose cancels.
+  const again = `${PUSH_ORIGIN}/send/${b32()}`;
+  await post('/push/schedule', { endpoint: again, times: [now, now + MIN * 30] });
+  await post('/push/schedule', { endpoint: again, times: [now + MIN * 30] });
+  await tick();
+  ok('a ring left out of the next schedule never sounds', received.filter((r) => r.path === new URL(again).pathname).length === 0);
+
+  const flaky = `${PUSH_ORIGIN}/send/${b32()}`;
+  answers.set(new URL(flaky).pathname, [500]);
+  await post('/push/schedule', { endpoint: flaky, times: [now] });
+  await tick();
+  await tick();
+  ok('a push service that failed is tried again', received.filter((r) => r.path === new URL(flaky).pathname).length === 2);
+  await tick();
+  ok('and not a third time once it took it', received.filter((r) => r.path === new URL(flaky).pathname).length === 2);
+
+  const gone = `${PUSH_ORIGIN}/send/${b32()}`;
+  answers.set(new URL(gone).pathname, [410]);
+  await post('/push/schedule', { endpoint: gone, times: [now, now + 86_400_000, now + 2 * 86_400_000] });
+  await tick();
+  ok('a browser that unsubscribed is forgotten whole', ringsHeld(gone) === 0);
+
+  ok('turning reminders off forgets the browser', (await post('/push/forget', { endpoint: mine })).j.forgotten === true && ringsHeld(mine) === 0);
+  ok('and the sync routes are as they were', (await pull(H, 'phone-b', 0)).s === 200);
 } catch (e) {
   fail++;
   console.log('  FAIL threw —', e.message);
 } finally {
+  pushService.close();
   dev.kill('SIGTERM');
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

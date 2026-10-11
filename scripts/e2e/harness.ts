@@ -30,6 +30,9 @@ import {
 } from '../../src/domain/foods';
 import { cyclePlan, deleteMeal, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { buildPlan, dayAhead, savePlan } from '../../src/domain/mealplanner';
+import { DEFAULT_REMINDERS } from '../../src/domain/reminders';
+import { buildRings, refreshReminders } from '../../src/domain/remindersync';
+import { onChange } from '../../src/lib/changes';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { seedFoods, startFoods, type BundledFood } from '../../src/domain/seed';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
@@ -1853,6 +1856,70 @@ async function main() {
     await setActiveProfile(PRIMARY_PROFILE);
     const other = await buildPlan({ ahead: 1, protein: null, kcal: null });
     check('one person\'s meals never plan another\'s day', !other.choices.some((c) => c.meals.some((m) => m.items.some((i) => i.label.startsWith('Plan ')))));
+    await setActiveProfile(was);
+  }
+
+  // ---- reminders: the rings follow the record -----------------------------
+  // What rings is worked out from the record each time it changes. A ticked
+  // dose, a stopped medicine and a logged meal each have to take their ring
+  // away, and nothing else may.
+  {
+    const was = activeProfile();
+    const ringer = await createProfile('Rings');
+    await setActiveProfile(ringer);
+    // Ten this morning: the morning reminder (08:00) has passed, tonight's has not.
+    const now = new Date();
+    now.setHours(10, 0, 0, 0);
+    const s = { ...DEFAULT_REMINDERS, on: true, profileId: ringer, names: true };
+    const of = async (kind: 'doses' | 'meals') => (await buildRings(s, now)).filter((r) => r.kind === kind);
+
+    check('with no medicines, only the evening nudge rings, once a day for a fortnight', (await of('doses')).length === 0 && (await of('meals')).length === 14,
+      `${(await of('doses')).length} dose, ${(await of('meals')).length} meal`);
+
+    let announced = 0;
+    const stop = onChange(() => announced++);
+    const pill = await addMedicine({
+      name: 'Ring pill', form: 'tablet', strength: '5 mg', ingredients: [],
+      doses: [{ amount: 1, unit: 'tablet', time_of_day: 'morning', meal: 'after' }, { amount: 1, unit: 'tablet', time_of_day: 'night', meal: 'after' }],
+      schedule: scheduleOf('daily', null, null), long_term: true, private: true,
+    });
+    check('saving a medicine is announced, so the rings are rebuilt', announced > 0, String(announced));
+    let doses = await of('doses');
+    // Tonight, then morning and night on each of the thirteen days after.
+    check('a medicine rings at each of its times, from the next one on', doses.length === 27 && doses[0].title === 'Night medicines', `${doses.length}, first ${doses[0]?.title}`);
+    check('named, because names were asked for', doses[0].body === 'Ring pill', doses[0].body);
+    check('and never with its strength or its amount', !doses.some((r) => /5 mg|tablet/.test(r.body)));
+    check('with names off the lock screen says only that something is due',
+      (await buildRings({ ...s, names: false }, now)).filter((r) => r.kind === 'doses')[0].body === 'One to take. Open Mealo to tick it.');
+
+    const before = announced;
+    const today = await readMedsDay(medDay(now), now);
+    const tonight = today.groups.find((g) => g.time === 'night')!.doses[0];
+    await markDose(tonight, medDay(now), 'taken');
+    check('ticking a dose is announced', announced > before, `${before} -> ${announced}`);
+    doses = await of('doses');
+    check('a dose ticked ahead of its time does not ring', doses.length === 26 && doses[0].title === 'Morning medicines', `${doses.length}, first ${doses[0]?.title}`);
+
+    await stopMedication(pill);
+    check('a stopped medicine does not ring at all', (await of('doses')).length === 0, String((await of('doses')).length));
+
+    const planned = await saveMeal(await draftFromText('1 katori plan dal'), { mealType: 'dinner', planned: true });
+    check('a meal only planned for today leaves the nudge in place', (await of('meals')).length === 14);
+    const mealsAnnounced = announced;
+    await saveMeal(await draftFromText('1 katori plan dal'), { mealType: 'breakfast' });
+    check('logging a meal is announced', announced > mealsAnnounced);
+    const meals = await of('meals');
+    check('and takes today\'s nudge away, leaving the days ahead', meals.length === 13 && meals[0].at > dayAhead(1), String(meals.length));
+    await deleteMeal(planned);
+
+    const quiet = announced;
+    await saveDishFromPortion({ name: 'Ring test dish', quantity: 1, measure: 'katori', netWeightG: 100, energy: 100, protein: 1, fat: 1, carbs: 1, fibre: 1 });
+    check('a change to the food table is not announced: no ring depends on it', announced === quiet, `${quiet} -> ${announced}`);
+    stop();
+
+    // No service worker and no permission in this browser: nothing is sent
+    // and nothing is written, and it says so by returning null.
+    check('with reminders off, a rebuild does nothing', (await refreshReminders()) === null);
     await setActiveProfile(was);
   }
 

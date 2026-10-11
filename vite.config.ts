@@ -70,6 +70,12 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,wasm,woff2}'],
         // See includeAssets above: the installer's icons, not the app's.
         globIgnores: ['**/icon-512.png', '**/icon-maskable-512.png'],
+        // Reminders. The generated worker caches and nothing more; this adds
+        // the two listeners that turn an empty push into a notification
+        // (public/push-sw.js). Pulled in rather than switching the plugin to
+        // a hand-written worker: the caching worker is what every phone
+        // already runs, and iOS is slow to let go of one.
+        importScripts: ['push-sw.js'],
       },
       devOptions: { enabled: false },
     }),
