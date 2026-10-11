@@ -30,6 +30,7 @@ import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
 import { logSymptom, openSymptoms, removeSymptom } from '../../src/domain/symptoms';
+import { buildExport, collectExport } from '../../src/domain/export';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
   burnOn,
@@ -62,6 +63,7 @@ import {
   seal,
 } from '../../src/lib/household';
 import {
+  listActive,
   addMedication,
   addMedicine,
   cycleDose,
@@ -1532,6 +1534,51 @@ async function main() {
       bad = true;
     }
     check('the database refuses a fourth state', bad);
+  }
+
+  // ---- the "For AI" file, read from the real record ----------------------
+  //
+  // The wording is tested without a database; this is the reading. The check
+  // that matters most is the last one: a report is the one place a whole
+  // period of someone's record leaves the app in a single file, and it must
+  // be one person's.
+  step('export');
+  {
+    await setActiveProfile(PRIMARY_PROFILE);
+    const stamp = `marker${Date.now()}`;
+    const mine = await logSymptom(`${stamp} his headache`);
+    await saveMeal(await draftFromText('1 katori dal tadka'), { mealType: 'lunch' });
+    await setActiveProfile(partner);
+    const hers = await logSymptom(`${stamp} her headache`);
+    await setActiveProfile(PRIMARY_PROFILE);
+
+    const input = await collectExport('full', 7);
+    const text = buildExport(input);
+    const today = localDayKey(Date.now());
+    check('seven days, ending today', input.days.length === 7 && input.days[6] === today, input.days.join(','));
+    check('his meal is in it, by its dish', /dal tadka/i.test(text));
+    const eaten = input.meals.filter((m) => m.day === today).flatMap((m) => m.items)
+      .filter((i) => i.plan_state === null || i.plan_state === 'eaten');
+    const fileKcal = eaten.reduce((sum, i) => sum + (i.energy_kcal ?? 0), 0);
+    const screenKcal = (await readDay()).totals[0];
+    near('today in the file adds up to what the day screen shows', fileKcal, screenKcal, 0.5);
+    check('a dose row for each day of the period', input.doseDays.length === 7, String(input.doseDays.length));
+    const taking = (await listActive()).map((m) => m.name);
+    check('every medicine he takes is listed', taking.every((n) => text.includes(n)), taking.join(','));
+    check('his symptom is quoted', text.includes(`${stamp} his headache`));
+    check('hers is not in his file', !text.includes(`${stamp} her headache`));
+    const names = (await listProfiles()).map((p) => p.name).filter((n) => n.length > 3);
+    check('no profile name is in the file', names.every((n) => !text.includes(n)), names.join(','));
+    check('nor an id of any row', !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/.test(text));
+
+    await setActiveProfile(partner);
+    const herText = buildExport(await collectExport('full', 7));
+    check('her file has her symptom and not his',
+      herText.includes(`${stamp} her headache`) && !herText.includes(`${stamp} his headache`));
+    await removeSymptom(hers);
+    await setActiveProfile(PRIMARY_PROFILE);
+    await removeSymptom(mine);
+    check('an undone symptom leaves the next file', !buildExport(await collectExport('full', 7)).includes(stamp));
   }
 }
 

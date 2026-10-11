@@ -61,6 +61,9 @@ import {
   clock, dosesAction, dosesReceipt, entriesFrom, entryTime, mealReceipt, mealSummary, nextMark, PILLS, TRY_ASKING,
 } from '../src/domain/chat';
 import { triage } from '../src/safety/redflags';
+import {
+  buildExport, dateLabel, fileName, MAX_DAYS, periodDays, periodLabel, reportRequest, scopeHolds, type ExportInput, type ExportItem,
+} from '../src/domain/export';
 import type { Macros } from '../src/domain/day';
 import {
   addDays,
@@ -1930,6 +1933,144 @@ section('Ask Mealo: the pills');
 
   check('the clock alone', [clock(new Date(2026, 9, 10, 14, 5).getTime()), clock(new Date(2026, 9, 10, 0, 30).getTime())], ['2:05 pm', '12:30 am']);
   check('three pills, each with a name and a question', Object.values(PILLS).every((p) => p.label && p.asks), true);
+}
+
+section('The "For AI" file');
+{
+  const xat = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const item = (name: string, quantity: number | null, unit: string | null, grams: number, kcal: number,
+    p = 0, f = 0, c = 0, fi = 0, plan_state: ExportItem['plan_state'] = null): ExportItem =>
+    ({ name, quantity, unit, grams, energy_kcal: kcal, protein_g: p, fat_g: f, carbs_g: c, fibre_g: fi, plan_state });
+  const FIX: ExportInput = {
+    scope: 'full',
+    days: ['2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10'],
+    targets: { energy_kcal: 1900, protein_g: 90, fat_g: 60, carbs_g: 230, fibre_g: 30 },
+    goalWeightKg: 70,
+    goalBurnKcal: 400,
+    meals: [
+      { day: '2026-10-04', at: xat(4, 13, 15), slot: 'Lunch', items: [item('Dal tadka', 225, 'g', 225, 236, 12, 8, 29, 7)] },
+      { day: '2026-10-04', at: xat(4, 8, 40), slot: 'Breakfast', items: [
+        item('Idli', 2, 'piece', 120, 156, 5, 1, 32, 2), item('Sambar', 1, 'katori', 150, 98, 5, 3, 14, 4)] },
+      { day: '2026-10-04', at: xat(4, 20, 0), slot: 'Dinner', items: [item('Paneer curry', 1, 'bowl', 300, 500, 20, 35, 12, 3, 'planned')] },
+      { day: '2026-10-05', at: xat(5, 13, 0), slot: 'Lunch', items: [item('Thali', 1, 'plate', 100, 1900, 60, 62, 240, 20)] },
+    ],
+    weights: [{ day: '2026-10-04', kg: 72.4 }, { day: '2026-10-09', kg: 71.95 }],
+    burns: [{ day: '2026-10-04', kcal: 310 }],
+    medicines: [
+      { name: 'Calcium + D3', strength: '1250 mg', ingredients: ['Calcium carbonate 1250 mg', 'Cholecalciferol 250 IU'],
+        doses: ['1 tablet, after meal (morning)', '1 tablet, after meal (night)'], schedule: 'Every day', longTerm: true,
+        startedOn: '2026-08-01', endedOn: null, sickness: null },
+      { name: 'Cough syrup', strength: null, ingredients: [], doses: ['10 ml, after meal (night)'], schedule: 'Every day',
+        longTerm: false, startedOn: '2026-10-03', endedOn: '2026-10-06', sickness: 'Viral fever' },
+    ],
+    doseDays: [
+      { day: '2026-10-04', taken: 2, skipped: 0, missed: 0, pending: 0 },
+      { day: '2026-10-05', taken: 1, skipped: 1, missed: 0, pending: 0 },
+      { day: '2026-10-06', taken: 1, skipped: 0, missed: 1, pending: 0 },
+      { day: '2026-10-07', taken: 0, skipped: 0, missed: 0, pending: 0 },
+      { day: '2026-10-10', taken: 1, skipped: 0, missed: 0, pending: 1 },
+    ],
+    notTaken: [
+      { day: '2026-10-05', medicine: 'Calcium + D3 1250 mg', time: 'Night', state: 'skipped' },
+      { day: '2026-10-06', medicine: 'Calcium + D3 1250 mg', time: 'Night', state: 'missed' },
+    ],
+    symptoms: [
+      { at: xat(9, 18, 30), text: 'Bloating after dinner', resolvedAt: xat(10, 9, 0) },
+      { at: xat(5, 9, 0), text: 'Headache since morning, behind the eyes', resolvedAt: null },
+    ],
+    episodes: [{ name: 'Viral fever', from: '2026-10-03', to: '2026-10-06', recoveredOn: '2026-10-06' }],
+  };
+
+  const full = buildExport(FIX);
+  const mealsOnly = buildExport({ ...FIX, scope: 'meals' });
+  const medsOnly = buildExport({ ...FIX, scope: 'meds' });
+  const has = (text: string, part: string) => text.includes(part);
+
+  check('the title carries the period and its length', full.split('\n')[0],
+    '# Health records export: 4 Oct 2026 to 10 Oct 2026 (7 days)');
+  check('it says no AI wrote it and the name is left out', [has(full, 'No part of it was written by an AI'), has(full, 'name is left out')], [true, true]);
+  check('a day with nothing logged is called missing data', has(full, 'MISSING DATA, not a day without food'), true);
+  check('and what the app does not record is said, so it is not assumed', has(full, 'Age, sex, height'), true);
+
+  // The arithmetic the reader must not be left to do.
+  check('a day\'s total leaves out a planned meal: 156 + 98 + 236, not + 500', has(full, '| Sun 4 Oct | 490 | 22 | 12 | 75 | 13 | 72.4 | 310 | 2 | 2 | 0 | 0 |'), true);
+  check('an empty day is "not logged", never zero', has(full, '| Tue 6 Oct | not logged |'), true);
+  check('no day row shows a zero-calorie day', /\| \w{3} \d+ Oct \| 0 \|/.test(full), false);
+  check('days logged counts days with something eaten', has(full, 'Meals logged on 2 of 7 days.'), true);
+  check('the average is over logged days only: (490 + 1,900) / 2', has(full, 'Average on logged days: 1,195 Cal, protein 41 g'), true);
+  check('days within target use the app\'s own rule and say so', has(full, 'Days within the calorie target: 1 of 2 logged. "Within" is the app\'s own rule: 76% to 100% of the target.'), true);
+  check('doses add up, with today\'s unanswered one not called missed',
+    has(full, 'Doses: 5 taken of 8 scheduled; 1 skipped, 1 missed, 1 still to be answered today.'), true);
+  check('today\'s row counts the pending dose as scheduled, not missed', has(full, '| Sat 10 Oct | not logged |  |  |  |  |  |  | 1 | 2 | 0 | 0 |'), true);
+  check('a day with no doses scheduled is left blank, not 0 of 0', has(full, '| Wed 7 Oct | not logged |  |  |  |  |  |  |  |  |  |  |'), true);
+  check('weight is first and last reading, to one decimal', has(full, 'Weight: 72.4 kg on Sun 4 Oct, 72.0 kg on Fri 9 Oct (2 readings).'), true);
+
+  check('a household measure is given with its weight, as an estimate',
+    has(full, 'Idli, 2 \u00d7 piece, 120 g, 156 Cal (P 5, F 1, C 32, Fi 2)'), true);
+  check('only an amount logged in grams is called weighed', [has(full, 'Dal tadka, 225 g (weighed), 236 Cal'), (full.match(/\(weighed\)/g) ?? []).length], [true, 2]);
+  check('a planned meal is shown as planned', has(full, 'Paneer curry, 1 \u00d7 bowl (350 ml), 300 g, 500 Cal (P 20, F 35, C 12, Fi 3) [planned, not eaten]'), true);
+  check('meals within a day are in time order', full.indexOf('- Breakfast 8:40 am') < full.indexOf('- Lunch 1:15 pm'), true);
+  check('empty days are not given a heading each', has(full, '### Tue 6 Oct'), false);
+
+  check('a medicine carries doses, schedule, start and what it contains',
+    has(full, '- Calcium + D3 1250 mg. Doses: 1 tablet, after meal (morning); 1 tablet, after meal (night). Every day. Long-term. Started 1 Aug 2026. Contains: Calcium carbonate 1250 mg; Cholecalciferol 250 IU.'), true);
+  check('a medicine stopped in the period says so, and what it was for',
+    has(full, '- Cough syrup. Doses: 10 ml, after meal (night). Every day. Taken for: Viral fever. Started 3 Oct 2026. STOPPED 6 Oct 2026.'), true);
+  check('each dose not taken is listed by day, medicine and time',
+    [has(full, '- Mon 5 Oct: Calcium + D3 1250 mg, night, skipped'), has(full, '- Tue 6 Oct: Calcium + D3 1250 mg, night, missed')], [true, true]);
+  check('symptoms are quoted, in time order, open or resolved',
+    full.slice(full.indexOf('## Symptoms')).trim().split('\n').slice(2),
+    ['- Mon 5 Oct, 9:00 am: "Headache since morning, behind the eyes". Still open.',
+      '- Fri 9 Oct, 6:30 pm: "Bloating after dinner". Resolved Sat 10 Oct.']);
+
+  const heads = (t: string) => t.split('\n').filter((l) => l.startsWith('## ')).map((l) => l.slice(3).replace(/ \(.*/, ''));
+  check('a full file has every section', heads(full),
+    ['How to read this', 'What the app does not record', 'Period summary', 'Daily targets', 'Medicines', 'Day by day', 'Meals', 'Doses not taken', 'Sick periods', 'Symptoms']);
+  check('a meals file has no medicines, doses, sickness or symptoms', heads(mealsOnly),
+    ['How to read this', 'What the app does not record', 'Period summary', 'Daily targets', 'Day by day', 'Meals']);
+  check('nor a word about them', /Calcium|dose|Headache|Viral|kg/i.test(mealsOnly), false);
+  check('a meds file has no food, targets, weight or symptoms', heads(medsOnly),
+    ['How to read this', 'What the app does not record', 'Period summary', 'Medicines', 'Day by day', 'Doses not taken', 'Sick periods']);
+  check('nor a word about them', /Idli|Cal\b|Protein|Headache|72\.4|MISSING DATA/.test(medsOnly), false);
+  check('each scope names itself', [mealsOnly.startsWith('# Meals export: '), medsOnly.startsWith('# Medicines export: ')], [true, true]);
+
+  const bare = buildExport({ ...FIX, meals: [], weights: [], burns: [], medicines: [], doseDays: [], notTaken: [], symptoms: [], episodes: [],
+    targets: { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null }, goalWeightKg: null, goalBurnKcal: null });
+  check('an empty record still makes a file that says what is empty',
+    ['Meals logged on 0 of 7 days.', 'No doses were scheduled in this period.', 'Weight: not recorded in this period.', 'None set.', 'None recorded.', 'None logged in this period.']
+      .every((line) => has(bare, line)), true);
+  check('no file, full or empty, ever prints a missing value as one',
+    [full, mealsOnly, medsOnly, bare].some((t) => /undefined|NaN|null|\[object/.test(t)), false);
+  check('it ends with one newline', [full.endsWith('.\n'), full.endsWith('\n\n')], [true, false]);
+
+  check('the file is named for its scope and dates', fileName('full', FIX.days), 'mealo-full-2026-10-04-to-2026-10-10.md');
+  check('seven days ending today', periodDays(7, '2026-10-10'), FIX.days);
+  check('one day is today alone', periodDays(1, '2026-10-10'), ['2026-10-10']);
+  check('the period is held to 1 to 90 days', [periodDays(0, '2026-10-10').length, periodDays(500, '2026-10-10').length, MAX_DAYS], [1, 90, 90]);
+  check('ninety days back from 10 Oct starts on 13 Jul, across month ends', periodDays(90, '2026-10-10')[0], '2026-07-13');
+  check('a day is named with its weekday', dateLabel('2026-10-04'), 'Sun 4 Oct');
+  check('the sheet\'s dates', [periodLabel(periodDays(21, '2026-10-10')), periodLabel(periodDays(1, '2026-10-10')), periodLabel(periodDays(30, '2026-01-10'))],
+    ['20 Sep \u2013 10 Oct 2026', '10 Oct 2026', '12 Dec 2025 \u2013 10 Jan 2026']);
+  check('what each file holds', [scopeHolds('meals'), scopeHolds('meds'), scopeHolds('full')],
+    ['Meals and targets', 'Medicines and doses', 'Meals, medicines, weight, symptoms']);
+
+  // A typed request fills in the sheet. 10 Oct 2026 is a Saturday.
+  const ask = (t: string) => reportRequest(t, '2026-10-10');
+  check('his own example', ask('Give me my food report from the past 3 weeks'), { scope: 'meals', days: 21 });
+  check('medicines, a month', ask('can I have a meds report for the last month'), { scope: 'meds', days: 30 });
+  check('no scope named means everything', ask('generate a report for the past 10 days'), { scope: 'full', days: 10 });
+  check('both named means everything', ask('make a report of my meals and medicines, last week'), { scope: 'full', days: 7 });
+  check('numbers as words', ask('show me a meal report for two weeks'), { scope: 'meals', days: 14 });
+  check('since Monday, on a Saturday, is six days', ask('export my full report since Monday'), { scope: 'full', days: 6 });
+  check('since Saturday, on a Saturday, is today', ask('give me a report since saturday'), { scope: 'full', days: 1 });
+  check('since last Saturday is eight days', ask('give me a report since last saturday'), { scope: 'full', days: 8 });
+  check('today alone', ask('food report for today please'), { scope: 'meals', days: 1 });
+  check('longer than the limit is held to it', ask('give me a report for the last 6 months'), { scope: 'full', days: 90 });
+  check('no period named starts at the default', ask('generate a dose report'), { scope: 'meds', days: 30 });
+  check('two words are enough', ask('meds report'), { scope: 'meds', days: 30 });
+  check('a question about a report is not a request for one', ask('why does the number in my last report look different from the day screen?'), null);
+  check('nor is a message with no report in it', [ask('how has my week looked?'), ask('what did I eat for the past 3 weeks')], [null, null]);
+  check('"reported" is not "report"', ask('I reported a headache yesterday'), null);
 }
 
 // ------------------------------------------------------------------ done

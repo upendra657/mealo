@@ -401,6 +401,28 @@ export async function mealsOn(dayStart = startOfToday()): Promise<Meal[]> {
 }
 
 /**
+ * Every meal in a window with its items, oldest first, for the report. Two
+ * queries whatever the span: ninety days read a day at a time would be
+ * ninety round trips to the worker for one file.
+ */
+export async function mealsBetween(
+  fromMs: number,
+  toMs: number,
+): Promise<{ meal: Meal; items: MealItem[] }[]> {
+  const meals = await db.query<Meal>(
+    `SELECT * FROM meals
+      WHERE profile_id = ? AND deleted_at IS NULL
+        AND eaten_at >= ? AND eaten_at < ?
+      ORDER BY eaten_at ASC`,
+    [activeProfile(), fromMs, toMs],
+  );
+  const items = await itemsFor(meals.map((m) => m.id));
+  return meals
+    .map((meal) => ({ meal, items: items.filter((i) => i.meal_id === meal.id) }))
+    .filter((m) => m.items.length > 0);
+}
+
+/**
  * When each item in a window was eaten and whether it was a plan — for the
  * calendar's dots, which tell an eaten day from a day with only plans.
  */

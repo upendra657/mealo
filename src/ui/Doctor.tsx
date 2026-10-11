@@ -43,6 +43,8 @@ import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state'
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
 import { readMedsDay } from '../domain/medications';
 import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
+import { DEFAULT_DAYS, reportRequest, type Scope } from '../domain/export';
+import { FileIcon, ReportCard, ReportSheet, type Report } from './ReportSheet';
 
 /**
  * One use of a pill, in the thread beside the questions. Held in this
@@ -56,7 +58,9 @@ type FlowItem = {
   said: string | null;
   savedId: string | null;
 };
-type Item = Entry | FlowItem;
+/** A report made this visit. Session-only, like the pill cards. */
+type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
+type Item = Entry | FlowItem | ReportItem;
 
 const SYSTEM_PROMPT = [
   'You are the everyday-health assistant inside a personal tracking app.',
@@ -89,6 +93,12 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
   const [awaiting, setAwaiting] = useState<number | null>(null);
   /** Whether "Tick my doses" has anything to offer right now. */
   const [dueNow, setDueNow] = useState(false);
+  /** The report sheet: closed, or open on these settings. */
+  const [sheet, setSheet] = useState<{ open: boolean; scope: Scope; days: number }>({
+    open: false,
+    scope: 'full',
+    days: DEFAULT_DAYS,
+  });
   const nextId = useRef(1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -189,6 +199,16 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       ]);
       await appendMessage('doctor', 'user', text);
       await appendMessage('doctor', 'assistant', flagged.message);
+      return;
+    }
+
+    // A request for a report is read by code and opens the sheet filled in.
+    // After the red flags, before any model: making a file needs neither a
+    // provider nor a request, and the person still sees the dates and
+    // presses the button themselves.
+    const wanted = reportRequest(text);
+    if (wanted) {
+      setSheet({ open: true, ...wanted });
       return;
     }
 
@@ -362,7 +382,9 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         )}
 
         {thread.map((e, i) =>
-          e.kind === 'flow' ? (
+          e.kind === 'report' ? (
+            <ReportCard key={`r${e.id}`} at={e.at} report={e.report} />
+          ) : e.kind === 'flow' ? (
             (() => {
               const Flow = e.pill === 'meal' ? MealFlow : e.pill === 'doses' ? DosesFlow : SymptomFlow;
               return (
@@ -433,6 +455,10 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
           </p>
         )}
         <div className="am-pills">
+          <button className="am-pill-go" onClick={() => setSheet((s) => ({ ...s, open: true }))}>
+            <FileIcon size={15} />
+            Generate a report
+          </button>
           <button onClick={() => startPill('meal')}>{PILLS.meal.label}</button>
           {/* Only while a dose is waiting. A pill that opens onto "nothing is
               due" most of the day teaches people not to press it. */}
@@ -465,6 +491,19 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
           </button>
         </div>
       </div>
+
+      <ReportSheet
+        open={sheet.open}
+        scope={sheet.scope}
+        days={sheet.days}
+        onScope={(scope) => setSheet((s) => ({ ...s, scope }))}
+        onDays={(days) => setSheet((s) => ({ ...s, days }))}
+        onClose={() => setSheet((s) => ({ ...s, open: false }))}
+        onMade={(report) => {
+          setSheet((s) => ({ ...s, open: false }));
+          setThread((t) => [...t, { kind: 'report', id: nextId.current++, at: Date.now(), report }]);
+        }}
+      />
     </div>
   );
 }
