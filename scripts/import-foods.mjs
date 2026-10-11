@@ -23,13 +23,29 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outPath = resolve(root, 'src/data/foods.json');
 
-// FoodData Central nutrient ids for the five values we store.
+// FoodData Central nutrient ids for the five values we store, each list in
+// order of preference.
+//
+// Energy. USDA publishes up to three figures for a food: 2048, worked out
+// with Atwater factors specific to that kind of food; 2047, with the general
+// 4-9-4 factors; and 1008, plain "Energy", on records that carry neither.
+// Read from USDA's record for each of the 329 bundled ids on 11 Oct 2026:
+// 256 foods have 2047 and 2048, 33 have 2047 alone, 40 have 1008 alone. The
+// two Atwater figures are 5% or more apart for 134 foods (baby spinach 21
+// against 27; Brazil nuts 621 against 664). The specific figure is used
+// wherever USDA gives one, Upendra's decision the same day, so that one rule
+// covers the table.
+//
+// Fibre. 1079 is "Fiber, total dietary"; 2033 is the same thing by the newer
+// method (AOAC 2011.25), and for 17 of the 329, canned beans among them, it
+// is the only fibre figure there is. 1079 stays first because 145 foods have
+// it alone and the 17 that have both should not switch method.
 const NUTRIENTS = {
-  energy_kcal: ['1008', '2047', '2048'], // Energy (kcal), variants
+  energy_kcal: ['2048', '2047', '1008'],
   protein_g: ['1003'],
   fat_g: ['1004'],
   carbs_g: ['1005'],
-  fibre_g: ['1079'],
+  fibre_g: ['1079', '2033'],
 };
 
 /** Minimal CSV reader — handles quoted fields and embedded commas. */
@@ -132,16 +148,33 @@ for (const [key, ids] of Object.entries(NUTRIENTS)) {
   for (const id of ids) wanted.set(id, key);
 }
 
-const byFdcId = new Map();
+// Every wanted figure is collected first and the choice made afterwards.
+//
+// This used to keep the first value it met for a key, under a comment saying
+// the id lists were ordered by preference. They were, and the loop never
+// consulted the order: it took whichever row came first in USDA's file. So
+// the bundled calories were the specific figure for 181 foods and the general
+// one for 66, by accident of file order (found 11 Oct 2026).
+const seenById = new Map();
 for (const n of nutrients) {
-  const key = wanted.get(n.nutrient_id);
-  if (!key) continue;
+  if (!wanted.has(n.nutrient_id)) continue;
+  // An empty amount is a missing figure, and Number('') is 0.
+  if (n.amount === undefined || n.amount.trim() === '') continue;
   const value = Number(n.amount);
   if (!Number.isFinite(value)) continue;
-  const row = byFdcId.get(n.fdc_id) ?? {};
-  // Keep the first value seen for a key; the id lists are ordered by preference.
-  if (row[key] === undefined) row[key] = value;
-  byFdcId.set(n.fdc_id, row);
+  const figures = seenById.get(n.fdc_id) ?? new Map();
+  if (!figures.has(n.nutrient_id)) figures.set(n.nutrient_id, value);
+  seenById.set(n.fdc_id, figures);
+}
+
+const byFdcId = new Map();
+for (const [fdcId, figures] of seenById) {
+  const row = {};
+  for (const [key, ids] of Object.entries(NUTRIENTS)) {
+    const id = ids.find((i) => figures.has(i));
+    if (id !== undefined) row[key] = figures.get(id);
+  }
+  byFdcId.set(fdcId, row);
 }
 
 // Lab values carry absurd precision - 602.510076 kcal per 100g implies a
@@ -181,4 +214,4 @@ await writeFile(outPath, JSON.stringify(out));
 
 const kb = Math.round(JSON.stringify(out).length / 1024);
 console.log(`[foods] wrote ${out.length} foods to src/data/foods.json (${kb} KB)`);
-console.log('[foods] restart the dev server; the app reseeds when the count changes.');
+console.log('[foods] the app compares its table with this file at every start and rewrites it when they differ.');
