@@ -30,6 +30,7 @@ import {
 } from '../../src/domain/foods';
 import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
+import { seedFoods, startFoods, type BundledFood } from '../../src/domain/seed';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
 import { appendMessage, buildContext, clearThread, loadThread } from '../../src/llm/conversation';
 import { logSymptom, openSymptoms, removeSymptom } from '../../src/domain/symptoms';
@@ -690,6 +691,75 @@ async function main() {
     // Out again, so nothing below this block meets rows no test database has.
     await sql("DELETE FROM foods WHERE id IN ('usda-almond-raw', 'usda-almond-butter')");
     await deleteCustomFood(own.foodId as string);
+  }
+
+  // ---- the reference table follows the bundled file ----------------------
+  // Nothing had loaded it since 24 Sep 2026, and the loader that existed
+  // compared counts only, so a corrected calorie figure could not reach a
+  // phone. A small list stands in for the file here; the file itself is
+  // loaded once at the end.
+  {
+    const food = (id: string, name: string, kcal: number, fibre: number | null): BundledFood => ({
+      id, name, source_db: 'USDA', per_unit: '100g',
+      energy_kcal: kcal, protein_g: 14.3, fat_g: 67.1, carbs_g: 11.7, fibre_g: fibre,
+    });
+    const before = [
+      food('usda-t-brazil', 'Nuts, brazilnuts, raw', 663.6, 7.5),
+      food('usda-t-beans', 'Beans, black, canned', 118.4, null),
+      food('usda-t-gone', 'Withdrawn food', 100, null),
+    ];
+    const first = await seedFoods(before);
+    const has = async () => query<{ id: string; energy_kcal: number; fibre_g: number | null }>(
+      "SELECT id, energy_kcal, fibre_g FROM foods WHERE id LIKE 'usda-t-%' ORDER BY id",
+    );
+    check('an empty reference table is filled', first.seeded && (await has()).length === 3, JSON.stringify(first));
+
+    // A weighed portion on a reference food is a person's scale reading, and
+    // it hangs on the food's id. A rewrite must leave it where it was.
+    await upsertPortion({
+      foodId: 'usda-t-brazil', measure: 'piece', quantity: 1, netWeightG: 5, source: 'user',
+    });
+
+    const again = await seedFoods(before);
+    check('the same list writes nothing', again.seeded === false && again.inDb === 3, JSON.stringify(again));
+
+    // The count is the same and two figures differ: what the old loader,
+    // which compared counts, could not see.
+    const corrected = [
+      food('usda-t-brazil', 'Nuts, brazilnuts, raw', 621, 7.5),
+      food('usda-t-beans', 'Beans, black, canned', 118.4, 6.69),
+      food('usda-t-new', 'Newly listed food', 50, 1),
+    ];
+    const third = await seedFoods(corrected);
+    const rows = await has();
+    check('a corrected figure reaches the table',
+      third.seeded && rows.find((r) => r.id === 'usda-t-brazil')?.energy_kcal === 621, JSON.stringify(rows));
+    check('so does a fibre figure that was blank',
+      rows.find((r) => r.id === 'usda-t-beans')?.fibre_g === 6.69, JSON.stringify(rows));
+    check('a food the file dropped is gone, a new one is in',
+      !rows.some((r) => r.id === 'usda-t-gone') && rows.some((r) => r.id === 'usda-t-new'), JSON.stringify(rows));
+    const kept = await portionsFor('usda-t-brazil');
+    check('a weighed portion on a reference food survives the rewrite',
+      kept.some((p) => p.measure === 'piece' && p.net_weight_g === 5), JSON.stringify(kept));
+
+    const empty = await seedFoods([]);
+    check('an empty file wipes nothing', empty.seeded === false && (await has()).length === 3, JSON.stringify(empty));
+
+    // The real file, through the start-up call, twice at once as StrictMode
+    // does it: one rewrite, not two colliding on the primary key.
+    const [a, b] = await Promise.all([startFoods(), startFoods()]);
+    const count = await query<{ n: number }>('SELECT COUNT(*) AS n FROM foods');
+    check('the bundled file loads whole, once',
+      a === b && a.seeded && a.bundled > 300 && Number(count[0].n) === a.bundled, `${JSON.stringify(a)} rows=${count[0].n}`);
+    const quiet = await searchFoods('almond', 25);
+    check('and still does not show in search', quiet.every((f) => f.is_custom === 1), quiet.map((f) => f.name).join(' | '));
+
+    // Out again. Every check below was written against a database with no
+    // reference foods, and typed-meal matching reads this table. The portion
+    // goes outright rather than through `deletePortion`: a tombstone would
+    // sit in the library for the sync checks further down to pick up.
+    await sql("DELETE FROM food_portions WHERE food_id = 'usda-t-brazil'");
+    await sql('DELETE FROM foods');
   }
 
   // ---- a restaurant portion stays put -----------------------------------

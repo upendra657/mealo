@@ -22,6 +22,7 @@ import { AvatarMenu } from './ui/AvatarMenu';
 import { initFoodLibrary } from './domain/foods';
 import { syncLibrary } from './domain/relay';
 import { startLists } from './domain/refdata';
+import { startFoods } from './domain/seed';
 import { BurnScreen } from './ui/BurnScreen';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
@@ -74,7 +75,15 @@ export default function App() {
         // swallows its own failures: the app has to work on a train with no
         // signal, so a relay that cannot be reached is a line in Settings
         // rather than anything the home screen waits for or reports.
-        void syncLibrary().catch(() => {});
+        //
+        // The reference foods go first, and sync waits for them. A portion
+        // the other phone saved on a USDA food travels by that food's id, and
+        // sync skips one whose food it cannot find and does not look again.
+        // A failure there is a missing fallback for typed meals, not a
+        // reason to hold the library back, so sync runs either way.
+        void startFoods()
+          .catch((e) => console.warn('[foods] reference table:', e))
+          .then(() => syncLibrary().catch(() => {}));
 
         // Medicine lists: clear an import the app was closed during, then
         // load the bundled HSA register if this build's copy is new. Neither

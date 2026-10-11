@@ -31,7 +31,7 @@ npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
 npm run test:portions  # 846 pure-logic assertions, node, fast
 npm run test:safety    # 1124 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 407 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 419 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
