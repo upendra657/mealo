@@ -17,6 +17,10 @@
 
 import { useState } from 'react';
 import { humanReport, type HumanReport } from '../domain/report';
+import { chat } from '../llm/adapter';
+import { LlmError } from '../llm/types';
+import { insightMessages, readInsights } from '../safety/insights';
+import type { Settings } from '../settings/store';
 import { ReportView } from './ReportView';
 import { saveFile } from '../db/client';
 import { entryTime } from '../domain/chat';
@@ -65,12 +69,15 @@ export function ReportSheet({
   scope,
   days,
   aud,
+  settings,
   onScope,
   onDays,
   onAud,
   onClose,
   onMade,
 }: {
+  /** The model provider, or null when none is set up: AI insights need one. */
+  settings: Settings | null;
   open: boolean;
   scope: Scope;
   days: number;
@@ -83,6 +90,10 @@ export function ReportSheet({
 }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  // Off each time the app is opened. Upendra's decision: the report is the
+  // app's own work unless the person asks, there and then, for more.
+  const [wantAi, setWantAi] = useState(false);
+  const ai = aud === 'human' && wantAi && settings !== null;
   const [today] = useState(() => localDayKey(Date.now()));
   const span = periodDays(days, today);
   const pct = ((days - MIN_DAYS) / (MAX_DAYS - MIN_DAYS)) * 100;
@@ -139,8 +150,32 @@ export function ReportSheet({
         </button>
       </div>
 
+      {aud === 'human' && (
+        <button
+          className="am-sw"
+          role="switch"
+          aria-checked={ai}
+          disabled={settings === null}
+          onClick={() => setWantAi((v) => !v)}
+        >
+          <span className="am-sw-t">
+            AI insights
+            <small>{settings === null ? 'Needs a model provider, set up in Dev.' : 'A few observations and questions to ask your doctor.'}</small>
+          </span>
+          <span className="am-sw-k" />
+        </button>
+      )}
+
+      {/* The note follows the switch. "No AI is used" under a switch that is
+          on would be the one false sentence on the sheet. */}
       {aud === 'human' ? (
-        <p className="am-sh-n">Worked out by the app. No AI is used, and nothing leaves this phone.</p>
+        ai ? (
+          <p className="am-sh-n">
+            The app works out every figure. Ask Mealo adds the insights: one request on your key, with your name and identifiers removed.
+          </p>
+        ) : (
+          <p className="am-sh-n">Worked out by the app. No AI is used, and nothing leaves this phone.</p>
+        )
       ) : (
         <p className="am-sh-n am-sh-n--warn">
           Once downloaded, the file is outside Mealo&rsquo;s protection. Your name is left out.
@@ -156,11 +191,23 @@ export function ReportSheet({
           setFailed(null);
           try {
             const input = await collectExport(scope, days);
-            onMade(
-              aud === 'human'
-                ? { kind: 'human', scope, days: input.days, data: humanReport(input) }
-                : { kind: 'ai', scope, days: input.days, name: fileName(scope, input.days), text: buildExport(input) },
-            );
+            if (aud === 'ai') {
+              onMade({ kind: 'ai', scope, days: input.days, name: fileName(scope, input.days), text: buildExport(input) });
+              return;
+            }
+            const data = humanReport(input);
+            if (ai && settings) {
+              // The report is made either way. If the request fails the
+              // person still gets every figure, and is told the rest is
+              // missing and why.
+              try {
+                const res = await chat(settings, { messages: insightMessages(input), temperature: 0.2, maxTokens: 700 });
+                data.ai = { ...readInsights(res.text, input), failed: null };
+              } catch (e) {
+                data.ai = { insights: [], questions: [], removed: 0, failed: e instanceof LlmError || e instanceof Error ? e.message : String(e) };
+              }
+            }
+            onMade({ kind: 'human', scope, days: input.days, data });
           } catch (e) {
             setFailed(e instanceof Error ? e.message : String(e));
           } finally {
@@ -168,7 +215,7 @@ export function ReportSheet({
           }
         }}
       >
-        {busy ? 'Reading your records…' : aud === 'human' ? 'Create report' : 'Create file'}
+        {busy ? (ai ? 'Reading your records, asking for insights…' : 'Reading your records…') : aud === 'human' ? 'Create report' : 'Create file'}
       </button>
     </Sheet>
   );
@@ -200,7 +247,9 @@ export function ReportCard({ at, report }: { at: number; report: Report }) {
             </div>
             <div>
               <div className="am-file-n">{report.data.title}</div>
-              <div className="am-file-d">{scopeHolds(report.scope)} · charts and figures · no AI used</div>
+              <div className="am-file-d">
+                {scopeHolds(report.scope)} · charts and figures · {report.data.ai ? (report.data.ai.failed ? 'AI insights failed' : 'with AI insights') : 'no AI used'}
+              </div>
             </div>
           </div>
           <div className="am-btns">

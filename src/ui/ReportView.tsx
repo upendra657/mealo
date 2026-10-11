@@ -371,6 +371,56 @@ function Body({ body }: { body: BodyReport }) {
   );
 }
 
+/**
+ * The model's part, kept apart from the app's and marked point by point.
+ * It comes last on purpose: someone reading down the page has the figures
+ * before they have anyone's reading of them.
+ */
+function Ai({ ai }: { ai: NonNullable<HumanReport['ai']> }) {
+  const nothing = ai.insights.length === 0 && ai.questions.length === 0;
+  return (
+    <section className="rp-sec rp-ai">
+      <h2>AI insights</h2>
+      {ai.failed ? (
+        <p className="rp-note">The insights could not be added: {ai.failed} The rest of this report does not depend on them.</p>
+      ) : (
+        <>
+          {nothing && <p className="rp-note">The model returned nothing the app could keep.</p>}
+          {ai.insights.length > 0 && (
+            <ul className="rp-ai-l">
+              {ai.insights.map((t, i) => (
+                <li key={i}>
+                  <span className="am-ai">AI</span>
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {ai.questions.length > 0 && (
+            <>
+              <h3>Questions to ask your doctor</h3>
+              <ul className="rp-ai-l">
+                {ai.questions.map((t, i) => (
+                  <li key={i}>
+                    <span className="am-ai">AI</span>
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <p className="rp-note">
+            Written by an AI model from the figures above and nothing else. The app checked each point: no figure that is not in your
+            records, no dose, no condition named, no target set.
+            {ai.removed > 0 ? ` It removed ${ai.removed} ${ai.removed === 1 ? 'point' : 'points'} that did not pass.` : ''} An AI can still be
+            wrong. Check anything that matters with a professional.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 export function ReportView({ report, print, onClose }: { report: HumanReport; print?: boolean; onClose: () => void }) {
   // The page behind must not scroll under the layer, and print needs to
   // know a report is up so it can hide everything else.
@@ -407,9 +457,11 @@ export function ReportView({ report, print, onClose }: { report: HumanReport; pr
       {report.food && <Food food={report.food} days={report.days} />}
       {report.meds && <Meds meds={report.meds} />}
       {report.body && <Body body={report.body} />}
+      {report.ai && <Ai ai={report.ai} />}
       <footer className="rp-foot">
-        Every figure here was worked out by the app from what was logged. No AI was used and nothing left this phone. This is a record, not
-        medical advice.
+        {report.ai && !report.ai.failed
+          ? 'Every figure here was worked out by the app from what was logged. The points marked AI were written by a model from those figures alone, with your name and identifiers removed, and checked by the app. This is a record, not medical advice.'
+          : 'Every figure here was worked out by the app from what was logged. No AI was used and nothing left this phone. This is a record, not medical advice.'}
       </footer>
     </div>,
     document.body,

@@ -77,6 +77,12 @@ export type HumanReport = {
   food: FoodReport | null;
   meds: MedsReport | null;
   body: BodyReport | null;
+  /**
+   * Set only when the person switched AI insights on. The one part of the
+   * report not worked out by the app, and marked as such wherever it shows.
+   * `failed` holds why, when the request did not come back.
+   */
+  ai?: { insights: string[]; questions: string[]; removed: number; failed: string | null };
 };
 
 const TITLES: Record<Scope, string> = { meals: 'Meals report', meds: 'Medicines report', full: 'Full report' };

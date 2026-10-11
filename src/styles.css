@@ -4052,6 +4052,86 @@ button.am-opt {
 @page {
   margin: 8mm;
 }
+/* The AI insights switch on the report sheet. Looks like a switch because it
+   is one: a thing that stays how it was left, for this visit. */
+.am-sw {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  text-align: left;
+}
+.am-sw:disabled {
+  opacity: 0.5;
+}
+.am-sw-t {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink-text);
+}
+.am-sw-t small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.am-sw-k {
+  position: relative;
+  width: 42px;
+  height: 26px;
+  flex: none;
+  border-radius: 13px;
+  background: var(--line);
+  transition: background 0.15s;
+}
+.am-sw-k::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.am-sw[aria-checked='true'] .am-sw-k {
+  background: var(--am-g-bg);
+  box-shadow: inset 0 0 0 1px var(--am-g-bd);
+}
+.am-sw[aria-checked='true'] .am-sw-k::after {
+  transform: translateX(16px);
+  background: var(--am-g);
+}
+/* The model's part of the report: every point wears the tag. */
+.rp-ai-l {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rp-ai-l li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: #c9d3cd;
+}
+.rp-ai-l .am-ai {
+  flex: none;
+  margin-top: 3px;
+}
 /* On paper: the report alone, dark ink on white. The app has one theme and
    it is dark; a printed page is not the app, and a page of black costs a
    cartridge and reads worse. */
@@ -4114,6 +4194,10 @@ button.am-opt {
   }
   .rp-table td {
     color: #111614;
+  }
+  .rp-ai-l li {
+    color: #111614;
+    break-inside: avoid;
   }
   /* A whole section is longer than a page, and told not to break it was
      pushed to the next one, leaving the title alone on the first. What must

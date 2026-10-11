@@ -58,6 +58,28 @@ export type FilterResult = {
   blocked: boolean;
 };
 
+/**
+ * A figure from the food record, not a dose: "Protein averages 24 g a day."
+ *
+ * The frequency pattern above ("5 g per day") cannot tell grams of creatine
+ * from grams of protein, and it removed every sentence that reported a
+ * day's protein, carbs, fat or fibre, which is most of what a nutrition
+ * answer says. Found on 11 Oct 2026, when a report question naming the
+ * person's own protein figure was dropped as a dose.
+ *
+ * Narrow on purpose. The sentence must name one of the food figures, give
+ * its amount in grams or calories only, and contain nothing that instructs:
+ * "Try 5 g of creatine per day" has "try", and "take 30 g of protein powder"
+ * has "take", and both are still removed.
+ */
+function reportsFood(sentence: string): boolean {
+  return (
+    /\b(?:protein|carbs?|carbohydrates?|fats?|fibre|fiber|calories|kcal)\b/i.test(sentence) &&
+    !/\d\s*(?:mg|mcg|µg|ml|iu|units?|tablets?|capsules?|pills?|scoops?)\b/i.test(sentence) &&
+    !/\b(?:take|taking|swallow|try|should|could|increase|decrease|reduce|raise|lower|adjust|titrate|start|begin|suggest|recommend\w*|dose|dosage|supplement\w*|powder)\b/i.test(sentence)
+  );
+}
+
 /** True when a sentence appears to cite a source, which R3 requires. */
 function hasCitation(sentence: string): boolean {
   return /https?:\/\/|\bper the label\b|\bthe label (states|says)\b|\baccording to the (label|leaflet)\b/i.test(
@@ -78,7 +100,7 @@ export function filterDoses(text: string): FilterResult {
 
   for (const s of sentences) {
     const instructional = INSTRUCTIONAL.some((re) => re.test(s));
-    if (instructional && !hasCitation(s)) {
+    if (instructional && !hasCitation(s) && !reportsFood(s)) {
       removed.push(s.trim());
     } else {
       kept.push(s);

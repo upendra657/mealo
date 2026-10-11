@@ -704,6 +704,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         scope={sheet.scope}
         days={sheet.days}
         aud={sheet.aud}
+        settings={settings && ready ? settings : null}
         onAud={(aud) => setSheet((s) => ({ ...s, aud }))}
         onScope={(scope) => setSheet((s) => ({ ...s, scope }))}
         onDays={(days) => setSheet((s) => ({ ...s, days }))}

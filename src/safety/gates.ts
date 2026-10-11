@@ -509,6 +509,9 @@ const MED_HINGLISH: readonly RegExp[] = [
 
 const CONDITION = '(?:diabet\\w*|pre[- ]?diabet\\w*|cancer|tumou?r|thyroid\\w*|hypothyroid\\w*|pcos|pcod|ibs|ibd|ulcers?|infection|covid|corona|flu|dengue|malaria|typhoid|tb|tuberculosis|an(?:a)?emi\\w*|arthritis|asthma|depress\\w+|anxiety disorder|adhd|autism|heart (?:disease|attack|problem|condition|failure)|kidney (?:disease|stones?|problem|failure)|liver (?:disease|problem|failure)|fatty liver|jaundice|hernia|appendi\\w+|gall ?stones?|migraines?|c(?:o)?eliac|crohn\\w*|gerd|acid reflux disease|hypertension|high bp|high blood pressure|low bp|cholesterol problem|allerg\\w+|lactose intoleran\\w+|gluten intoleran\\w+|food intoleran\\w+|(?:vitamin|iron|b12|d3?) deficien\\w+|deficien\\w+|a disease|a disorder|a syndrome|a condition|an illness|an infection|something serious|something wrong|bimari|rog)';
 
+/** The same list, for the report's AI insights: a point that names one of these is dropped. */
+export const CONDITION_WORDS = CONDITION;
+
 const DIAGNOSIS: readonly RegExp[] = [
   /\bdiagnos(?:e|ing) (?:me|my|this|it|what)\b/,
   /\b(?:can|could|will|would) you (?:please )?diagnos/,

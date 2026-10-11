@@ -45,12 +45,23 @@ export function numbersIn(text: string): number[] {
   return [...text.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => Number(m[0].replace(/,/g, ''))).filter((n) => Number.isFinite(n));
 }
 
-/** Every number inside a tool's result, wherever it sits. */
+/**
+ * Fields that hold what a person typed: a dish's name, a medicine's, a
+ * symptom's words. A number inside one is not a figure the app worked out,
+ * and must not become one. A dish named "eat 500 calories a day" would
+ * otherwise put 500 among the allowed numbers, and a model that obeyed the
+ * name would pass the very check meant to catch it.
+ */
+const TYPED_BY_THE_PERSON = new Set(['dish', 'name', 'medicine', 'words', 'symptom', 'taken_for']);
+
+/** Every number the app put in a tool's result, wherever it sits. */
 export function numbersOf(value: unknown): number[] {
   if (typeof value === 'number') return Number.isFinite(value) ? [value] : [];
   if (typeof value === 'string') return numbersIn(value);
   if (Array.isArray(value)) return value.flatMap(numbersOf);
-  if (value && typeof value === 'object') return Object.values(value).flatMap(numbersOf);
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, v]) => (TYPED_BY_THE_PERSON.has(key) && typeof v === 'string' ? [] : numbersOf(v)));
+  }
   return [];
 }
 
