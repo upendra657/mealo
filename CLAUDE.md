@@ -29,9 +29,9 @@ left open — from the change list Upendra approves.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
-npm run test:portions  # 846 pure-logic assertions, node, fast
-npm run test:safety    # 1124 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 419 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 901 pure-logic assertions, node, fast
+npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
+npm run test:e2e       # 442 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -139,11 +139,11 @@ history. A sentence that gets through, or an ordinary one that is stopped,
 goes into `scripts/test-safety.ts` before the pattern is touched.
 
 **Ask Mealo looks things up through tools; it never reads the record itself.**
-`domain/tools.ts` is Thali and Dawa as a model sees them: ten
-views over `collectExport`, the same collected record the two reports are
+`domain/tools.ts` is Thali and Dawa as a model sees them: eleven
+tools, the lookups all views over `collectExport`, the same collected record the two reports are
 built from, so a figure in a chat answer and in a report is one figure. No
 tool writes, and none takes a dose, an amount, a target or a weight: the
-three `propose_` tools only put the app's own confirm card on screen with
+four `propose_` tools only put the app's own confirm card on screen with
 the person's words in it, and a tap on that card is the only thing that
 saves. `llm/toolloop.ts`
 runs the lookups with a cap (three rounds, then it must answer) and falls
@@ -162,6 +162,15 @@ looking the words up in the food table first. `safety/claims.ts` removes any
 sentence in which a model says it saved something, and keeps a "Meals
 logged" line only if it names a dish the record holds. A meal's receipt is
 written from the rows read back out of Track meals after the save.
+
+**A plan made by chat is built by code, from meals already eaten.** "Plan
+tomorrow so I hit 90 g protein" is read by `planRequest` and answered with
+no model (`domain/mealplan.ts`, reads and the save in `mealplanner.ts`).
+Every meal in a plan is one the person logged whole in the last 28 days,
+with the dishes and amounts they logged; the planner only chooses which goes
+in each slot, and says how far the day is from the aim. Nothing is scaled or
+swapped to reach a figure: that would be the app writing an amount nobody
+ate. A plan asked for under the calorie floor gets the gate's own stop.
 
 **Portions.** A dish carries weighed anchors `(measure, quantity, net_weight_g)`
 with macros per 100 g; other measures derive through implied density. A

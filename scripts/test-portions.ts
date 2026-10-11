@@ -2308,6 +2308,91 @@ section('Backup and restore: what a file must be');
   check('the file is named for the local day', backupName(new Date(2026, 9, 12, 0, 30)), 'mealo-backup-2026-10-12.sqlite3');
 }
 
+// ----------------------------------------------- planning a day by chat
+import { aimLine, belowFloor, distance, planReceipt, planRequest, rankDays, usualOptions, USUAL_MIN_DAYS, type Five, type Option, type PastMeal } from '../src/domain/mealplan';
+import { stampFor } from '../src/domain/plan';
+{
+  // Sunday 11 Oct 2026, 10:00.
+  const now = new Date(2026, 9, 11, 10, 0);
+  const ask = (t: string) => planRequest(t, now);
+  check('the sentence it was built for', ask('Plan tomorrow so I hit 90 g protein, using things I usually eat'), { ahead: 1, protein: 90, kcal: null });
+  check('a bare day', ask('plan tomorrow'), { ahead: 1, protein: null, kcal: null });
+  check('today', ask('Plan my meals for today'), { ahead: 0, protein: null, kcal: null });
+  check('tonight is today', ask('plan dinner tonight'), { ahead: 0, protein: null, kcal: null });
+  check('the day after', ask('please plan the day after tomorrow'), { ahead: 2, protein: null, kcal: null });
+  check('a weekday is the next one', [ask('plan Friday')?.ahead, ask('plan my food for wed')?.ahead, ask('plan monday')?.ahead], [5, 3, 1]);
+  check('said on a Sunday, Sunday is a week away', ask('plan sunday')?.ahead, 7);
+  check('in N days', ask('plan my meals in 3 days')?.ahead, 3);
+  check('no day named is tomorrow', ask('plan my meals so I get 100g of protein'), { ahead: 1, protein: 100, kcal: null });
+  check('politely', [ask('Can you plan tomorrow?')?.ahead, ask('could you please plan my meals for tomorrow')?.ahead, ask('I want you to plan tomorrow')?.ahead, ask("let's plan tomorrow")?.ahead, ask('help me plan tomorrow')?.ahead], [1, 1, 1, 1, 1]);
+  check('a curly apostrophe from a phone', ask('let’s plan tomorrow')?.ahead, 1);
+  check('other verbs need the word plan', [ask('make me a meal plan for tomorrow')?.ahead, ask('suggest a plan for Friday meals')?.ahead, ask('make me a sandwich tomorrow')], [1, 5, null]);
+  check('calories typed', ask('plan tomorrow at 1800 kcal with 120 g protein'), { ahead: 1, protein: 120, kcal: 1800 });
+  check('calories with a comma', ask('plan tomorrow around 2,000 calories')?.kcal, 2000);
+  check('a calorie figure under the floor is seen as one', [ask('plan tomorrow at 600 kcal'), ask('plan tomorrow at 999 calories'), ask('plan tomorrow at 1000 calories'), ask('plan tomorrow')].map((a) => [a!.kcal, belowFloor(a!)]),
+    [[600, true], [999, true], [1000, false], [null, false]]);
+  check('one meal\'s calories are not the day\'s', [ask('plan tomorrow with a 300 kcal snack')?.kcal, ask('plan tomorrow, 400 calorie breakfast')?.kcal, ask('make me a 500 calorie meal plan for tomorrow')?.kcal], [null, null, 500]);
+  check('a silly protein figure is not used', [ask('plan tomorrow with 5 g protein')?.protein, ask('plan tomorrow with 900 g protein')?.protein], [null, null]);
+  check('protein the other way round', ask('plan tomorrow, protein at least 95 g')?.protein, 95);
+  // Not requests to plan a day's meals.
+  for (const t of [
+    'What did I plan for tomorrow?', 'did I plan anything for Friday', 'how is my plan going', 'plan my trip tomorrow', 'plan a workout for tomorrow',
+    'I plan to eat less', 'my plan is to lose weight', 'the plan worked', 'tomorrow I will plan', 'is my meal plan ok', 'I just had 2 roti and dal',
+    'make a report for last week', 'planning is hard', '', 'plan my medicines for tomorrow', 'plan when to take my tablets',
+  ]) check(`not a plan request: ${t || '(empty)'}`, ask(t), null);
+
+  check('noon on another day, the clock today', [stampFor(new Date(2026, 9, 12).getTime(), now), stampFor(new Date(2026, 9, 11).getTime(), now)], [new Date(2026, 9, 12, 12).getTime(), now.getTime()]);
+
+  // ---- which meals are usual
+  const dish = (foodId: string, quantity: number | null = 1, unit: string | null = 'katori', grams: number | null = null) => ({ foodId, name: foodId, quantity, unit, grams });
+  const meal = (slot: PastMeal['slot'], day: number, dishes: PastMeal['dishes']): PastMeal => ({ slot, at: new Date(2026, 9, day, 9).getTime(), day: `2026-10-${String(day).padStart(2, '0')}`, dishes });
+  const poha = [dish('poha'), dish('chai', 1, 'cup')];
+  const idli = [dish('idli', 3, 'piece'), dish('sambar')];
+  const dalRoti = [dish('dal'), dish('roti', 2, 'piece')];
+  const past: PastMeal[] = [
+    meal('breakfast', 1, poha), meal('breakfast', 2, poha), meal('breakfast', 3, idli), meal('breakfast', 4, [...poha].reverse()), meal('breakfast', 5, idli), meal('breakfast', 6, [dish('poha', 2), dish('chai', 1, 'cup')]),
+    meal('lunch', 1, dalRoti), meal('lunch', 2, dalRoti), meal('lunch', 3, dalRoti), meal('lunch', 4, dalRoti),
+    meal('dinner', 1, [dish('khichdi', null, null, 300)]), meal('dinner', 2, [dish('khichdi', null, null, 300)]),
+    meal('esnack', 1, [dish('chana')]), meal('esnack', 2, [dish('chana')]), meal('esnack', 3, [dish('fruit', 1, 'piece')]),
+    meal('other', 1, [dish('cake')]), meal('other', 2, [dish('cake')]), meal('other', 3, [dish('cake')]),
+  ];
+  const usual = usualOptions(past);
+  check('three days make a slot usual, two do not, and "something else" never is', [USUAL_MIN_DAYS, usual.map((u) => u.slot)], [3, ['breakfast', 'lunch', 'esnack']]);
+  const bf = usual[0];
+  check('the same dishes in another order are one meal', bf.options.map((o) => [o.dishes.map((d) => d.foodId).sort().join('+'), o.times]), [['chai+poha', 3], ['idli+sambar', 2], ['chai+poha', 1]]);
+  check('a different amount is a different meal', bf.options[2].dishes.find((d) => d.foodId === 'poha')?.quantity, 2);
+  check('a slot logged on fewer than half the days may be left empty', usual.map((u) => [u.slot, u.days, u.optional]), [['breakfast', 6, false], ['lunch', 4, false], ['esnack', 3, false]]);
+  check('and one that is, is optional', usualOptions([...past, meal('breakfast', 7, poha), meal('breakfast', 8, poha)]).find((u) => u.slot === 'esnack')?.optional, true);
+  check('the same meal twice on one day counts once', usualOptions([meal('lunch', 1, dalRoti), meal('lunch', 1, dalRoti), meal('lunch', 2, dalRoti), meal('lunch', 3, dalRoti)])[0].options[0].times, 3);
+
+  // ---- choosing the day
+  const five = (energy_kcal: number, protein_g: number): Five => ({ energy_kcal, protein_g, fat_g: 0, carbs_g: 0, fibre_g: 0 });
+  const price: Record<string, Five> = { 'chai+poha': five(350, 8), 'idli+sambar': five(300, 12), 'dal+roti': five(450, 18), chana: five(200, 11), fruit: five(90, 1), 'chai+poha2': five(600, 14) };
+  const priced = (o: Option) => price[o.dishes.map((d) => d.foodId).sort().join('+') + (o.dishes.some((d) => d.quantity === 2 && d.foodId === 'poha') ? '2' : '')];
+  const names = (d: { picks: { option: Option }[] }) => d.picks.map((p) => p.option.dishes.map((x) => x.foodId).sort().join('+'));
+  const none = { protein: null, kcal: null, proteinAsked: false };
+  check('with no aim, the most usual day', names(rankDays(usual, priced, none)[0]), ['chai+poha', 'dal+roti', 'chana']);
+  const highP = rankDays(usual, priced, { protein: 41, kcal: null, proteinAsked: true });
+  check('a protein figure picks the meals that reach it', [names(highP[0]), highP[0].totals.protein_g], [['idli+sambar', 'dal+roti', 'chana'], 41]);
+  check('it never invents: every pick is one of the options handed in', highP.every((d) => d.picks.every((p) => usual.some((u) => u.options.includes(p.option)))), true);
+  check('five days at most, nearest first, all different', [highP.length, new Set(highP.map((d) => d.picks.map((p) => p.option.dishes.map((x) => `${x.foodId}*${x.quantity}`).sort().join('+')).join('|'))).size], [5, 5]);
+  const cut = rankDays(usual, priced, { protein: null, kcal: 800, proteinAsked: false });
+  check('going over the calorie target costs more than falling short', [names(cut[0]), cut[0].totals.energy_kcal], [['idli+sambar', 'dal+roti', 'fruit'], 840]);
+  check('what the day already holds is counted', rankDays(usual.filter((u) => u.slot !== 'lunch'), priced, { protein: 41, kcal: null, proteinAsked: true }, five(450, 18))[0].dayTotals.protein_g, 41);
+  check('nothing to choose from is no plan', [rankDays([], priced, none), rankDays([{ slot: 'lunch', days: 3, optional: false, options: [] }], priced, none)], [[], []]);
+  const opt = rankDays([{ ...usual[2], optional: true }, usual[1]], priced, { protein: null, kcal: 450, proteinAsked: false });
+  check('an optional slot can be left out to stay under the target', names(opt[0]), ['dal+roti']);
+  check('distance: over counts three times under', [distance(five(1100, 0), { protein: null, kcal: 1000, proteinAsked: false }), distance(five(900, 0), { protein: null, kcal: 1000, proteinAsked: false })].map((n) => Math.round(n * 100) / 100), [0.3, 0.1]);
+  check('distance: protein asked for counts double protein from the target', [distance(five(0, 80), { protein: 100, kcal: null, proteinAsked: true }), distance(five(0, 80), { protein: 100, kcal: null, proteinAsked: false })].map((n) => Math.round(n * 100) / 100), [0.8, 0.4]);
+
+  // ---- the words
+  check('the aim line states the gap', aimLine(five(1640, 78), { protein: 90, kcal: 1800, proteinAsked: true }), '78 g protein, 12 g under the 90 g you asked for · 160 Cal under the 1,800 Cal target');
+  check('and says "target" when the figure was not typed', aimLine(five(1900, 95), { protein: 90, kcal: 1800, proteinAsked: false }), '95 g protein, 5 g over the 90 g target · 100 Cal over the 1,800 Cal target');
+  check('no aim, no line', aimLine(five(1900, 95), none), null);
+  check('the receipt is written from what was stored', [planReceipt('Mon 12 Oct', 3, 7, 1640.4, 7), planReceipt('Mon 12 Oct', 1, 1, 300, 2)],
+    ['Planned for Mon 12 Oct: 3 meals, 7 dishes, 1,640 Cal. In Track meals.', 'Planned for Mon 12 Oct: 1 meal, 1 dish, 300 Cal. In Track meals. The card showed 2 dishes; 1 were saved.']);
+}
+
 // ------------------------------------------------------------------ done
 
 console.log(`\n${passed} passed, ${failed} failed`);

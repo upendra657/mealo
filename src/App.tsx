@@ -162,7 +162,7 @@ export default function App() {
 
         {screen === 'library' && <FoodLibrary go={go} />}
 
-        {screen === 'doctor' && <Doctor go={go} />}
+        {screen === 'doctor' && <Doctor go={go} setDayStart={setDayStart} />}
 
         {screen === 'meds' && <Medications go={go} avatar={avatar} />}
 

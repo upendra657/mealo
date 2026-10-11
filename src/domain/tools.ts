@@ -32,7 +32,7 @@
 import { clock } from './chat';
 import { dateLabel, MAX_DAYS, MIN_DAYS, type ExportInput, type Scope } from './export';
 import { describeMeasure } from './measures';
-import { counts } from './plan';
+import { counts, DAYS_AHEAD } from './plan';
 import { humanReport, MACROS } from './report';
 import { suggestLabel, wordsForModel } from './symptomlabels';
 import type { ToolDef } from '../llm/types';
@@ -84,6 +84,10 @@ export const TOOLS: ToolDef[] = [
   fn('propose_symptom',
     'Put a "log a symptom" card on screen for the person to confirm, when they describe how they feel and want it recorded. Pass their own words.',
     { words: { type: 'string', description: 'The symptom in their words.' } }, ['words']),
+  fn('propose_plan',
+    'Put a "plan a day" card on screen, when the person asks for a day\'s meals to be planned. Pass their own words. The app builds the day itself, only from meals they have logged in the last four weeks with the amounts they logged, and adds up the totals; you do not choose dishes or amounts and must not list any. Nothing is saved unless they press the button.',
+    { words: { type: 'string', description: 'The request in their words, e.g. "plan tomorrow so I hit 90 g protein".' },
+      days_ahead: { type: 'integer', minimum: 0, maximum: DAYS_AHEAD, description: '0 for today, 1 for tomorrow, up to 7.' } }, ['words', 'days_ahead']),
   fn('prepare_report',
     'Open the report sheet for the person, already filled in. Use when they ask for a report or an export. You do not write the report: the app does, after the person has seen the dates and pressed the button.',
     { scope: { type: 'string', enum: ['meals', 'meds', 'full'] }, days: DAYS,
@@ -92,10 +96,17 @@ export const TOOLS: ToolDef[] = [
 
 export type ToolName =
   | 'thali_summary' | 'thali_day' | 'thali_before_symptom' | 'dawa_adherence' | 'weight_trend' | 'symptom_log'
-  | 'propose_meal' | 'propose_doses' | 'propose_symptom' | 'prepare_report';
+  | 'propose_meal' | 'propose_doses' | 'propose_symptom' | 'propose_plan' | 'prepare_report';
 
 /** A confirm card a tool asked for: which one, and the words to fill it with. */
-export type ProposedCard = { pill: 'meal' | 'doses' | 'symptom'; said: string | null };
+export type ProposedCard =
+  | { pill: 'meal' | 'doses' | 'symptom'; said: string | null }
+  /**
+   * A day to plan. The day is the only thing a model supplies besides the
+   * person's words; a protein or calorie figure is read by the app from
+   * those words, so there is no argument here for a model to put one in.
+   */
+  | { pill: 'plan'; said: string; ahead: number };
 
 /** A request to open the report sheet: the one thing a tool asks the screen to do. */
 export type OpenReport = { scope: Scope; days: number; aud: 'human' | 'ai' };
@@ -290,6 +301,12 @@ export async function runTool(name: string, args: Record<string, unknown>, read:
       if (!words) return { result: { error: 'Say what the person is feeling, in their words.' } };
       return { result: { shown: true, note: CARD_SHOWN }, card: { pill: 'symptom', said: words } };
     }
+    case 'propose_plan': {
+      const words = typeof args.words === 'string' ? args.words.trim().slice(0, 300) : '';
+      if (!words) return { result: { error: 'Pass the request in the person\'s words.' } };
+      const ahead = Math.min(DAYS_AHEAD, Math.max(0, Math.round(Number(args.days_ahead) || 0)));
+      return { result: { shown: true, note: CARD_SHOWN }, card: { pill: 'plan', said: words, ahead } };
+    }
     case 'prepare_report': {
       const scope: Scope = args.scope === 'meals' || args.scope === 'meds' ? args.scope : 'full';
       const days = daysArg(args.days, 30);
@@ -353,6 +370,8 @@ export function toolLabel(name: string, args: Record<string, unknown>): string {
       return 'the doses card';
     case 'propose_symptom':
       return 'a symptom card';
+    case 'propose_plan':
+      return 'a plan card';
     case 'prepare_report':
       return 'the report sheet';
     default:

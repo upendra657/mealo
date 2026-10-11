@@ -33,7 +33,7 @@ import {
 import { describeMeasure, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
 import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
-import { plansAt } from '../domain/plan';
+import { plansAt, stampFor } from '../domain/plan';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
 import { EditDish } from './EditDish';
@@ -218,7 +218,7 @@ export function LogFlow({
         const planned = plansAt(dayStart ?? startOfToday(), slot);
         await saveMeal([item], {
           mealType: slot,
-          eatenAt: eatenAt(dayStart),
+          eatenAt: stampFor(dayStart ?? startOfToday()),
           planned,
         });
         toast(`${item.label} ${planned ? 'planned' : 'added'}`);
@@ -283,19 +283,6 @@ export function LogFlow({
       )}
     </>
   );
-}
-
-/**
- * When a meal logged for another day actually happened.
- *
- * Today gets the real clock so the order of meals is right. A past or a
- * future day gets midday, because pretending to know that Tuesday's lunch was
- * at 13:42 is inventing a fact; noon is visibly a placeholder.
- */
-function eatenAt(dayStart: number | null): number {
-  const start = dayStart ?? startOfToday();
-  if (start === startOfToday()) return Date.now();
-  return start + 12 * 3_600_000;
 }
 
 /* ------------------------------------------------------------- slot step */

@@ -28,7 +28,8 @@ import {
   searchFoods,
   slugFor,
 } from '../../src/domain/foods';
-import { cyclePlan, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
+import { cyclePlan, deleteMeal, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
+import { buildPlan, dayAhead, savePlan } from '../../src/domain/mealplanner';
 import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portions';
 import { seedFoods, startFoods, type BundledFood } from '../../src/domain/seed';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
@@ -1757,6 +1758,102 @@ async function main() {
     await setActiveProfile(PRIMARY_PROFILE);
     await removeSymptom(mine);
     check('an undone symptom leaves the next file', !buildExport(await collectExport('full', 7)).includes(stamp));
+  }
+
+  // ---- a day planned in Ask Mealo -----------------------------------------
+  // "Plan tomorrow so I hit 90 g protein, using things I usually eat." Its
+  // own person, so that the four weeks it reads hold only these meals.
+  {
+    const was = activeProfile();
+    const planner = await createProfile('Planner');
+    await setActiveProfile(planner);
+    const dishIds: Record<string, string> = {};
+    for (const [name, grams, energy, protein] of [
+      ['Plan poha', 150, 270, 6], ['Plan paneer bhurji', 150, 300, 20], ['Plan dal', 150, 180, 9],
+      ['Plan rice', 150, 200, 4], ['Plan chicken curry', 200, 320, 30],
+    ] as const) {
+      dishIds[name] = (await saveDishFromPortion({ name, quantity: 1, measure: 'katori', netWeightG: grams, energy, protein, fat: 5, carbs: 30, fibre: 2 })).foodId as string;
+    }
+    const ate = async (daysAgo: number, slot: 'breakfast' | 'lunch' | 'dinner', text: string, planned = false) =>
+      saveMeal(await draftFromText(text), { mealType: slot, eatenAt: dayAhead(-daysAgo) + (slot === 'breakfast' ? 8 : slot === 'lunch' ? 13 : 20) * 3_600_000, planned });
+
+    const nothing = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    check('with nothing logged there is no plan, and the card says why', nothing.choices.length === 0 && /Not enough to plan from yet/.test(nothing.empty ?? ''), JSON.stringify(nothing.empty));
+
+    for (const d of [1, 2, 3]) await ate(d, 'breakfast', '1 katori plan poha');
+    for (const d of [4, 5]) await ate(d, 'breakfast', '1 katori plan paneer bhurji');
+    for (const d of [1, 2, 3, 4]) await ate(d, 'lunch', '1 katori plan dal, 1 katori plan rice');
+    for (const d of [1, 2, 3]) await ate(d, 'dinner', '1 katori plan chicken curry, 1 katori plan rice');
+    for (const d of [4, 5, 6]) await ate(d, 'dinner', '2 katori plan dal');
+    // Neither of these is something this person usually eats: a plan that
+    // was never ticked, and a meal with a line the food table has no dish for.
+    for (const d of [1, 2, 3, 4, 5]) await ate(d, 'breakfast', '3 katori plan chicken curry', true);
+    for (const d of [1, 2, 3]) await ate(d, 'lunch', '1 katori plan dal, 1 zzqx unheard-of thing');
+    await saveTargets({ energy_kcal: 1500, protein_g: 60 });
+
+    const tomorrow = dayAhead(1);
+    const plain = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    const first = plain.choices[0];
+    check('a day is built for each usual meal time', first.meals.map((m) => m.slot).join(','), 'breakfast,lunch,dinner');
+    const allItems = plain.choices.flatMap((c) => c.meals.flatMap((m) => m.items));
+    check('only from the person\'s own dishes', allItems.every((i) => i.food !== null && Object.values(dishIds).includes(i.food.id)), allItems.map((i) => i.label).join('|'));
+    check('a plan never ticked is not a usual meal', !plain.choices.some((c) => c.meals.some((m) => m.slot === 'breakfast' && m.items.some((i) => i.label === 'Plan chicken curry'))));
+    check('nor is a meal with a line that matched no dish', !plain.choices.some((c) => c.meals.some((m) => m.slot === 'lunch' && m.items.length === 1)));
+    check('the amounts are the ones logged', first.meals.find((m) => m.slot === 'lunch')!.items.map((i) => `${i.quantity} ${i.unit} ${i.label}`).join(', '), '1 katori Plan dal, 1 katori Plan rice');
+    check('the totals are the rows added up',
+      Math.round(first.totals.energy_kcal) === Math.round(first.meals.reduce((n, m) => n + m.items.reduce((k, i) => k + (i.energy_kcal ?? 0), 0), 0)), JSON.stringify(first.totals));
+    check('the saved targets are the aim when none is typed', plain.aim.protein === 60 && plain.aim.kcal === 1500 && plain.aim.proteinAsked === false, JSON.stringify(plain.aim));
+    check('and the plan stays under the calorie target when it can', first.dayTotals.energy_kcal <= 1500, String(first.dayTotals.energy_kcal));
+
+    const asked = await buildPlan({ ahead: 1, protein: 80, kcal: null });
+    const best = asked.choices[0];
+    check('a protein figure brings in the meals that carry it',
+      best.meals.find((m) => m.slot === 'breakfast')!.items[0].label === 'Plan paneer bhurji' && best.meals.find((m) => m.slot === 'dinner')!.items[0].label === 'Plan chicken curry',
+      best.meals.map((m) => m.items.map((i) => i.label).join('+')).join(' / '));
+    // 20 + (9 + 4) + (30 + 4): the most these meals hold. Short of 80, and it says so.
+    check('it says how far short it is, and does not stretch a portion', Math.round(best.dayTotals.protein_g) === 67 && best.line!.startsWith('67 g protein, 13 g under the 80 g you asked for'), best.line ?? '');
+
+    const todayBefore = (await mealsOn(dayAhead(0))).length;
+    const ids = await savePlan(tomorrow, best, 'plan tomorrow so I hit 80 g protein');
+    const stored = await itemsFor(ids);
+    const onDay = await mealsOn(tomorrow);
+    check('confirmed, it is three planned meals on that day', onDay.length === 3 && stored.length === 5 && stored.every((i) => i.plan_state === 'planned'), JSON.stringify(stored.map((i) => i.plan_state)));
+    check('stamped at noon, as a meal planned in Track meals is', onDay.every((m) => m.eaten_at === tomorrow + 12 * 3_600_000));
+    check('in the slots the card showed', onDay.map((m) => m.meal_type).sort().join(','), 'breakfast,dinner,lunch');
+    check('today is untouched', (await mealsOn(dayAhead(0))).length === todayBefore);
+    const planned = await readDay(tomorrow);
+    check('and Track meals counts it as planned, not eaten', Math.round(planned.planned[0]) === Math.round(best.totals.energy_kcal) && planned.totals[0] === 0,
+      `${planned.planned[0]} planned, ${planned.totals[0]} eaten`);
+
+    const full = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    check('a day already planned has nothing left to plan', full.choices.length === 0 && /Nothing left to plan/.test(full.empty ?? '') && full.kept.length === 3, JSON.stringify(full.kept));
+
+    for (const id of ids) await deleteMeal(id);
+    check('undo takes the whole plan back', (await mealsOn(tomorrow)).length === 0);
+
+    // Lunch decided already: the plan is the rest of the day, with lunch counted.
+    const lunchId = await saveMeal(await draftFromText('2 katori plan dal'), { mealType: 'lunch', eatenAt: tomorrow + 12 * 3_600_000, planned: true });
+    const around = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    check('a meal time that already has something is left alone',
+      around.kept.join(',') === 'lunch' && around.choices.every((c) => c.meals.every((m) => m.slot !== 'lunch')), JSON.stringify(around.kept));
+    check('and counted in the day', Math.round(around.choices[0].dayTotals.energy_kcal) === Math.round(around.choices[0].totals.energy_kcal + 360), JSON.stringify(around.choices[0].dayTotals));
+    await deleteMeal(lunchId);
+
+    // A dish corrected since it was eaten is planned at the corrected figure.
+    await sql('UPDATE custom_foods SET energy_kcal = energy_kcal * 2 WHERE id = ?', [dishIds['Plan poha']]);
+    const repriced = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    const poha = repriced.choices.flatMap((c) => c.meals.flatMap((m) => m.items)).find((i) => i.label === 'Plan poha');
+    check('today\'s numbers, not the ones an old entry stored', Math.round(poha?.energy_kcal ?? 0) === 540, String(poha?.energy_kcal));
+
+    await deleteCustomFood(dishIds['Plan chicken curry']);
+    const without = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    check('a deleted dish is never planned', without.choices.length > 0 && !without.choices.some((c) => c.meals.some((m) => m.items.some((i) => i.label === 'Plan chicken curry'))),
+      without.choices[0]?.meals.map((m) => m.items.map((i) => i.label).join('+')).join(' / '));
+
+    await setActiveProfile(PRIMARY_PROFILE);
+    const other = await buildPlan({ ahead: 1, protein: null, kcal: null });
+    check('one person\'s meals never plan another\'s day', !other.choices.some((c) => c.meals.some((m) => m.items.some((i) => i.label.startsWith('Plan ')))));
+    await setActiveProfile(was);
   }
 
   // ---- backup and restore ------------------------------------------------

@@ -29,9 +29,12 @@ import {
   type Pill,
 } from '../domain/chat';
 import { timeLabel, type PlannedDose } from '../domain/doses';
+import { planReceipt, type PlanAsk } from '../domain/mealplan';
+import { buildPlan, savePlan, type DayPlan } from '../domain/mealplanner';
 import { deleteMeal, draftFromText, itemsFor, saveMeal, type DraftItem } from '../domain/meals';
 import { describeMeasure } from '../domain/measures';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
+import { dayLabel } from '../domain/plan';
 import { guessSlot, slot } from '../domain/slots';
 import { SYMPTOM_GROUPS, suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, removeSymptom } from '../domain/symptoms';
@@ -458,6 +461,163 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
               </div>
             </div>
           </Sheet>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- a day planned
+
+const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "Mon 12 Oct", day before month whatever the phone's language says. */
+const shortDate = (ms: number) => {
+  const d = new Date(ms);
+  return `${DAYS_SHORT[d.getDay()]} ${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
+};
+
+/**
+ * A day of meals put together by the app, to confirm.
+ *
+ * Not a pill: it is opened by a sentence ("plan tomorrow so I hit 90 g
+ * protein"), read by the app, and nothing under the bar asks for one. The
+ * card works with no provider set up, because no model takes part: the day
+ * is chosen in code from meals already logged (`domain/mealplan.ts`).
+ *
+ * "Another" steps through the next-nearest days rather than asking for a new
+ * one, so every day offered is one the same rule produced and the first is
+ * always the nearest.
+ */
+export function PlanFlow({
+  at,
+  said,
+  ask,
+  onCancel,
+  onWrote,
+  onView,
+}: {
+  at: number;
+  said: string;
+  ask: PlanAsk;
+  onCancel: () => void;
+  onWrote: () => void;
+  onView: (dayStart: number) => void;
+}) {
+  const [plan, setPlan] = useState<DayPlan | null>(null);
+  const [n, setN] = useState(0);
+  const [done, setDone] = useState<{ ids: string[]; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void buildPlan(ask).then((p) => {
+      if (live) setPlan(p);
+    });
+    return () => {
+      live = false;
+    };
+  }, [ask]);
+
+  if (done && plan) {
+    return (
+      <Receipt
+        text={done.text}
+        onView={() => onView(plan.dayStart)}
+        onUndo={async () => {
+          for (const id of done.ids) await deleteMeal(id);
+          onWrote();
+        }}
+      />
+    );
+  }
+
+  const choice = plan?.choices[n] ?? null;
+  const when = plan ? [dayLabel(plan.dayStart), shortDate(plan.dayStart)].filter(Boolean).join(', ') : '';
+
+  return (
+    <div className="am-entry">
+      <div className="am-q">
+        <div className="am-q-t">{entryTime(at)} · Plan a day</div>
+        <div className="am-q-x">{when || 'Putting a day together'}</div>
+      </div>
+      <div className="am-said">{said}</div>
+      {plan && !choice && (
+        <div className="am-card">
+          <div className="am-hint">{plan.empty}</div>
+          <div className="am-btns">
+            <button className="am-btn" onClick={onCancel}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+      {plan && choice && (
+        <>
+          <ToConfirm />
+          <div className="am-card am-card--doses">
+            {choice.meals.map((m) => (
+              <div key={m.slot}>
+                <div className="am-eyeb am-dose-g">{slot(m.slot).label}</div>
+                {m.items.map((it, i) => (
+                  <div key={i} className="am-li">
+                    <span>{it.label}</span>
+                    <span className="am-li-q">
+                      {it.quantity && it.unit && it.unit !== 'g'
+                        ? `${fmtQty(it.quantity)} ${describeMeasure(it.unit).toLowerCase()}`
+                        : `${Math.round(it.grams)} g`}
+                    </span>
+                    <span className="am-li-k">{Math.round(it.energy_kcal ?? 0)} Cal</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="am-li am-li--tot">
+              <span>{plan.kept.length ? 'The day, with what is already there' : 'The day'}</span>
+              <span className="am-li-k">
+                {Math.round(choice.dayTotals.energy_kcal).toLocaleString('en-US')} Cal · {Math.round(choice.dayTotals.protein_g)} g protein
+              </span>
+            </div>
+            {choice.line && <div className="am-hint">{choice.line}</div>}
+            {plan.kept.length > 0 && (
+              <div className="am-hint">
+                Left as it is: {plan.kept.map((k) => slot(k).label.toLowerCase()).join(', ')}.
+              </div>
+            )}
+            <div className="am-hint">
+              Each meal is one you logged in the last 28 days, with the same dishes and amounts. Nothing is adjusted to reach a figure.
+            </div>
+            <div className="am-btns">
+              <button className="am-btn" onClick={onCancel}>
+                Cancel
+              </button>
+              {plan.choices.length > 1 && (
+                <button className="am-btn" onClick={() => setN((n + 1) % plan.choices.length)}>
+                  Another · {n + 1} of {plan.choices.length}
+                </button>
+              )}
+              <button
+                className="am-btn am-btn--go"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const ids = await savePlan(plan.dayStart, choice, said);
+                    // Written from what Track meals now holds, read back.
+                    const stored = await itemsFor(ids);
+                    const meant = choice.meals.reduce((c, m) => c + m.items.length, 0);
+                    const kcal = stored.reduce((c, i) => c + (i.energy_kcal ?? 0), 0);
+                    setDone({ ids, text: planReceipt(shortDate(plan.dayStart), new Set(stored.map((i) => i.meal_id)).size, stored.length, kcal, meant) });
+                    onWrote();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Plan this day
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>

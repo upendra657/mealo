@@ -36,7 +36,7 @@ import { chat } from '../llm/adapter';
 import { LlmError } from '../llm/types';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
 import { triage } from '../safety/redflags';
-import { emptyRecordStop, gate, type Stop } from '../safety/gates';
+import { emptyRecordStop, gate, STOPS, type Stop } from '../safety/gates';
 import { weightsSince } from '../domain/weight';
 import { filterDoses } from '../safety/dosefilter';
 import {
@@ -57,12 +57,13 @@ import {
   type Pill,
   type Span,
 } from '../domain/chat';
+import { belowFloor, planRequest, type PlanAsk } from '../domain/mealplan';
 import { loadTargets } from '../domain/targets';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
 import { suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
 import { readMedsDay } from '../domain/medications';
-import { DosesFlow, MealFlow, SymptomFlow } from './AskPills';
+import { DosesFlow, MealFlow, PlanFlow, SymptomFlow } from './AskPills';
 import { SymptomHistory } from './SymptomHistory';
 import { DEFAULT_DAYS, reportRequest, type Scope } from '../domain/export';
 import { FileIcon, ReportCard, ReportSheet, type Audience, type Report } from './ReportSheet';
@@ -86,6 +87,11 @@ type FlowItem = {
   said: string | null;
   savedId: string | null;
 };
+/**
+ * A day being planned. Its own kind, not a pill's card: no pill opens it and
+ * the bar never waits on it.
+ */
+type PlanItem = { kind: 'plan'; id: number; at: number; said: string; ask: PlanAsk };
 /** A report made this visit. Session-only, like the pill cards. */
 type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
 /**
@@ -97,7 +103,7 @@ type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
 type FiguresItem = { kind: 'figures'; id: number; figures: Figures };
 /** A line from the app about what it did for an answer. This visit only. */
 type NoteItem = { kind: 'note'; id: number; text: string };
-type Item = Entry | FlowItem | ReportItem | FiguresItem | NoteItem;
+type Item = Entry | FlowItem | PlanItem | ReportItem | FiguresItem | NoteItem;
 
 const daysBack = (days: number) => Date.now() - days * 86_400_000;
 
@@ -180,7 +186,14 @@ const SYSTEM_PROMPT = [
   'empty, say so instead of answering generically.',
 ].join('\n');
 
-export function Doctor({ go }: { go: (s: Screen) => void }) {
+export function Doctor({
+  go,
+  setDayStart,
+}: {
+  go: (s: Screen) => void;
+  /** Which day Track meals opens on: a plan's "View" goes to its own day. */
+  setDayStart: (dayStart: number | null) => void;
+}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [thread, setThread] = useState<Item[]>([]);
   /** The pill whose question the bar is answering, if any. */
@@ -354,6 +367,26 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       return;
     }
 
+    // A request to plan a day is read by code too, and built by code: the
+    // card is put together from meals already logged, so it needs no
+    // provider and no model can put a dish or an amount in it. It sits
+    // after the gates on purpose. "Plan tomorrow at 600 kcal" is stopped
+    // above and never reaches here.
+    const toPlan = planRequest(text);
+    if (toPlan) {
+      // The gate's own stop, for the phrasings its patterns miss.
+      if (belowFloor(toPlan)) {
+        await stopWith(text, { gate: 'low-calories', ...STOPS['low-calories'] });
+        return;
+      }
+      setThread((t) => [
+        ...t,
+        { kind: 'note', id: nextId.current++, text: 'Read by the app as a day to plan \u00b7 not sent to any AI' },
+        { kind: 'plan', id: nextId.current++, at: Date.now(), said: text, ask: toPlan },
+      ]);
+      return;
+    }
+
     // A request for a report is read by code and opens the sheet filled in.
     // After the red flags, before any model: making a file needs neither a
     // provider nor a request, and the person still sees the dates and
@@ -501,7 +534,13 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       if (cards.length) {
         setThread((t) => [
           ...t,
-          ...cards.map((c) => ({ kind: 'flow' as const, pill: c.pill, id: nextId.current++, at: Date.now(), said: c.said, savedId: null })),
+          ...cards.map((c) =>
+            c.pill === 'plan'
+              ? // The figures come from the person's words, read by the app;
+                // the model supplied only which day.
+                { kind: 'plan' as const, id: nextId.current++, at: Date.now(), said: c.said, ask: { ...(planRequest(c.said) ?? { protein: null, kcal: null }), ahead: c.ahead } }
+              : { kind: 'flow' as const, pill: c.pill, id: nextId.current++, at: Date.now(), said: c.said, savedId: null },
+          ),
         ]);
       }
       void maybeSummarise('doctor', settings).catch(() => {});
@@ -641,6 +680,19 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
         {thread.map((e, i) =>
           e.kind === 'report' ? (
             <ReportCard key={`r${e.id}`} at={e.at} report={e.report} />
+          ) : e.kind === 'plan' ? (
+            <PlanFlow
+              key={`p${e.id}`}
+              at={e.at}
+              said={e.said}
+              ask={e.ask}
+              onCancel={() => setThread((t) => t.filter((x) => x !== e))}
+              onWrote={() => void refresh()}
+              onView={(day) => {
+                setDayStart(day);
+                go('day');
+              }}
+            />
           ) : e.kind === 'flow' ? (
             (() => {
               const Flow = e.pill === 'meal' ? MealFlow : e.pill === 'doses' ? DosesFlow : SymptomFlow;

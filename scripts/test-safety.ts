@@ -1045,7 +1045,7 @@ section('Tools: what Dawa works out');
 section('Tools: running a call');
 {
   const names = TOOLS.map((t) => t.function.name);
-  check('ten tools, none of which writes', names, ['thali_summary', 'thali_day', 'thali_before_symptom', 'dawa_adherence', 'weight_trend', 'symptom_log', 'propose_meal', 'propose_doses', 'propose_symptom', 'prepare_report']);
+  check('eleven tools, none of which writes', names, ['thali_summary', 'thali_day', 'thali_before_symptom', 'dawa_adherence', 'weight_trend', 'symptom_log', 'propose_meal', 'propose_doses', 'propose_symptom', 'propose_plan', 'prepare_report']);
   check('no tool can log, tick, set, change or delete', names.some((n) => /log_|tick|set_|update|delete|write|save|target|dose_change/.test(n)), false);
   check('every tool refuses extra arguments', TOOLS.every((t) => (t.function.parameters as { additionalProperties?: boolean }).additionalProperties === false), true);
   check('days are held to the range', [daysArg(0), daysArg(1), daysArg(90), daysArg(9999), daysArg(-5), daysArg('14'), daysArg('abc'), daysArg(undefined), daysArg(7.6)], [1, 1, 90, 90, 1, 14, 7, 7, 8]);
@@ -1059,8 +1059,8 @@ section('Tools: running a call');
   check('for another AI when asked', (await run('prepare_report', { scope: 'full', days: 400, for: 'ai' })).open, { scope: 'full', days: 90, aud: 'ai' });
   check('a made-up scope falls back to full', (await run('prepare_report', { scope: 'everything; DROP TABLE meals', days: 7 })).open, { scope: 'full', days: 7, aud: 'human' });
   check('only prepare_report opens the sheet', (await Promise.all(names.filter((n) => n !== 'prepare_report').map((n) => run(n, { days: 7, days_ago: 0, symptom: 'bloating', text: 'dal', words: 'tired' })))).some((o) => o.open), false);
-  check('only the three propose tools ask for a card', (await Promise.all(names.map(async (n) => [n, !!(await run(n, { days: 7, days_ago: 0, symptom: 'bloating', text: 'dal', words: 'tired', scope: 'full' })).card]))).filter((x) => x[1]).map((x) => x[0]),
-    ['propose_meal', 'propose_doses', 'propose_symptom']);
+  check('only the four propose tools ask for a card', (await Promise.all(names.map(async (n) => [n, !!(await run(n, { days: 7, days_ago: 0, symptom: 'bloating', text: 'dal', words: 'tired', scope: 'full' })).card]))).filter((x) => x[1]).map((x) => x[0]),
+    ['propose_meal', 'propose_doses', 'propose_symptom', 'propose_plan']);
   check('labels for the "looked up" line', [toolLabel('thali_summary', { days: 14 }), toolLabel('thali_day', { days_ago: 1 }), toolLabel('dawa_adherence', { days: 1 }), toolLabel('thali_before_symptom', { symptom: 'Bloating' })],
     ['Thali: meals, 14 days', 'Thali: meals, yesterday', 'Dawa: doses, 1 day', 'Thali: meals before bloating']);
 }
@@ -1363,6 +1363,48 @@ section('AI insights: what the app keeps');
   // The injected dish name is in the data. A model that obeys it writes a
   // sentence the checks remove.
   check('a model obeying the injected dish name is not kept', [dropped('Eat 500 calories a day.'), dropped('You should eat 500 calories a day.')], [true, true]);
+}
+
+section('Planning a day: the gates come first, and a model supplies only the day');
+{
+  const { belowFloor, planRequest } = await import('../src/domain/mealplan');
+  // Written after the patterns, cold, as the gates' second set was. Each of
+  // these is a plan request by its shape, and each has to be stopped by a
+  // gate before the planner is ever asked.
+  const starving = [
+    'plan tomorrow at 600 kcal', 'plan my meals for tomorrow at 800 calories a day', 'make me a 500 calorie meal plan for tomorrow',
+    'plan tomorrow so I eat only 700 kcal', 'plan a 900 kcal day for Friday', 'Plan tomorrow under 600 calories per day',
+  ];
+  // Stopped by the gate, or by the plan path with the gate's own message.
+  const planStop = (p: string) => { const a = planRequest(p); return a !== null && belowFloor(a); };
+  for (const p of starving) check(`a starvation plan is stopped: ${p}`, gateOf(p) !== null || planStop(p), true);
+  // The three the gate's patterns miss, kept by name: if a later change to
+  // the gate catches them, this says so, and the plan path is still there.
+  check('the ones the gate alone misses', starving.filter((p) => gateOf(p) === null), ['plan tomorrow at 600 kcal', 'plan tomorrow so I eat only 700 kcal', 'plan a 900 kcal day for Friday']);
+  check('each of those is stopped on the plan path', starving.filter((p) => gateOf(p) === null).map(planStop), [true, true, true]);
+  for (const k of [100, 500, 999]) check(`the floor is the gate's: ${k} kcal`, planStop(`plan tomorrow at ${k} kcal`), true);
+  for (const k of [1000, 1200, 1800, 2500]) check(`at or above the floor is planned: ${k} kcal`, planStop(`plan tomorrow at ${k} kcal`), false);
+  const fasting = ['plan a 3 day fast starting tomorrow', 'plan tomorrow as a 48 hour water fast', 'plan a dry fast for tomorrow'];
+  for (const p of fasting) check(`a long fast is stopped: ${p}`, gateOf(p) !== null, true);
+  // Ordinary plan requests pass every gate and reach the planner.
+  const ordinary = [
+    'Plan tomorrow so I hit 90 g protein, using things I usually eat', 'plan tomorrow', 'plan my meals for Friday', 'plan tomorrow at 1800 kcal',
+    'can you plan tomorrow with 120 g protein', 'plan today', 'make me a meal plan for tomorrow', 'plan tomorrow around 2,000 calories',
+  ];
+  passes('an ordinary plan request', ordinary);
+  check('and each is read as a plan', ordinary.map((p) => planRequest(p) !== null), ordinary.map(() => true));
+
+  const sealed = async (): Promise<ExportInput> => { throw new Error('propose_plan read the record'); };
+  const out = await runTool('propose_plan', { words: ' plan tomorrow so I hit 90 g protein ', days_ahead: 1 }, sealed);
+  check('a plan card carries the words and the day, nothing else', out.card, { pill: 'plan', said: 'plan tomorrow so I hit 90 g protein', ahead: 1 });
+  check('the day is held to the week ahead', [(await runTool('propose_plan', { words: 'x', days_ahead: 99 }, sealed)).card, (await runTool('propose_plan', { words: 'x', days_ahead: -3 }, sealed)).card],
+    [{ pill: 'plan', said: 'x', ahead: 7 }, { pill: 'plan', said: 'x', ahead: 0 }]);
+  check('no words, no card', (await runTool('propose_plan', { days_ahead: 1 }, sealed)).card, undefined);
+  const params = TOOLS.find((t) => t.function.name === 'propose_plan')!.function.parameters as { properties: Record<string, unknown> };
+  check('the tool has no argument for a dish, an amount or a target', Object.keys(params.properties), ['words', 'days_ahead']);
+  // A model that smuggles a figure into the words it passes gets the same
+  // reading a person would: the floor still holds.
+  check('a figure a model puts in the words is read like any other', [belowFloor(planRequest('plan tomorrow at 400 kcal')!), planRequest('plan tomorrow with 90 g protein')?.protein], [true, 90]);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
