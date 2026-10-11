@@ -656,6 +656,42 @@ async function main() {
   check('search returns matches', found.length > 0, String(found.length));
   check('and prefers your own dishes', found[0].is_custom === 1, JSON.stringify(found[0]));
 
+  // ---- the bundled list stays out of search ------------------------------
+  // Upendra searched "Almond" on 11 Oct 2026 and got his one dish followed by
+  // "Flour, almond", "Nuts, almonds, whole, raw" and four more he had never
+  // added. A fresh test database has no bundled rows, which is why nothing
+  // here had ever seen it: the rows are put in by hand, as his phone has them.
+  {
+    const usda = (id: string, name: string, kcal: number) =>
+      sql(
+        `INSERT INTO foods (id, name, source_db, per_unit, energy_kcal, protein_g, fat_g, carbs_g, fibre_g)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [id, name, 'USDA', '100g', kcal, 21, 50, 21, 12],
+      );
+    await usda('usda-almond-raw', 'Nuts, almonds, whole, raw', 584);
+    await usda('usda-almond-butter', 'Almond butter, creamy', 603);
+    const own = await saveDishFromPortion({
+      name: 'Soaked Almonds (Naked)', quantity: 1, measure: 'piece', netWeightG: 1.6,
+      energy: 7, protein: 0.3, fat: 0.6, carbs: 0.3, fibre: 0.2,
+    });
+
+    const almond = await searchFoods('Almond', 25);
+    check('search lists only your own dishes',
+      almond.length === 1 && almond[0].id === own.foodId, almond.map((f) => f.name).join(' | '));
+    // Search only, his decision: typed words with no dish of his behind them
+    // may still fall back to a reference food, and his own dish still wins
+    // when both could answer.
+    const typed = await matchFood('almond butter');
+    check('a typed meal can still fall back to a bundled food',
+      typed?.food.id === 'usda-almond-butter', JSON.stringify(typed));
+    const mine = await matchFood('soaked almonds');
+    check('but your own dish wins when it matches', mine?.food.id === own.foodId, JSON.stringify(mine));
+
+    // Out again, so nothing below this block meets rows no test database has.
+    await sql("DELETE FROM foods WHERE id IN ('usda-almond-raw', 'usda-almond-butter')");
+    await deleteCustomFood(own.foodId as string);
+  }
+
   // ---- a restaurant portion stays put -----------------------------------
   const rotiFood = await matchFood('roti');
   const asServe = await resolveFor(rotiFood!.food.id, 1, 'serve');

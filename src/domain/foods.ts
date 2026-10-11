@@ -495,9 +495,25 @@ export async function searchFoods(term: string, limit = 20): Promise<Food[]> {
   const needle = normalise(term);
   if (needle.length < 2) return [];
   const like = `%${needle}%`;
+  // The household's own dishes only, not `UNION_FOODS`. Until 11 Oct 2026 this
+  // listed the bundled USDA table as well, and a search for "Almond" on
+  // Upendra's phone showed his one dish followed by "Flour, almond", "Nuts,
+  // almonds, whole, raw" and four more he had never added. Only the old log
+  // screen ever loaded that table, and it left the app on 24 Sep 2026, so a
+  // database older than that holds 329 reference rows and a newer one holds
+  // none: the same search gave different lists on different installs, under
+  // a box that says "Search your dishes".
+  //
+  // `matchFood` still reads both, on purpose (his decision, the same day):
+  // words typed for a meal with no dish of his behind them may fall back to
+  // a reference food, where the card shows its name before anything is saved.
   return db.query<Food>(
-    `${UNION_FOODS} ORDER BY is_custom DESC, name_len LIMIT ?`,
-    [like, like, like, limit],
+    `SELECT id, name, 'custom' AS source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 1 AS is_custom
+       FROM custom_foods
+      WHERE deleted_at IS NULL AND (name LIKE ? OR slug LIKE ?)
+      ORDER BY LENGTH(name) LIMIT ?`,
+    [like, like, limit],
   );
 }
 
