@@ -28,7 +28,12 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
+      // The two 512 px icons are left out of the offline cache. The phone's
+      // own installer fetches them once, when the app is added to the Home
+      // Screen; the running app never draws them. Cached, they added 450 kB
+      // to what every phone downloads on every update.
+      includeAssets: ['favicon.png', 'apple-touch-icon.png', 'icon-192.png'],
+      includeManifestIcons: false,
       manifest: {
         name: 'Mealo',
         short_name: 'Mealo',
@@ -47,8 +52,12 @@ export default defineConfig({
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+          // Its own file, not icon-512 again. Android cuts a maskable icon
+          // to a circle and keeps only the middle four fifths; in Upendra's
+          // drawing the fork's tines reach past that, and lost their tips.
+          // Here the same drawing is set smaller on its own black ground.
           {
-            src: 'icon-512.png',
+            src: 'icon-maskable-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
@@ -59,6 +68,8 @@ export default defineConfig({
         // The sqlite wasm binary is large; keep it cached for offline use.
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,svg,png,wasm,woff2}'],
+        // See includeAssets above: the installer's icons, not the app's.
+        globIgnores: ['**/icon-512.png', '**/icon-maskable-512.png'],
       },
       devOptions: { enabled: false },
     }),
