@@ -87,6 +87,8 @@ export type StateFacts = {
     daysLogged: number;
     avgEnergy: number | null;
     avgProtein: number | null;
+    avgFat: number | null;
+    avgCarbs: number | null;
     avgFibre: number | null;
   };
 };
@@ -281,9 +283,12 @@ export async function collectFacts(): Promise<StateFacts> {
     eaten_at: number;
     e: number | null;
     p: number | null;
+    ft: number | null;
+    c: number | null;
     f: number | null;
   }>(
-    `SELECT m.eaten_at, i.energy_kcal AS e, i.protein_g AS p, i.fibre_g AS f
+    `SELECT m.eaten_at, i.energy_kcal AS e, i.protein_g AS p, i.fat_g AS ft,
+            i.carbs_g AS c, i.fibre_g AS f
        FROM meals m
        JOIN meal_items i ON i.meal_id = m.id
       WHERE m.profile_id = ? AND i.profile_id = ?
@@ -294,9 +299,9 @@ export async function collectFacts(): Promise<StateFacts> {
   );
 
   const days = new Set(eaten7.map((r) => localDayKey(r.eaten_at))).size;
-  const total = (k: 'e' | 'p' | 'f') =>
+  const total = (k: 'e' | 'p' | 'ft' | 'c' | 'f') =>
     eaten7.some((r) => r[k] != null) ? eaten7.reduce((a, r) => a + (r[k] ?? 0), 0) : null;
-  const n = { e: total('e'), p: total('p'), f: total('f') };
+  const n = { e: total('e'), p: total('p'), ft: total('ft'), c: total('c'), f: total('f') };
   const per = (t: number | null) => (days > 0 && t != null ? Math.round(t / days) : null);
 
   return {
@@ -333,6 +338,8 @@ export async function collectFacts(): Promise<StateFacts> {
       daysLogged: days,
       avgEnergy: per(n?.e),
       avgProtein: per(n?.p),
+      avgFat: per(n?.ft),
+      avgCarbs: per(n?.c),
       avgFibre: per(n?.f),
     },
   };
@@ -417,10 +424,19 @@ export function renderSlice(facts: StateFacts): string {
 
   const nu = facts.nutrition7d;
   if (nu.daysLogged > 0) {
+    // All five, as the day's own line has them. The week carried only
+    // calories, protein and fibre, so "how has my week looked?" could not be
+    // answered on fat or carbs: the model was never told them.
     lines.push(
       `Nutrition, ${nu.daysLogged} day(s) logged in the last week: ` +
-        `about ${nu.avgEnergy ?? '?'} kcal/day, ` +
-        `${nu.avgProtein ?? '?'}g protein, ${nu.avgFibre ?? '?'}g fibre.`,
+        `about ${nu.avgEnergy ?? '?'} kcal/day, protein ${nu.avgProtein ?? '?'}g, ` +
+        `fat ${nu.avgFat ?? '?'}g, carbs ${nu.avgCarbs ?? '?'}g, fibre ${nu.avgFibre ?? '?'}g.`,
+    );
+    // Without this a model reads two half-logged days as two days of eating
+    // 581 kcal, and says so. The export tells the other AI the same thing.
+    lines.push(
+      '  These are averages over the days with anything logged. A day may be only partly ' +
+        'logged, and a day with nothing logged is missing data, not a day without food.',
     );
   }
 

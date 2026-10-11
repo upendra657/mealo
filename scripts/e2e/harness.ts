@@ -200,6 +200,11 @@ async function main() {
   const slice = renderSlice(await collectFacts());
   check('slice names the dish', slice.toLowerCase().includes('dal tadka'), slice);
   check('slice carries the weight', /\(\d+g\)/.test(slice), slice);
+  // The week's line used to stop at calories, protein and fibre, so the
+  // model could not say anything about a week's fat or carbs.
+  check('the week in the slice has all five figures',
+    /in the last week: about \d+ kcal\/day, protein \d+g, fat \d+g, carbs \d+g, fibre \d+g\./.test(slice), slice);
+  check('and says a day may be only partly logged', slice.includes('A day may be only partly logged'), slice);
 
   // Two refreshes at once, before any row exists: what the dev server does
   // the first time the chat opens. The second used to fail on the primary key.

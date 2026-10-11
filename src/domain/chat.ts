@@ -13,6 +13,8 @@
  */
 
 import { triage } from '../safety/redflags';
+import type { StateFacts } from './state';
+import type { Targets } from './targets';
 
 export type Entry =
   /** What the person asked. */
@@ -48,6 +50,158 @@ export function entriesFrom(stored: Stored[]): Entry[] {
     out.push({ kind: stop ? 'stop' : 'answer', text: m.content, at: m.created_at });
   });
   return out;
+}
+
+// ------------------------------------------------------ the app's figures
+//
+// "Code works out the numbers; the AI explains them" has to be visible, not
+// only true. A question about the week or the day gets the figures in a
+// table, worked out here and labelled as the app's, before any model has
+// answered. The model is told the table is on screen and asked to explain it
+// instead of reciting it, so a number the person reads in the table can never
+// be one a model made up.
+
+export type Figure = { value: string; of: string; label: string };
+export type Figures = { title: string; cells: Figure[] };
+
+const num = (n: number | null) => (n == null ? '\u2013' : Math.round(n).toLocaleString('en-US'));
+
+/** One nutrition cell: the figure, then its target if one is set, else its unit. */
+function cell(label: string, got: number | null, target: number | null, unit: string): Figure {
+  return { label, value: num(got), of: target != null ? `/ ${num(target)} ${unit}` : unit };
+}
+
+/**
+ * The table for a question, or null when the question is not about a period
+ * the app can sum.
+ *
+ * Read from the words, the way a typed report request is. It will be wrong
+ * sometimes, and the cost of that is a table of true figures above an answer
+ * about something else; the tools Ask Mealo is to be given replace this guess
+ * with what was actually looked up.
+ *
+ * A question about doses gets no table yet: today's facts hold the doses
+ * taken, not the ones still due, and half a table would read as all of it.
+ */
+export function figuresFor(
+  question: string,
+  facts: Pick<StateFacts, 'nutrition7d' | 'adherence7d' | 'todayTotals' | 'mealsToday'>,
+  targets: Targets,
+): Figures | null {
+  const q = question.toLowerCase();
+  if (/\b(?:dose|doses|medicine|medicines|meds|tablet|tablets)\b/.test(q)) return null;
+
+  if (/\b(?:week|weekly|7 days|seven days|lately|recently)\b/.test(q)) {
+    const n = facts.nutrition7d;
+    const a = facts.adherence7d;
+    const due = a.taken + a.skipped + a.missed;
+    if (n.daysLogged === 0 && due === 0) return null;
+    const cells = [
+      cell('Calories a day', n.avgEnergy, targets.energy_kcal, 'Cal'),
+      cell('Protein a day', n.avgProtein, targets.protein_g, 'g'),
+      cell('Carbs a day', n.avgCarbs, targets.carbs_g, 'g'),
+      cell('Fats a day', n.avgFat, targets.fat_g, 'g'),
+      cell('Fibre a day', n.avgFibre, targets.fibre_g, 'g'),
+      // Beside the averages on purpose: "581 Cal a day" means one thing
+      // over seven logged days and another over two.
+      { label: 'Days logged', value: String(n.daysLogged), of: 'of 7' },
+    ];
+    if (due > 0) {
+      cells.push(
+        { label: 'Doses taken', value: String(a.taken), of: `of ${due}` },
+        { label: 'Skipped or missed', value: String(a.skipped + a.missed), of: `of ${due}` },
+      );
+    }
+    return { title: 'Last 7 days', cells };
+  }
+
+  if (/\b(?:today|so far|eaten|ate|eat)\b/.test(q)) {
+    if (facts.mealsToday.length === 0) return null;
+    const t = facts.todayTotals;
+    return {
+      title: 'Today so far',
+      cells: [
+        cell('Calories', t.energy, targets.energy_kcal, 'Cal'),
+        cell('Protein', t.protein, targets.protein_g, 'g'),
+        cell('Carbs', t.carbs, targets.carbs_g, 'g'),
+        cell('Fats', t.fat, targets.fat_g, 'g'),
+        cell('Fibre', t.fibre, targets.fibre_g, 'g'),
+        { label: 'Meals logged', value: String(facts.mealsToday.length), of: '' },
+      ],
+    };
+  }
+  return null;
+}
+
+/** The table as one line for the model, with the instruction that goes with it. */
+export function figuresNote(f: Figures): string {
+  const cells = f.cells.map((c) => `${c.label} ${c.value}${c.of ? ` ${c.of}` : ''}`).join('; ');
+  return (
+    `The app is showing the person this table above your answer (${f.title}): ${cells}. ` +
+    'They can already see these figures. Do not list them again; say what they mean.'
+  );
+}
+
+// ------------------------------------------------------- an answer's shape
+//
+// Models write Markdown whether asked to or not, and the screen showed it
+// raw: "**Medications**: No doses recorded." Asking the model to stop is not
+// enough, because the model is whichever one the person plugged in. So the
+// little of Markdown that turns up in a short answer is read here and drawn
+// properly: bold, bullets, numbered lists. Everything else is left as the
+// text it is. Nothing is turned into HTML; the screen builds elements from
+// these blocks, so a reply cannot inject markup.
+
+export type Span = { text: string; bold: boolean };
+export type AnswerBlock =
+  | { kind: 'p'; spans: Span[] }
+  | { kind: 'list'; items: { depth: number; marker: string | null; spans: Span[] }[] };
+
+/** `**bold**` and `__bold__` become bold; `*x*`, `_x_` and backticks are dropped. */
+export function spansOf(line: string): Span[] {
+  const out: Span[] = [];
+  const plain = (t: string) => t.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, '$1$2').replace(/`([^`\n]+)`/g, '$1');
+  let rest = line;
+  for (;;) {
+    const m = /\*\*([^*\n]+?)\*\*|__([^_\n]+?)__/.exec(rest);
+    if (!m) break;
+    if (m.index > 0) out.push({ text: plain(rest.slice(0, m.index)), bold: false });
+    out.push({ text: m[1] ?? m[2], bold: true });
+    rest = rest.slice(m.index + m[0].length);
+  }
+  if (rest) out.push({ text: plain(rest), bold: false });
+  return out;
+}
+
+export function answerBlocks(text: string): AnswerBlock[] {
+  const blocks: AnswerBlock[] = [];
+  let para: string[] = [];
+  const flush = () => {
+    if (para.length) blocks.push({ kind: 'p', spans: spansOf(para.join('\n')) });
+    para = [];
+  };
+  for (const raw of text.replace(/\r/g, '').split('\n')) {
+    const item = /^(\s*)(?:([-*\u2022])|(\d{1,2}[.)]))\s+(.*)$/.exec(raw);
+    const head = /^\s*#{1,6}\s+(.*?)\s*#*$/.exec(raw);
+    if (item) {
+      flush();
+      const last = blocks[blocks.length - 1];
+      const list = last && last.kind === 'list' ? last : null;
+      const entry = { depth: item[1].length >= 2 ? 1 : 0, marker: item[3] ?? null, spans: spansOf(item[4]) };
+      if (list) list.items.push(entry);
+      else blocks.push({ kind: 'list', items: [entry] });
+    } else if (head) {
+      flush();
+      // A heading in a five-line answer is a bold line, not a title.
+      blocks.push({ kind: 'p', spans: [{ text: head[1].replace(/\*\*|__/g, ''), bold: true }] });
+    } else if (raw.trim() === '') {
+      flush();
+    } else {
+      para.push(raw.trim());
+    }
+  }
+  flush();
+  return blocks;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

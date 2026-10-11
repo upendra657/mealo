@@ -39,6 +39,7 @@ import {
   scrubContacts,
   type Identity,
 } from '../src/safety/deidentify';
+import { answerBlocks, figuresFor, figuresNote, spansOf } from '../src/domain/chat';
 import { SYMPTOM_GROUPS, SYMPTOM_LABELS, suggestLabel, wordsForModel, WORDS_FOR_MODEL } from '../src/domain/symptomlabels';
 import {
   average,
@@ -2141,6 +2142,67 @@ section('A symptom: the words that travel');
   // Scrubbed first: cut first, and "98201 55512" split at the limit leaves
   // five digits that no longer look like a number to remove.
   check('a number straddling the limit does not leave half of itself', /\d{4}/.test(wordsForModel('call the clinic on 98201 55512 tomorrow', 26)), false);
+}
+
+section('Ask Mealo: the figures the app works out');
+{
+  const facts = {
+    nutrition7d: { daysLogged: 2, avgEnergy: 581, avgProtein: 17, avgFat: 21, avgCarbs: 74, avgFibre: 9 },
+    adherence7d: { taken: 0, skipped: 0, missed: 0 },
+    todayTotals: { energy: 640, protein: 22, fat: 18, carbs: 96, fibre: 11 },
+    mealsToday: [{ type: 'Lunch', time: '13:10', items: ['Dal tadka'], energy: 640, protein: 22, fat: 18, carbs: 96, fibre: 11 }],
+  };
+  const none = { energy_kcal: null, protein_g: null, fat_g: null, carbs_g: null, fibre_g: null };
+  const set = { energy_kcal: 1900, protein_g: 90, fat_g: 60, carbs_g: 240, fibre_g: 30 };
+  const week = figuresFor('How has my week looked?', facts, set)!;
+  // What he asked for on 11 Oct: the week's answer had no carbs and no fat.
+  check('the week has all five, and the days they are averaged over', week.cells.map((c) => c.label),
+    ['Calories a day', 'Protein a day', 'Carbs a day', 'Fats a day', 'Fibre a day', 'Days logged']);
+  check('each against its target', week.cells.map((c) => `${c.value} ${c.of}`),
+    ['581 / 1,900 Cal', '17 / 90 g', '74 / 240 g', '21 / 60 g', '9 / 30 g', '2 of 7']);
+  check('with no target set, the unit alone', figuresFor('my week', facts, none)!.cells.slice(0, 2).map((c) => `${c.value} ${c.of}`), ['581 Cal', '17 g']);
+  check('doses join the week only when some were due',
+    figuresFor('my week', { ...facts, adherence7d: { taken: 24, skipped: 1, missed: 3 } }, set)!.cells.slice(6).map((c) => `${c.label} ${c.value} ${c.of}`),
+    ['Doses taken 24 of 28', 'Skipped or missed 4 of 28']);
+  check('a figure that could not be summed is a dash, not a zero',
+    figuresFor('my week', { ...facts, nutrition7d: { ...facts.nutrition7d, avgFat: null } }, none)!.cells[3].value, '\u2013');
+  check('today', figuresFor('What have I eaten today?', facts, set)!.cells.map((c) => `${c.label} ${c.value} ${c.of}`.trim()),
+    ['Calories 640 / 1,900 Cal', 'Protein 22 / 90 g', 'Carbs 96 / 240 g', 'Fats 18 / 60 g', 'Fibre 11 / 30 g', 'Meals logged 1']);
+  check('nothing logged, no table of zeros',
+    [figuresFor('What have I eaten today?', { ...facts, mealsToday: [] }, set),
+      figuresFor('my week', { ...facts, nutrition7d: { daysLogged: 0, avgEnergy: null, avgProtein: null, avgFat: null, avgCarbs: null, avgFibre: null } }, set)], [null, null]);
+  check('a question about doses gets none yet', figuresFor('Which doses are left today?', facts, set), null);
+  check('nor does a question about neither', figuresFor('is dal a good source of protein?', facts, set), null);
+  check('"weekend" is not "week"', figuresFor('plans for the weekend', facts, set), null);
+  check('the model is told the table is on screen',
+    figuresNote(week).startsWith('The app is showing the person this table above your answer (Last 7 days): Calories a day 581 / 1,900 Cal; Protein a day 17 / 90 g;'), true);
+}
+
+section('Ask Mealo: an answer drawn, not shown as Markdown');
+{
+  // The answer on his phone on 11 Oct, as the model wrote it.
+  const his = ['Your week so far shows:', '', '- **Medications**: No doses recorded.',
+    '- **Meals logged**: You haven\u2019t logged any meals today.', '- **Nutrition summary (2 days)**:',
+    '  - Calories: ~581 kcal/day', '  - Protein: ~17 g/day', '', 'If you\u2019d like more, let me know.'].join('\n');
+  const blocks = answerBlocks(his);
+  check('a paragraph, a list, a paragraph', blocks.map((b) => b.kind), ['p', 'list', 'p']);
+  const list = blocks[1] as Extract<typeof blocks[number], { kind: 'list' }>;
+  check('the bold words are bold and the asterisks are gone', list.items[0].spans,
+    [{ text: 'Medications', bold: true }, { text: ': No doses recorded.', bold: false }]);
+  check('the nested lines sit one level in', list.items.map((i) => i.depth), [0, 0, 0, 1, 1]);
+  check('no asterisk survives anywhere', JSON.stringify(blocks).includes('*'), false);
+  check('a numbered list keeps its numbers',
+    (answerBlocks('1. First\n2) Second')[0] as typeof list).items.map((i) => [i.marker, i.spans[0].text]), [['1.', 'First'], ['2)', 'Second']]);
+  check('a heading is a bold line', answerBlocks('## Summary\nAll fine.'), [{ kind: 'p', spans: [{ text: 'Summary', bold: true }] }, { kind: 'p', spans: [{ text: 'All fine.', bold: false }] }]);
+  check('italics and code marks are dropped, the words kept', spansOf('this is *really* `fine` and _ok_'), [{ text: 'this is really fine and ok', bold: false }]);
+  // Arithmetic and ranges are not emphasis.
+  check('a lone asterisk or underscore is left alone', spansOf('2 * 3 = 6, snake_case, 5*4'), [{ text: '2 * 3 = 6, snake_case, 5*4', bold: false }]);
+  check('an unclosed ** is text', spansOf('a ** b'), [{ text: 'a ** b', bold: false }]);
+  check('lines of one paragraph stay together', answerBlocks('one\ntwo\n\nthree').map((b) => b.kind === 'p' && b.spans[0].text), ['one\ntwo', 'three']);
+  check('plain text is one paragraph, untouched', answerBlocks('Protein is the gap, about 19 g short.'), [{ kind: 'p', spans: [{ text: 'Protein is the gap, about 19 g short.', bold: false }] }]);
+  check('an empty reply is no blocks', answerBlocks('  \n '), []);
+  // Nothing is ever parsed as HTML; the screen builds elements from spans.
+  check('markup in a reply stays text', spansOf('<img src=x onerror=alert(1)>')[0].text, '<img src=x onerror=alert(1)>');
 }
 
 // ------------------------------------------------------------------ done

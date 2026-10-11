@@ -37,7 +37,20 @@ import { LlmError } from '../llm/types';
 import { isConfigured, loadSettings, type Settings } from '../settings/store';
 import { triage } from '../safety/redflags';
 import { filterDoses } from '../safety/dosefilter';
-import { entriesFrom, entryTime, PILLS, TRY_ASKING, type Entry, type Pill } from '../domain/chat';
+import {
+  answerBlocks,
+  entriesFrom,
+  entryTime,
+  figuresFor,
+  figuresNote,
+  PILLS,
+  TRY_ASKING,
+  type Entry,
+  type Figures,
+  type Pill,
+  type Span,
+} from '../domain/chat';
+import { loadTargets } from '../domain/targets';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
 import { suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, openSymptoms, resolveSymptom, type Symptom } from '../domain/symptoms';
@@ -60,7 +73,40 @@ type FlowItem = {
 };
 /** A report made this visit. Session-only, like the pill cards. */
 type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
-type Item = Entry | FlowItem | ReportItem;
+/**
+ * The app's own figures for a question, drawn between it and the answer.
+ * This visit only, like the cards: worked out from the record as it stood
+ * when the question was asked, and a table rebuilt on a later day under an
+ * old question would show that later day's numbers.
+ */
+type FiguresItem = { kind: 'figures'; id: number; figures: Figures };
+type Item = Entry | FlowItem | ReportItem | FiguresItem;
+
+const spans = (ss: Span[]) => ss.map((s, i) => (s.bold ? <strong key={i}>{s.text}</strong> : s.text));
+
+/** A model's words, with the little Markdown it wrote drawn rather than shown. */
+function Answer({ text }: { text: string }) {
+  return (
+    <>
+      {answerBlocks(text).map((b, i) =>
+        b.kind === 'p' ? (
+          <p key={i} className="am-a">
+            {spans(b.spans)}
+          </p>
+        ) : (
+          <ul key={i} className="am-ul">
+            {b.items.map((it, n) => (
+              <li key={n} data-depth={it.depth || undefined} data-num={it.marker ? '1' : undefined}>
+                {it.marker && <span className="am-ul-n">{it.marker}</span>}
+                <span>{spans(it.spans)}</span>
+              </li>
+            ))}
+          </ul>
+        ),
+      )}
+    </>
+  );
+}
 
 const SYSTEM_PROMPT = [
   'You are the everyday-health assistant inside a personal tracking app.',
@@ -79,6 +125,9 @@ const SYSTEM_PROMPT = [
   '',
   'Style: brief, concrete, no hedging padding. Ask one clarifying question when',
   'it would actually change your answer, otherwise answer.',
+  'Write plain sentences, with a short "-" list only when it helps. No',
+  'headings and no tables. When you are told the app is already showing the',
+  'person a table of figures, do not repeat the figures: say what they mean.',
   '',
   'You are given the actual record below — meals eaten today by name, doses',
   'taken, open symptoms. Use it. If asked about a meal, refer to what was',
@@ -231,10 +280,14 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
       const freshFacts = await collectFacts();
       const freshSlice = renderSlice(freshFacts);
       setSlice(freshSlice);
+      // The figures go up before the model is asked, so they are on screen
+      // while it works and are plainly not its doing.
+      const figures = figuresFor(text, freshFacts, await loadTargets());
+      if (figures) setThread((t) => [...t, { kind: 'figures', id: nextId.current++, figures }]);
       const messages = await buildContext({
         agent: 'doctor',
         systemPrompt: SYSTEM_PROMPT,
-        stateSlice: freshSlice || null,
+        stateSlice: [freshSlice, figures && figuresNote(figures)].filter(Boolean).join('\n\n') || null,
         userMessage: text,
       });
       const result = await chat(settings, {
@@ -412,6 +465,23 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
                 />
               );
             })()
+          ) : e.kind === 'figures' ? (
+            <div key={`g${e.id}`} className="am-entry">
+              <div className="am-eyeb am-eyeb--app">
+                <i />
+                Worked out by the app · {e.figures.title.toLowerCase()}
+              </div>
+              <div className="am-figs">
+                {e.figures.cells.map((c) => (
+                  <div key={c.label}>
+                    <div className="am-fig-v">
+                      {c.value} {c.of && <small>{c.of}</small>}
+                    </div>
+                    <div className="am-fig-l">{c.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : e.kind === 'asked' ? (
             <div key={i} className="am-q">
               <div className="am-q-t">{entryTime(e.at)}</div>
@@ -434,7 +504,7 @@ export function Doctor({ go }: { go: (s: Screen) => void }) {
                 <span className="am-ai">AI</span>
                 <span className="am-eyeb">Ask Mealo</span>
               </div>
-              <p className="am-a">{e.text}</p>
+              <Answer text={e.text} />
             </div>
           ),
         )}
