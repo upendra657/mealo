@@ -1,5 +1,7 @@
 node_modules
 dist
+# The public demo's build (npm run build:demo)
+dist-demo
 dist-ssr
 *.local
 .DS_Store

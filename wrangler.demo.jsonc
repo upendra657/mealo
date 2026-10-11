@@ -1,0 +1,24 @@
+{
+	// The public demo: the same app with a made-up person in it, at its own
+	// address, for anyone who wants to see Mealo without logging a meal.
+	//
+	//   npm run build:demo && npx wrangler deploy -c wrangler.demo.jsonc
+	//
+	// Static files and nothing else. There is no `main` here on purpose: no
+	// Worker script, so no relay, no database, no cron and no secrets. The
+	// demo cannot sync and cannot ring a phone because there is nothing on
+	// the other end, not because a flag says so. The app's own build flag
+	// (VITE_DEMO, see src/lib/demo.ts) hides the screens that would otherwise
+	// offer both.
+	//
+	// The COOP/COEP headers arrive the same way as in the real app: Vite
+	// copies public/_headers into the build, and Workers static assets read
+	// it. Without them SQLite falls back to memory and the demo's person is
+	// rebuilt on every reload, which for a demo is harmless but slow.
+	"name": "mealo-demo",
+	"compatibility_date": "2026-09-01",
+	"assets": {
+		"directory": "./dist-demo",
+		"not_found_handling": "single-page-application"
+	}
+}

@@ -23,6 +23,7 @@ import { LlmError } from '../llm/types';
 import { saveFile } from '../db/client';
 import { BackupCard } from './BackupCard';
 import { RemindersCard } from './RemindersCard';
+import { DEMO } from '../lib/demo';
 import { listSnapshots, snapshotFile, type Snapshot } from '../db/snapshots';
 import { formatBytes } from '../lib/persist';
 
@@ -110,7 +111,16 @@ export function SettingsScreen({
         <Chevron dir="right" />
       </button>
     <div className="stack">
-      <RemindersCard />
+      {/* Neither exists in the demo: there is no relay behind it. Said, not
+          just hidden, so nobody looks for them. */}
+      {DEMO ? (
+        <section className="card">
+          <h2>Sync and reminders</h2>
+          <p className="small muted">Switched off in the demo. In the real app two phones share a food table through an encrypted relay, and a phone can be reminded of due medicines.</p>
+        </section>
+      ) : (
+        <RemindersCard />
+      )}
       <section className="card">
         <h2>Model provider</h2>
 
@@ -260,7 +270,7 @@ export function SettingsScreen({
         ))}
       </section>
 
-      <SyncCard />
+      {!DEMO && <SyncCard />}
 
       <MedListsCard />
 

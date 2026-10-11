@@ -22,8 +22,20 @@ const crossOriginIsolation = {
 // without this, "is the fix deployed" and "is the fix working" look identical.
 const BUILD_STAMP = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
+/**
+ * The public demo is its own build (`npm run build:demo`): the same app with
+ * a made-up person in it, at its own address. It installs under its own name
+ * so that a phone with both on the Home Screen shows which is which.
+ */
+const DEMO = process.env.VITE_DEMO === '1';
+
 export default defineConfig({
-  define: { __BUILD_STAMP__: JSON.stringify(BUILD_STAMP) },
+  // __DEMO__ is a literal true or false by the time the bundler sees it, so
+  // in the real build `if (__DEMO__)` is `if (false)` and the demo's person,
+  // which sits behind it, is dropped whole. Read through import.meta.env the
+  // branch survived to the minifier and its file was shipped, unused, to
+  // every phone's offline cache.
+  define: { __BUILD_STAMP__: JSON.stringify(BUILD_STAMP), __DEMO__: JSON.stringify(DEMO) },
   plugins: [
     react(),
     VitePWA({
@@ -35,8 +47,8 @@ export default defineConfig({
       includeAssets: ['favicon.png', 'apple-touch-icon.png', 'icon-192.png'],
       includeManifestIcons: false,
       manifest: {
-        name: 'Mealo',
-        short_name: 'Mealo',
+        name: DEMO ? 'Mealo demo' : 'Mealo',
+        short_name: DEMO ? 'Mealo demo' : 'Mealo',
         description:
           'Local-first health tracking with scoped AI agents. Your data stays on your device.',
         // Both track --ink in styles.css, the page's own background. They

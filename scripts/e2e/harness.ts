@@ -1923,6 +1923,21 @@ async function main() {
     await setActiveProfile(was);
   }
 
+  // ---- the demo's made-up person never lands on a real record -------------
+  // The demo is a separate build, but a demo build opened on a developer's
+  // own address finds that developer's database. By now this one holds a
+  // great deal; the seeder must add nothing to it, this time or the next.
+  {
+    const { seedDemo } = await import('../../src/demo/seed');
+    const tally = async () => JSON.stringify(await Promise.all(
+      ['custom_foods', 'meals', 'meal_items', 'medications', 'intake_events', 'symptoms', 'weights', 'burns', 'profiles'].map(async (t) => [t, (await query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`))[0].n]),
+    ));
+    const before = await tally();
+    const names = JSON.stringify(await query('SELECT name FROM profiles ORDER BY id'));
+    check('the demo seeder writes nothing into a database that has data', (await seedDemo()) === false && (await tally()) === before, before);
+    check('and renames nobody', JSON.stringify(await query('SELECT name FROM profiles ORDER BY id')) === names, names);
+  }
+
   // ---- backup and restore ------------------------------------------------
   // Last, because it replaces the whole database, and because by now the
   // database holds everything the tests above put in it: two profiles,

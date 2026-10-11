@@ -28,10 +28,12 @@ left open — from the change list Upendra approves.
 ```bash
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
+npm run dev:demo       # the public demo, on port 5174, with a made-up person
+npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
 npm run test:portions  # 939 pure-logic assertions, node, fast
 npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 456 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 458 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 48 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -236,6 +238,16 @@ The VAPID keys are Worker secrets Upendra sets himself
 `/__scheduled` does not reach this Worker in `wrangler dev` (the SPA
 fallback answers it); the test uses `/cdn-cgi/handler/scheduled`.
 
+**The demo is a build, not a setting.** `__DEMO__` is a literal set by
+`vite.config.ts` from `VITE_DEMO`, so in the real build the branch that loads
+`src/demo/seed.ts` is `if (false)` and the made-up person is not in the bundle
+at all. (Read through `import.meta.env` the file was still emitted and went to
+every phone's offline cache.) The seeder writes through the app's own save
+functions, only into a database that was empty when it began, and every step
+can be run again, because a reload two seconds in once left it half-written
+for good. `wrangler.demo.jsonc` has no `main`: no relay, no D1, no secrets.
+Do not give the demo any of them.
+
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.
 
@@ -338,9 +350,8 @@ right about his own kitchen.
 Phases 0–4 complete, including R5. Phase 4.5 (two people) done. **Phase 5 ~30%** —
 encrypted delta sync works for the food and medicine libraries, and reminders by web push are
 built (asleep until the VAPID secrets are set); passphrase, encrypted export and health-table
-sync are open. **Phase 6 barely started** — the LICENSE (MIT) is in
-and the README's facts were corrected in Oct 2026; no CONTRIBUTING, no CI, and the
-README's full rewrite waits for the demo. See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
+sync are open. **Phase 6 mostly done** — the LICENSE (MIT), the demo build, a
+walk through it (`docs/demo-tour.png`) and the rewritten README are in; no CONTRIBUTING and no CI. See `ROADMAP.md` for the per-phase checklists and `HANDOFF.md` §6 for known
 rough edges.
 
 Track meds was rebuilt in v10–v11: the medicine definition/regimen split (shared

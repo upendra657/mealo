@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "dev:demo": "npm run sqlite:copy && VITE_DEMO=1 vite --port 5174 --strictPort",
+    "build:demo": "npm run sqlite:copy && tsc -b && VITE_DEMO=1 vite build --outDir dist-demo",
     "sqlite:copy": "node scripts/copy-sqlite.mjs",
     "predev": "npm run sqlite:copy",
     "prebuild": "npm run sqlite:copy",

@@ -4376,3 +4376,24 @@ button.am-opt {
     break-after: avoid;
   }
 }
+
+/* ------------------------------------------------------------------ demo
+   The line across the top of the public demo (lib/demo.ts). Amber, the
+   colour this app already uses for "note this", and stuck to the top so it
+   is on screen however far a page is scrolled. Never rendered in the real
+   app. */
+.demo-flag {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin: 0 -16px 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+}

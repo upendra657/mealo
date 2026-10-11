@@ -24,6 +24,7 @@ import { syncLibrary } from './domain/relay';
 import { startLists } from './domain/refdata';
 import { startFoods } from './domain/seed';
 import { startReminders } from './domain/remindersync';
+import { DEMO } from './lib/demo';
 import { BurnScreen } from './ui/BurnScreen';
 import { Day } from './ui/Day';
 import { Doctor } from './ui/Doctor';
@@ -57,6 +58,8 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [active, setActive] = useState(activeProfile());
   const [failed, setFailed] = useState<string | null>(null);
+  /** Demo only: the made-up person is still being written. */
+  const [settingUp, setSettingUp] = useState(__DEMO__);
   /** Which day the meal screens are looking at, as local midnight. */
   const [dayStart, setDayStart] = useState<number | null>(null);
 
@@ -65,7 +68,15 @@ export default function App() {
       try {
         await initDb();
         const { profiles: list, active: id } = await initProfiles();
-        setProfiles(list);
+        // The public demo: a made-up person, written before anything is
+        // drawn so no screen is seen empty first. Loaded on demand; the
+        // real app's build has no such branch and no such file in it.
+        if (__DEMO__ && (await (await import('./demo/seed')).seedDemo())) {
+          setProfiles(await listProfiles());
+        } else {
+          setProfiles(list);
+        }
+        setSettingUp(false);
         setActive(id);
         // Slugs for any dish that predates v6. Not awaited before the app
         // renders: it touches only a column nothing reads yet, and blocking
@@ -84,7 +95,9 @@ export default function App() {
         // reason to hold the library back, so sync runs either way.
         void startFoods()
           .catch((e) => console.warn('[foods] reference table:', e))
-          .then(() => syncLibrary().catch(() => {}));
+          // The demo has no relay, and a stranger's browser is paired with
+          // nobody.
+          .then(() => (DEMO ? undefined : syncLibrary().catch(() => {})));
 
         // Medicine lists: clear an import the app was closed during, then
         // load the bundled HSA register if this build's copy is new. Neither
@@ -96,7 +109,7 @@ export default function App() {
         // the record, now and after every change. Does nothing unless they
         // were turned on here, and never raises the permission prompt: only
         // the switch in settings does that.
-        startReminders();
+        if (!DEMO) startReminders();
       } catch (e) {
         setFailed(e instanceof Error ? e.message : String(e));
       }
@@ -141,11 +154,36 @@ export default function App() {
     );
   }
 
+  // Home draws before the database has opened, which is right for the real
+  // app and wrong here: a visitor would see an empty app for the two seconds
+  // the person takes to write, and a reload in those seconds is what cut the
+  // first run of the demo short.
+  if (settingUp) {
+    return (
+      <div className="shell">
+        <div className="demo-flag" role="note">
+          Demo · made-up data · nothing leaves this browser
+        </div>
+        <p className="muted" style={{ marginTop: 80, textAlign: 'center' }}>
+          Setting up the demo…
+        </p>
+      </div>
+    );
+  }
+
   return (
     <ToastHost>
       {/* Keyed on the profile: switching person remounts every screen rather
           than asking each one to notice. */}
       <div className="shell" key={active}>
+        {/* On every screen, and not dismissable: someone who lands on the
+            demo from a link has to be able to tell at a glance that the
+            person on screen does not exist. */}
+        {DEMO && (
+          <div className="demo-flag" role="note">
+            Demo · made-up data · nothing leaves this browser
+          </div>
+        )}
         {/* Home renders its own header, because the greeting in it depends on
             the time and Home is the screen that already ticks. */}
         {screen === 'home' && <Home go={go} avatar={avatar} />}
