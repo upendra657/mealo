@@ -20,6 +20,8 @@ import { activeProfile } from '../lib/active-profile';
 import {
   matchFood,
   parseMealText,
+  withParts,
+  type ParsedItem,
   rememberAlias,
   scaleMacros,
   type Food,
@@ -135,9 +137,44 @@ function withPortion(
   };
 }
 
+/**
+ * "2 egg omelette with d'lecta cheddar cheese" is two things eaten, and was
+ * drafted as one: the whole phrase went to the matcher, the nearest dish was
+ * Omelette, and the cheese and its calories vanished without a word. The
+ * card showed "Omelette, 2 egg" and nothing to say anything was left out.
+ *
+ * So what follows "with" becomes its own item, looked up on its own, and
+ * shown as not in the food table when it is not. The exception is a phrase
+ * that is itself a dish, by its exact name or by a match the person
+ * confirmed before: "curd with rice" stays whole when that is in the table.
+ * A fuzzy match does not count, since a fuzzy match is how the cheese got
+ * lost.
+ *
+ * The first piece keeps the amount typed ("2 egg"). The rest are read as
+ * typed, so "with 2 slice cheese" keeps its own.
+ */
+async function apart(items: ParsedItem[]): Promise<ParsedItem[]> {
+  const out: ParsedItem[] = [];
+  for (const p of items) {
+    const parts = withParts(p.label);
+    if (parts.length < 2) {
+      out.push(p);
+      continue;
+    }
+    const whole = await matchFood(p.label);
+    if (whole && whole.via !== 'fuzzy') {
+      out.push(p);
+      continue;
+    }
+    out.push({ ...p, label: parts[0] });
+    for (const rest of parts.slice(1)) out.push(...parseMealText(rest));
+  }
+  return out;
+}
+
 /** Turn typed text into draft items, using local matching only. */
 export async function draftFromText(text: string): Promise<DraftItem[]> {
-  const parsed = parseMealText(text);
+  const parsed = await apart(parseMealText(text));
   const out: DraftItem[] = [];
 
   for (const p of parsed) {

@@ -198,15 +198,37 @@ export function parseMealText(text: string): ParsedItem[] {
         const unit = canonicalMeasure(m[2] ?? null);
         // "2 roti" — the word is both the measure and the dish, so it has to
         // stay in the label and stop being the measure.
-        const label = rest || m[2] || chunk;
+        //
+        // The same when what follows is "with …": in "2 roti with dal" the
+        // roti is the dish and the dal is another. Read the old way, the
+        // dish was called "with dal" and measured in rotis.
+        const joins = /^(?:along\s+with|with|w\/)(?:\s|$)/i.test(rest);
+        const label = !rest ? m[2] || chunk : joins ? `${m[2] ?? ''} ${rest}`.trim() : rest;
         return {
           label,
           quantity: Number(m[1]),
-          unit: rest ? unit : null,
+          unit: rest && !joins ? unit : null,
         };
       }
       return { label: chunk, quantity: null, unit: null };
     });
+}
+
+/**
+ * "omelette with cheddar cheese" as the things it names: omelette, cheddar
+ * cheese.
+ *
+ * Kept out of `parseMealText` on purpose. "with" also sits inside the names
+ * of real dishes ("Curd with rice"), and only the food table can say which
+ * it is this time, so the caller that has the table decides whether to use
+ * the pieces (`draftFromText`). "and" has no such check and has always split;
+ * that is older than this and has not been complained about.
+ */
+export function withParts(label: string): string[] {
+  return label
+    .split(/\s+(?:along\s+)?with\s+|\s+w\/\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 // ------------------------------------------------------------- lookups

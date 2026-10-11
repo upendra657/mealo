@@ -178,6 +178,19 @@ async function main() {
   near('dal kcal scales with it', d0.energy_kcal ?? 0, 191.5, 2);
   check('and says where it came from', d0.portionMeasured && d0.basis === 'anchor', d0.basis);
 
+  // "with" names a second thing eaten. It used to stay inside the first
+  // item, which then matched the nearest dish and dropped the rest unseen.
+  const joined = await draftFromText('2 roti with 1 katori dal tadka');
+  check('"with" gives two items', joined.length === 2, JSON.stringify(joined.map((d) => d.label)));
+  check('each matched to its own dish',
+    joined[0]?.food?.name === 'Roti' && joined[1]?.food?.name === 'Dal Tadka', JSON.stringify(joined.map((d) => d.food?.name)));
+  check('each with the amount typed for it',
+    joined[0]?.quantity === 2 && joined[1]?.quantity === 1 && joined[1]?.unit === 'katori', JSON.stringify(joined.map((d) => [d.quantity, d.unit])));
+  const cheesy = await draftFromText("2 roti with d'lecta cheddar cheese");
+  check('something not in the food table is shown as its own unmatched item',
+    cheesy.length === 2 && cheesy[0].food?.name === 'Roti' && cheesy[1].food === null && cheesy[1].label === "d'lecta cheddar cheese",
+    JSON.stringify(cheesy.map((d) => [d.label, d.food?.name ?? null])));
+
   const d1 = draft[1];
   near('"2 roti" is 70g, not 200g', d1.grams, 70);
   near('roti kcal', d1.energy_kcal ?? 0, 170, 2);
@@ -334,6 +347,17 @@ async function main() {
       energy: 420, protein: 21, fat: 28, carbs: 19, fibre: 7,
     });
     check('a second spelling is the same dish', b.existing?.id === a.foodId, `${a.foodId} vs ${b.existing?.id}`);
+
+    // "with" inside a dish's own name is not a join. Only the food table can
+    // tell, so the whole phrase is tried as a dish first.
+    const withName = await saveDishFromPortion({
+      name: 'Curd with rice', quantity: 1, measure: 'bowl', netWeightG: 300,
+      energy: 330, protein: 9, fat: 8, carbs: 54, fibre: 1,
+    });
+    const wholeDish = await draftFromText('1 bowl curd with rice');
+    check('a dish named "X with Y" stays one item',
+      wholeDish.length === 1 && wholeDish[0].food?.id === withName.foodId, JSON.stringify(wholeDish.map((d) => [d.label, d.food?.name ?? null])));
+    await deleteCustomFood(withName.foodId);
     const rows = await nut.query<{ n: number }>(
       "SELECT COUNT(*) AS n FROM custom_foods WHERE slug = ? AND deleted_at IS NULL",
       [slugFor('Palak Paneer')],

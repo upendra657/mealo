@@ -118,7 +118,7 @@ import {
   per100Of,
   weightOf,
 } from '../src/domain/import';
-import { parseMealText } from '../src/domain/foods';
+import { parseMealText, withParts } from '../src/domain/foods';
 import { checkRowsFor, checkSheetCsv } from '../src/domain/checksheet';
 import { anchorsAfter, previewEntries, recalcEntry, type DishEdit } from '../src/domain/dishedit';
 import {
@@ -616,6 +616,16 @@ section('Parsing what you type');
 
   check('a whole line splits', parseMealText('2 roti, 1 katori dal, 1 cup curd').length, 3);
   check('and on "and"', parseMealText('1 bowl rice and 1 katori dal').length, 2);
+
+  // His omelette, 11 Oct: the cheese after "with" was swallowed by the dish.
+  check('a dish that is also a measure, then "with"', one('2 roti with 1 katori dal'), { label: 'roti with 1 katori dal', quantity: 2, unit: null });
+  check('a real measure before the dish is untouched', one('2 egg omelette with cheese'), { label: 'omelette with cheese', quantity: 2, unit: 'egg' });
+  check('"with" names a second thing', withParts("omelette with d'lecta cheddar cheese"), ['omelette', "d'lecta cheddar cheese"]);
+  check('and a third', withParts('poha with peanuts with lemon'), ['poha', 'peanuts', 'lemon']);
+  check('"along with" and "w/" too', [withParts('roti along with dal'), withParts('toast w/ butter')], [['roti', 'dal'], ['toast', 'butter']]);
+  check('no "with", one part', withParts('dal tadka'), ['dal tadka']);
+  check('"with" inside a word is not a join', withParts('withania tea'), ['withania tea']);
+  check('nor at the very start or end', [withParts('with cheese'), withParts('omelette with')], [['with cheese'], ['omelette with']]);
 }
 
 // --------------------------------------------------- the library merge key
