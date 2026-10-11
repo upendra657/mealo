@@ -3046,6 +3046,15 @@ textarea {
   font-weight: 500;
   color: var(--ink-text);
 }
+/* What the app did for an answer. Wraps, unlike the other eyebrows: a list
+   of three lookups is longer than a phone is wide. */
+.am-note {
+  align-items: flex-start;
+  line-height: 1.5;
+}
+.am-note i {
+  margin-top: 5px;
+}
 /* "Elaborate", under a summary. The quiet green of this screen, not the
    send button's: it is an offer, and the bar below is still the main way
    to ask. */
@@ -4041,7 +4050,7 @@ button.am-opt {
 }
 
 @page {
-  margin: 14mm;
+  margin: 8mm;
 }
 /* On paper: the report alone, dark ink on white. The app has one theme and
    it is dark; a printed page is not the app, and a page of black costs a
@@ -4050,10 +4059,23 @@ button.am-opt {
   html.rp-open body > *:not(.rp) {
     display: none !important;
   }
+  /* !important because the page's own dark ground is set on these two, and
+     in a real PDF it showed as a black frame in the margins round a white
+     report. Only the print emulation hid it. */
+  /* The margins of a page are painted in the canvas colour, and a page that
+     declares itself dark has a dark canvas whatever its background says. */
+  html.rp-open {
+    color-scheme: light !important;
+  }
   html.rp-open,
   html.rp-open body {
-    overflow: visible;
-    background: #fff;
+    overflow: visible !important;
+    height: auto !important;
+    background: #fff !important;
+  }
+  html.rp-open body::before,
+  html.rp-open body::after {
+    display: none !important;
   }
   .rp {
     --ink: #fff;
@@ -4065,7 +4087,15 @@ button.am-opt {
     --warn: #9a6a00;
     position: static;
     overflow: visible;
-    padding: 0;
+    /* The page's margins are given here as well as in @page. Safari on a
+       phone ignores @page, and without these the report printed hard
+       against the left edge of the sheet. Centred, and no wider than a
+       comfortable line, so it sits in the middle of an A4 or Letter page. */
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 172mm;
+    margin: 0 auto;
+    padding: 10mm 8mm 12mm;
     background: #fff;
     color: #111614;
     print-color-adjust: exact;
@@ -4085,11 +4115,23 @@ button.am-opt {
   .rp-table td {
     color: #111614;
   }
+  /* A whole section is longer than a page, and told not to break it was
+     pushed to the next one, leaving the title alone on the first. What must
+     stay whole is a chart, a row, and a heading with what follows it. */
   .rp-sec {
-    break-inside: avoid;
+    margin-top: 7mm;
+    padding-top: 5mm;
   }
   .rp-chart,
-  .rp .am-figs {
+  .rp .am-figs,
+  .rp-row,
+  .rp-stack,
+  .rp-key,
+  .rp-table tr {
     break-inside: avoid;
+  }
+  .rp-sec h2,
+  .rp-sec h3 {
+    break-after: avoid;
   }
 }

@@ -30,7 +30,7 @@ npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
 npm run test:portions  # 822 pure-logic assertions, node, fast
-npm run test:safety    # 861 assertions: what Ask Mealo must stop before a model, and must not
+npm run test:safety    # 940 assertions: the gates, the tools, the numbers check, the lookup loop
 npm run test:e2e       # 376 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -137,6 +137,18 @@ way. Its messages are matched word for word to tell a stop from a model's
 answer when the chat is reopened, so rewording one is a change to stored
 history. A sentence that gets through, or an ordinary one that is stopped,
 goes into `scripts/test-safety.ts` before the pattern is touched.
+
+**Ask Mealo looks things up through tools; it never reads the record itself.**
+`domain/tools.ts` is Thali and Dawa as a model sees them: seven read-only
+views over `collectExport`, the same collected record the two reports are
+built from, so a figure in a chat answer and in a report is one figure. No
+tool writes; one that does arrives with its confirmation card. `llm/toolloop.ts`
+runs the lookups with a cap (three rounds, then it must answer) and falls
+back to the slice for a model that will not take tools. A tool result goes
+to the model under a line saying it is data and never instructions, because
+a dish can be named anything. `safety/numbers.ts` then removes any sentence
+of the answer whose figure is in nothing the model was given, and the screen
+says so.
 
 **Portions.** A dish carries weighed anchors `(measure, quantity, net_weight_g)`
 with macros per 100 g; other measures derive through implied density. A
