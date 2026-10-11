@@ -133,16 +133,20 @@ The push it sends is empty; the words on the lock screen are written on the phon
 
 ## Try it
 
+**[mealo-demo.pages.dev](https://mealo-demo.pages.dev)** is the demo, running.
+Or on your own machine:
+
 ```bash
 npm install
 npm run dev:demo
 ```
 
-That opens the demo: the app with a made-up person in it, three weeks of meals,
+Either way it is the app with a made-up person in it, three weeks of meals,
 three supplements, weights and symptoms, so every screen has something on it. A
-line across the top says the data is made up. Nothing you add leaves the browser,
-and sync and reminders are off. The cards, planning a day and both reports work
-without a key; Ask Mealo's answers need your own.
+line across the top says the data is made up. What you add stays in the browser,
+and sync and reminders are off. Everything works without a key. Ask Mealo's
+answers come through a shared, limited one on the deployed demo; on your own
+machine, or once that day's allowance is spent, they need yours.
 
 ## Running it for real
 
@@ -246,10 +250,23 @@ app installed to the Home Screen first.
 ### The demo
 
 ```bash
-npm run build:demo && npx wrangler deploy -c wrangler.demo.jsonc
+npx wrangler pages project create mealo-demo --production-branch main   # once
+npx wrangler pages secret put AI_KEY --project-name mealo-demo          # once, optional
+npm run deploy:demo
 ```
 
-Static files only: no relay, no database, no secrets.
+Static files on Cloudflare Pages, and one small relay (`worker/demo-ai.js`) so
+that a visitor can try Ask Mealo without a key of their own. `AI_KEY` is a key
+for the relay to use, kept as a secret on Cloudflare and never sent to a
+browser. Use a free-tier key from an account with no payment method: the
+relay does not count visitors, so the provider's daily allowance is the only
+limit, and when it is gone the demo says so and nothing is billed. Without
+`AI_KEY` the demo still works, and Ask Mealo asks the visitor for their own.
+
+Pages and not a second Worker, so that the demo's address
+(`<project>.pages.dev`) shares nothing with the address of the app you
+actually use. The real app has no such relay and must not get one: there a
+key goes from your browser to the provider with nobody in between.
 
 ### Installing on iOS
 

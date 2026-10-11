@@ -1,3 +1,4 @@
+import { DEMO } from '../lib/demo';
 import { kvGet, kvSet } from '../lib/kv';
 import { getProvider, PROVIDERS } from '../llm/providers';
 import type { ProviderConfig } from '../llm/types';
@@ -16,10 +17,17 @@ export type Settings = ProviderConfig & {
   };
 };
 
+/**
+ * Where a browser that has never been set up starts. Ollama in the real app:
+ * the one choice that sends nothing anywhere. In the demo, the demo's shared
+ * key, so that Ask Mealo answers for a visitor who has set nothing.
+ */
+const START = DEMO ? 'demo' : 'ollama';
+
 export const DEFAULT_SETTINGS: Settings = {
-  provider: 'ollama',
-  baseUrl: getProvider('ollama').baseUrl,
-  model: getProvider('ollama').defaultModel,
+  provider: START,
+  baseUrl: getProvider(START).baseUrl,
+  model: getProvider(START).defaultModel,
   apiKey: '',
   allowTrainingProviderFor: {
     nutrition: true,

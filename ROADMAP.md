@@ -400,8 +400,10 @@ something a person can read back from paper is part of question 2.
       tests behind them; there are no contribution notes
 - [ ] GitHub Actions build and deploy — Cloudflare builds and deploys on every
       push to `main`; nothing runs the tests there
-- [x] A public demo with a made-up person — `npm run build:demo`, its own
-      Worker (`wrangler.demo.jsonc`), static files only
+- [x] A public demo with a made-up person — `npm run deploy:demo`, on
+      Cloudflare Pages so its address shares nothing with the real app's.
+      Static files and one small relay, so a visitor can try Ask Mealo on a
+      shared free-tier key
 
 **Done when:** a stranger clones the repo, adds their own key, and logs a meal
 within ten minutes using nothing but the README.

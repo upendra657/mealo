@@ -34,6 +34,7 @@ npm run test           # portions + safety + e2e
 npm run test:portions  # 939 pure-logic assertions, node, fast
 npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
 npm run test:e2e       # 458 assertions against real OPFS SQLite, headless browser
+npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 48 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -245,8 +246,21 @@ at all. (Read through `import.meta.env` the file was still emitted and went to
 every phone's offline cache.) The seeder writes through the app's own save
 functions, only into a database that was empty when it began, and every step
 can be run again, because a reload two seconds in once left it half-written
-for good. `wrangler.demo.jsonc` has no `main`: no relay, no D1, no secrets.
-Do not give the demo any of them.
+for good; it is now one transaction, and a run cut short is wiped and
+written again. The demo lives on Cloudflare Pages so that its address shares
+nothing with the real app's. It has exactly one server-side piece,
+`worker/demo-ai.js`: a relay that lets a visitor try Ask Mealo on a shared
+key (`AI_KEY`, a Pages secret Upendra sets; never read, ask for or generate
+it). The relay forces its own model, passes on only the fields the app
+sends, caps the answer, answers the demo's own origin only, and logs
+nothing. It does not count visitors: the limit is the provider's free
+allowance, on an account with no payment method. No D1, no sync relay, no
+cron for the demo, and **never a relay like this for the real app**.
+**Run nothing `wrangler pages …` from this folder except through
+`npm run deploy:demo`:** here wrangler finds the real app's `wrangler.jsonc`,
+and `wrangler pages dev` once served the real build and opened the real D1
+with the saved login. `test:demo` (42 checks) runs the relay against a
+stand-in provider.
 
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.

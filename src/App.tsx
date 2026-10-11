@@ -162,7 +162,7 @@ export default function App() {
     return (
       <div className="shell">
         <div className="demo-flag" role="note">
-          Demo · made-up data · nothing leaves this browser
+          Demo · made-up data · do not enter real details
         </div>
         <p className="muted" style={{ marginTop: 80, textAlign: 'center' }}>
           Setting up the demo…
@@ -178,10 +178,13 @@ export default function App() {
       <div className="shell" key={active}>
         {/* On every screen, and not dismissable: someone who lands on the
             demo from a link has to be able to tell at a glance that the
-            person on screen does not exist. */}
+            person on screen does not exist. It used to end "nothing leaves
+            this browser". With the shared key that stopped being true: a
+            question to Ask Mealo goes to the relay and on to a provider. So
+            it says the thing a visitor most needs to act on instead. */}
         {DEMO && (
           <div className="demo-flag" role="note">
-            Demo · made-up data · nothing leaves this browser
+            Demo · made-up data · do not enter real details
           </div>
         )}
         {/* Home renders its own header, because the greeting in it depends on

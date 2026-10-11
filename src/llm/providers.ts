@@ -11,6 +11,8 @@
  *   'local'   nothing leaves the machine
  */
 
+import { DEMO } from '../lib/demo';
+
 export type TrainsPolicy = 'no' | 'free' | 'local';
 
 export type Provider = {
@@ -28,7 +30,32 @@ export type Provider = {
   needsKey: boolean;
 };
 
+/**
+ * The demo's shared key, behind the demo's own relay (`worker/demo-ai.js`).
+ *
+ * In the demo build only, and first there, so a visitor's Ask Mealo works
+ * before they have set anything. The address is relative: the relay is part
+ * of the demo's own site. `shared` is a placeholder for the model; the relay
+ * uses its own whatever is asked for, so the field here chooses nothing.
+ *
+ * The real app never lists it. There is no relay there, and a route by which
+ * the real app's questions went through somebody's server is the thing this
+ * app is built not to have.
+ */
+const DEMO_PROVIDER: Provider = {
+  key: 'demo',
+  label: 'Demo (shared key)',
+  baseUrl: '/ai',
+  defaultModel: 'shared',
+  trains: 'no',
+  policy:
+    'Your question, and what Ask Mealo looks up to answer it, go to this demo\'s relay and on to Groq under the demo owner\'s free key. Groq states that inputs and outputs are not used to train models. The records here are made up; do not type anything real. For that, choose another provider and use your own key.',
+  limits: 'Shared by every visitor. When the day\'s free allowance is used up, answers stop until it resets.',
+  needsKey: false,
+};
+
 export const PROVIDERS: Provider[] = [
+  ...(DEMO ? [DEMO_PROVIDER] : []),
   {
     key: 'groq',
     label: 'Groq',
