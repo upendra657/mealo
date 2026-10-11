@@ -20,7 +20,8 @@ import {
 } from '../llm/adapter';
 import { describeRedactions } from '../safety/deidentify';
 import { LlmError } from '../llm/types';
-import { downloadDatabase, saveFile } from '../db/client';
+import { saveFile } from '../db/client';
+import { BackupCard } from './BackupCard';
 import { listSnapshots, snapshotFile, type Snapshot } from '../db/snapshots';
 import { formatBytes } from '../lib/persist';
 
@@ -314,20 +315,10 @@ export function SettingsScreen({
           ))}
       </section>
 
-      <section className="card">
-        <h2>Your data</h2>
-        <p className="muted small">
-          Everything you log lives in this browser. Download a copy now and
-          again — browsers are allowed to evict storage, and a health log is not
-          something you can regenerate.
-        </p>
-        <div className="row">
-          <button onClick={() => void downloadDatabase()}>
-            Download database
-          </button>
-        </div>
-        {copies.length > 0 && (
-          <>
+      <BackupCard />
+      {copies.length > 0 && (
+        <section className="card">
+          <h2>Kept before updates</h2>
             <p className="muted small">
               Kept automatically, just before an update changed how the
               database is laid out — the data exactly as it was, in case an
@@ -347,9 +338,8 @@ export function SettingsScreen({
                 </span>
               </div>
             ))}
-          </>
-        )}
-      </section>
+        </section>
+      )}
     </div>
     </>
   );

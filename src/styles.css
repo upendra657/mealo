@@ -4132,6 +4132,105 @@ button.am-opt {
   flex: none;
   margin-top: 3px;
 }
+/* -- back up and restore, on the Dev screen. Its own few rules: the rest of
+   that screen still wears the styles from before the dark rebuild, and the
+   two buttons here are the ones that must not be mistaken for anything. */
+.bk-h {
+  margin: 22px 0 6px;
+  font-size: 15px;
+  font-weight: 500;
+}
+.bk-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 15px;
+  text-align: center;
+  color: var(--ink-text);
+}
+.bk-btn--go {
+  border-color: rgba(79, 209, 169, 0.38);
+  background: rgba(79, 209, 169, 0.16);
+  color: #a3e2ce;
+  font-weight: 500;
+}
+/* Amber, not green: this one replaces everything. */
+.bk-btn--warn {
+  border-color: rgba(232, 180, 74, 0.5);
+  background: rgba(232, 180, 74, 0.14);
+  color: var(--warn);
+  font-weight: 500;
+}
+.bk-btn:disabled {
+  opacity: 0.5;
+}
+.bk-file {
+  display: none;
+}
+.bk-box {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bk-box[data-tone='ok'] {
+  border-color: rgba(79, 209, 169, 0.38);
+}
+.bk-box[data-tone='warn'] {
+  border-color: rgba(232, 180, 74, 0.45);
+}
+.bk-box[data-tone='bad'] {
+  border-color: rgba(240, 113, 103, 0.5);
+}
+.bk-box strong {
+  font-weight: 500;
+  color: var(--ink-text);
+}
+.bk-box p {
+  margin: 6px 0 0;
+  color: #c9d3cd;
+}
+.bk-counts {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: #c9d3cd;
+}
+.bk-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+.bk-two-h {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bk-row {
+  display: flex;
+  gap: 8px;
+}
+.bk-row .bk-btn {
+  flex: 1;
+}
+.bk-row .bk-btn--warn {
+  flex: 1.7;
+}
+
 /* On paper: the report alone, dark ink on white. The app has one theme and
    it is dark; a printed page is not the app, and a page of black costs a
    cartridge and reads worse. */

@@ -29,9 +29,9 @@ left open — from the change list Upendra approves.
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run test           # portions + safety + e2e
-npm run test:portions  # 822 pure-logic assertions, node, fast
+npm run test:portions  # 846 pure-logic assertions, node, fast
 npm run test:safety    # 999 assertions: the gates, the tools, the numbers check, the lookup loop, AI insights
-npm run test:e2e       # 376 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 407 assertions against real OPFS SQLite, headless browser
 npm run test:relay     # 15 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
@@ -185,6 +185,17 @@ day; the Meds screen, the medicine log and the Doctor's slice all call it.
 Sick mode and paused medicines are worked out from dates, never written.
 Every dose amount is one a person entered or confirmed — the app never fills
 one in (R2).
+
+**Backup and restore are the one path that replaces everything.** Dev →
+Your data. A backup is the whole SQLite file, opened and counted before it
+is handed over. Restore (`db/worker.ts`, rules in `db/backup.ts`) opens the
+chosen file beside the live database, refuses anything damaged, foreign,
+empty or from a newer schema, shows its counts next to the phone's, keeps a
+copy of the live database (`mealo.before-restore.sqlite3` in OPFS), then
+replaces, re-checks, migrates forward and compares row counts, putting the
+copy back on any failure. Never weaken a step of that order. A backup holds
+no API key and no pairing code, on purpose: both live in IndexedDB, and a
+key in a file in Downloads has left the place built to keep it.
 
 **Local day bucketing happens in JS.** `DATE(ts/1000,'unixepoch')` is UTC and
 wrong at +05:30.

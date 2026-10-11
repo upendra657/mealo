@@ -6,7 +6,9 @@
  * not the test.
  */
 
-import { initDb, query, run as sql } from '../../src/db/client';
+import { initDb, query, run as sql, describeDatabase, inspectBackup, makeBackup, restoreBackup, run } from '../../src/db/client';
+import { sameRows } from '../../src/db/backup';
+import { LATEST_VERSION } from '../../src/db/migrations';
 import { ProfileScopeError, ScopeError, scopedDb } from '../../src/db/scope';
 import {
   createProfile,
@@ -1649,6 +1651,112 @@ async function main() {
     await setActiveProfile(PRIMARY_PROFILE);
     await removeSymptom(mine);
     check('an undone symptom leaves the next file', !buildExport(await collectExport('full', 7)).includes(stamp));
+  }
+
+  // ---- backup and restore ------------------------------------------------
+  // Last, because it replaces the whole database, and because by now the
+  // database holds everything the tests above put in it: two profiles,
+  // meals, portions, medicines, doses, weights, symptoms, chat.
+  step('backup and restore');
+  {
+    const TABLES = ['profiles', 'meals', 'meal_items', 'custom_foods', 'food_portions', 'food_aliases', 'medications', 'med_doses', 'med_products',
+      'intake_events', 'sick_episodes', 'weights', 'burns', 'symptoms', 'targets', 'messages', 'conversation_summaries', 'current_state'];
+    /** Every row of every table that holds what a person logged, value for value. */
+    const everything = async () =>
+      JSON.stringify(await Promise.all(TABLES.map(async (t) => [t, await query(`SELECT * FROM ${t} ORDER BY rowid`)])));
+
+    const held = await describeDatabase();
+    const fp0 = await everything();
+    check('there is real data to back up', held.counts.meals > 0 && held.counts.meal_items > 0 && held.counts.custom_foods > 0 && held.counts.profiles >= 2,
+      JSON.stringify(held.counts));
+
+    const { file, info } = await makeBackup();
+    check('the backup was opened and passed its check', info.integrity === 'ok' && info.version === LATEST_VERSION, JSON.stringify([info.integrity, info.version]));
+    check('it holds exactly what the phone holds', sameRows(held, info) === null && sameRows(info, held) === null, String(sameRows(held, info)));
+    check('the file is the size it says, and named for the day', file.size === info.bytes && file.size > 8192 && /^mealo-backup-\d{4}-\d{2}-\d{2}\.sqlite3$/.test(file.name),
+      `${file.name} ${file.size}`);
+    check('making a backup changes nothing', (await everything()) === fp0);
+
+    const seen = await inspectBackup(file);
+    check('looking inside a backup reads the same counts', sameRows(info, seen) === null);
+    check('and changes nothing on the phone', (await everything()) === fp0);
+
+    // What the day after a reinstall looks like, and worse: rows gone, rows
+    // changed, a row that was never in the backup.
+    await run('DELETE FROM meal_items');
+    await run('DELETE FROM weights');
+    await run("UPDATE custom_foods SET name = 'WRECKED'");
+    await run('DELETE FROM intake_events');
+    await run('DELETE FROM symptoms');
+    const wrecked = await describeDatabase();
+    check('the phone no longer holds its data', wrecked.counts.meal_items === 0 && wrecked.counts.weights === 0 && (await everything()) !== fp0);
+
+    const done = await restoreBackup();
+    check('the restore reports the file\'s rows in place', sameRows(info, done.restored) === null, String(sameRows(info, done.restored)));
+    check('every row is back, value for value', (await everything()) === fp0);
+    check('it reports what it replaced', done.before.counts.meal_items === 0 && done.before.counts.weights === 0, JSON.stringify(done.before.counts));
+    check('the database is sound and at this version', (await describeDatabase()).integrity === 'ok' && (await describeDatabase()).version === LATEST_VERSION);
+    const fk = await query<{ foreign_keys: number }>('PRAGMA foreign_keys');
+    check('foreign keys are still enforced', Number(fk[0]?.foreign_keys) === 1, JSON.stringify(fk));
+
+    // The app must go on working on the restored database, through the
+    // same scoped handles as before.
+    const after = await logSymptom('restored and still writing');
+    check('a write after the restore lands', (await openSymptoms()).some((x) => x.id === after));
+    await run('DELETE FROM symptoms WHERE id = ?', [after]);
+    check('and leaves the data as restored once undone', (await everything()) === fp0);
+
+    // The copy kept before the restore is a real database holding what was replaced.
+    const root = await navigator.storage.getDirectory();
+    const kept = await (await root.getFileHandle('mealo.before-restore.sqlite3')).getFile();
+    const keptInfo = await inspectBackup(kept);
+    check('a copy of what was replaced is kept, and opens', keptInfo.integrity === 'ok' && keptInfo.counts.meal_items === 0 && keptInfo.counts.meals === held.counts.meals,
+      JSON.stringify(keptInfo.counts));
+
+    // ---- files that must be turned away, each leaving the phone untouched
+    const refused = async (what: string, blob: Blob, expect: RegExp) => {
+      let said = '';
+      try {
+        await inspectBackup(blob);
+        await restoreBackup();
+      } catch (e) {
+        said = e instanceof Error ? e.message : String(e);
+      }
+      check(`${what} is refused`, expect.test(said), said || 'it was restored');
+      check(`${what} leaves the phone untouched`, (await everything()) === fp0);
+    };
+    const bytes = new Uint8Array(await file.arrayBuffer());
+
+    await refused('a file that is not a database', new Blob([new Uint8Array(20_000).fill(7)]), /not a database at all/);
+    await refused('a text file', new Blob(['Meal,Calories\nDal,128\n'.repeat(400)]), /not a database at all/);
+    await refused('an empty file', new Blob([]), /not a database|could not be opened/);
+
+    // A backup from a Mealo newer than this one: the version in the file's
+    // header (bytes 60 to 63) says so.
+    const newer = bytes.slice();
+    new DataView(newer.buffer).setUint32(60, LATEST_VERSION + 1);
+    await refused('a backup from a newer Mealo', new Blob([newer]), /newer version of Mealo/);
+
+    // Cut short in transit, or by a full disk.
+    await refused('a backup cut off half way', new Blob([bytes.slice(0, Math.floor(bytes.length / 2))]), /damaged|could not be opened|not a database|did not pass/);
+
+    // The right size and the right header, with a stretch of its pages blanked.
+    const holed = bytes.slice();
+    holed.fill(0, 4096, Math.min(holed.length, 4096 * 6));
+    await refused('a backup with pages blanked', new Blob([holed]), /damaged|could not be opened|did not pass|not one made by Mealo|empty database/);
+
+    // And after all that, the good file still restores.
+    await inspectBackup(file);
+    await restoreBackup();
+    check('the good backup still restores after every refusal', (await everything()) === fp0);
+    let again = '';
+    try {
+      await restoreBackup();
+    } catch (e) {
+      again = e instanceof Error ? e.message : String(e);
+    }
+    check('with no file chosen there is nothing to restore', again === 'Choose a backup file first.', again);
+    check('and the phone is as it was', (await everything()) === fp0);
   }
 }
 

@@ -9,6 +9,7 @@
 
 import { newId, now } from '../lib/device';
 import type { SnapshotOutcome } from './snapshots';
+import { backupName, refusal, type BackupInfo } from './backup';
 
 type Pending = {
   resolve: (v: unknown) => void;
@@ -154,6 +155,42 @@ export async function downloadDatabase(): Promise<void> {
     new Blob([bytes as BlobPart], { type: 'application/vnd.sqlite3' }),
     `mealo-${stamp}.sqlite3`,
   );
+}
+
+/** What this phone holds now, counted the way a backup is. */
+export async function describeDatabase(): Promise<BackupInfo> {
+  await initDb();
+  return call<BackupInfo>({ type: 'describe' });
+}
+
+/**
+ * A backup of everything, proved readable before it is handed over.
+ *
+ * The bytes are written to a spare file, opened as a database and counted.
+ * A backup nobody has opened is a hope; this one has been opened once, and
+ * its counts are shown so the person can see it is the whole of their data.
+ */
+export async function makeBackup(): Promise<{ file: File; info: BackupInfo }> {
+  const bytes = await exportDatabase();
+  const info = await call<BackupInfo>({ type: 'inspect', bytes, purpose: 'check' });
+  const why = refusal(info, info.version);
+  if (why) throw new Error(`The backup did not pass its own check and was not saved. ${why}`);
+  // octet-stream, not a SQLite type: a phone's share sheet turns away files
+  // whose type it does not know, and this one must reach Files.
+  return { file: new File([bytes as BlobPart], backupName(), { type: 'application/octet-stream' }), info };
+}
+
+/** Look inside a backup file. Changes nothing on this phone. */
+export async function inspectBackup(file: Blob): Promise<BackupInfo> {
+  await initDb();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return call<BackupInfo>({ type: 'inspect', bytes, purpose: 'restore' });
+}
+
+/** Replace this phone's data with the backup last inspected. See worker.ts. */
+export async function restoreBackup(): Promise<{ restored: BackupInfo; before: BackupInfo }> {
+  await initDb();
+  return call<{ restored: BackupInfo; before: BackupInfo }>({ type: 'restore' });
 }
 
 /** Hands a blob to the browser as a download. */

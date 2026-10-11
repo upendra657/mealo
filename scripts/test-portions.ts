@@ -41,6 +41,7 @@ import {
 } from '../src/safety/deidentify';
 import { answerBlocks, canElaborate, ELABORATE, figuresFor, figuresNote, spansOf } from '../src/domain/chat';
 import { humanReport, wantsAiFile } from '../src/domain/report';
+import { backupName, COUNTED, describe, refusal, REQUIRED, sameRows, sizeLabel, type BackupInfo } from '../src/db/backup';
 import { SYMPTOM_GROUPS, SYMPTOM_LABELS, suggestLabel, wordsForModel, WORDS_FOR_MODEL } from '../src/domain/symptomlabels';
 import {
   average,
@@ -2275,6 +2276,36 @@ section('Ask Mealo: an answer drawn, not shown as Markdown');
   check('an empty reply is no blocks', answerBlocks('  \n '), []);
   // Nothing is ever parsed as HTML; the screen builds elements from spans.
   check('markup in a reply stays text', spansOf('<img src=x onerror=alert(1)>')[0].text, '<img src=x onerror=alert(1)>');
+}
+
+section('Backup and restore: what a file must be');
+{
+  const tables = [...new Set([...COUNTED, ...REQUIRED, 'foods', 'med_products'])];
+  const good: BackupInfo = { integrity: 'ok', version: LATEST_VERSION, bytes: 1_300_000, tables,
+    counts: { profiles: 2, meals: 412, meal_items: 1870, custom_foods: 96, food_portions: 140, medications: 3, med_doses: 5, intake_events: 44, sick_episodes: 1, weights: 30, burns: 12, symptoms: 7, targets: 2, messages: 58 } };
+  check('a sound backup from this version may be restored', refusal(good, LATEST_VERSION), null);
+  check('so may one from an older version: it is brought forward', refusal({ ...good, version: LATEST_VERSION - 2 }, LATEST_VERSION), null);
+  check('a newer one is refused, and says to update', refusal({ ...good, version: LATEST_VERSION + 1 }, LATEST_VERSION)?.includes('newer version of Mealo'), true);
+  check('a damaged file is refused with what SQLite said', refusal({ ...good, integrity: '*** in database main *** Page 12: btreeInitPage() returns error code 11' }, LATEST_VERSION)?.startsWith('This file is damaged'), true);
+  check('an empty database is refused', refusal({ ...good, version: 0, tables: [], counts: {} }, LATEST_VERSION), 'This file is an empty database. There is nothing in it to restore.');
+  check('some other app\'s database is refused', refusal({ ...good, tables: ['notes', 'tags'], counts: {} }, LATEST_VERSION), 'This is a database, but not one made by Mealo.');
+  check('damage is reported before anything else', refusal({ ...good, integrity: 'bad', version: LATEST_VERSION + 5 }, LATEST_VERSION)?.startsWith('This file is damaged'), true);
+  for (const t of REQUIRED) check(`without ${t} it is not Mealo's`, refusal({ ...good, tables: tables.filter((x) => x !== t) }, LATEST_VERSION), 'This is a database, but not one made by Mealo.');
+
+  check('the same rows in every table is a restore that worked', sameRows(good, { ...good, bytes: 0 }), null);
+  check('one meal short is not', sameRows(good, { ...good, counts: { ...good.counts, meals: 411 } }), 'meals: the file has 412 rows, the restored database has 411');
+  check('a table gone missing is not', sameRows(good, { ...good, counts: { ...good.counts, weights: undefined as unknown as number } }), 'weights: the file has 30 rows, the restored database has none');
+  check('a table the file never had is not held against it', sameRows({ ...good, counts: { meals: 412 } }, good), null);
+  check('every counted table is one the app has', COUNTED.every((t) => MIGRATIONS.some((m) => m.sql.includes(`TABLE IF NOT EXISTS ${t}`) || m.sql.includes(`TABLE ${t}`))), true);
+  check('everything a person logs is counted', ['meals', 'meal_items', 'medications', 'intake_events', 'weights', 'symptoms', 'messages', 'profiles'].every((t) => (COUNTED as readonly string[]).includes(t)), true);
+
+  check('what a backup holds, in words', describe(good),
+    ['412 meals', '1,870 dishes eaten', '96 dishes in the food table', '3 medicines', '44 doses answered', '30 weights', '7 symptoms', '58 chat messages', '2 profiles']);
+  check('one of each reads right', describe({ ...good, counts: { profiles: 1, meals: 1, meal_items: 1, custom_foods: 1, medications: 1, intake_events: 1, weights: 1, symptoms: 1, messages: 1 } })[0], '1 meal');
+  check('a missing table reads as none', describe({ ...good, counts: {} })[0], '0 meals');
+  check('sizes', [sizeLabel(900), sizeLabel(250_000), sizeLabel(1_300_000), sizeLabel(48_000_000)], ['1 KB', '244 KB', '1.2 MB', '45.8 MB']);
+  // 00:30 on 12 Oct in India is still 11 Oct in UTC; the name is the day it is where the person is.
+  check('the file is named for the local day', backupName(new Date(2026, 9, 12, 0, 30)), 'mealo-backup-2026-10-12.sqlite3');
 }
 
 // ------------------------------------------------------------------ done

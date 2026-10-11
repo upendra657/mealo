@@ -12,6 +12,7 @@
 
 import { LATEST_VERSION, MIGRATIONS } from './migrations';
 import { pruneSnapshots, snapshotName, type SnapshotOutcome } from './snapshots';
+import { COUNTED, refusal, sameRows, type BackupInfo } from './backup';
 
 /**
  * Loaded from a static URL rather than imported as a package dependency.
@@ -25,6 +26,14 @@ import { pruneSnapshots, snapshotName, type SnapshotOutcome } from './snapshots'
  * scripts/copy-sqlite.mjs puts the files there; predev and prebuild run it.
  */
 const SQLITE_URL = '/sqlite-wasm/index.mjs';
+
+const LIVE = '/mealo.sqlite3';
+/** A backup file being looked at before a restore. Beside the live one, never over it. */
+const CANDIDATE = '/mealo.restore-candidate.sqlite3';
+/** A fresh backup, read back to prove it opens before it is handed over. */
+const CHECK = '/mealo.backup-check.sqlite3';
+/** What was on the phone before the last restore. Kept until the next one. */
+const BEFORE = '/mealo.before-restore.sqlite3';
 
 type Sqlite3Init = (config?: Record<string, unknown>) => Promise<unknown>;
 
@@ -43,7 +52,10 @@ type Req =
   | { id: number; type: 'init' }
   | { id: number; type: 'exec'; sql: string; bind?: unknown[] }
   | { id: number; type: 'bulk'; table: string; columns: string[]; rows: unknown[][] }
-  | { id: number; type: 'export' };
+  | { id: number; type: 'export' }
+  | { id: number; type: 'describe' }
+  | { id: number; type: 'inspect'; bytes: Uint8Array; purpose: 'restore' | 'check' }
+  | { id: number; type: 'restore' };
 
 type Ok = { id: number; ok: true; result: unknown };
 type Err = { id: number; ok: false; error: string };
@@ -71,8 +83,14 @@ type OoStmt = {
 
 type Capi = { sqlite3_js_db_export(ptr: number): Uint8Array };
 
+/** The OPFS database class, with the one static it has that the app uses. */
+type OpfsStatic = (new (path: string) => OoDb) & {
+  importDb(filename: string, bytes: Uint8Array): Promise<number>;
+};
+
 let db: OoDb | null = null;
 let capi: Capi | null = null;
+let Opfs: OpfsStatic | null = null;
 let mode: 'opfs' | 'memory' = 'memory';
 let snapshot: SnapshotOutcome = { status: 'none' };
 
@@ -87,8 +105,8 @@ async function init(): Promise<Info> {
   capi = (sqlite3 as unknown as { capi: Capi }).capi;
 
   if ('OpfsDb' in oo1 && typeof oo1.OpfsDb === 'function') {
-    const Ctor = oo1.OpfsDb as new (path: string) => OoDb;
-    db = new Ctor('/mealo.sqlite3');
+    Opfs = oo1.OpfsDb as OpfsStatic;
+    db = new Opfs(LIVE);
     mode = 'opfs';
   } else {
     const Ctor = oo1.DB as new (path: string, flags: string) => OoDb;
@@ -234,6 +252,157 @@ function exportDb(): Uint8Array {
   return capi.sqlite3_js_db_export(db.pointer);
 }
 
+// ------------------------------------------------------ backup and restore
+
+/** What a database holds: sound or not, which version, how many rows of what. */
+function summarise(d: OoDb, bytes: number): BackupInfo {
+  // integrity_check returns one row saying "ok", or up to a hundred rows of
+  // what is wrong; the first is enough to refuse on.
+  const integrity = String(d.selectValue('PRAGMA integrity_check') ?? 'no answer');
+  const version = Number(d.selectValue('PRAGMA user_version') ?? 0);
+  const tables = (
+    d.exec({ sql: "SELECT name FROM sqlite_master WHERE type = 'table'", rowMode: 'array', returnValue: 'resultRows' }) as unknown[][]
+  ).map((r) => String(r[0]));
+  const counts: Record<string, number> = {};
+  for (const t of COUNTED) {
+    // The names are this app's own constants, never a file's.
+    if (tables.includes(t)) counts[t] = Number(d.selectValue(`SELECT COUNT(*) FROM ${t}`) ?? 0);
+  }
+  return { integrity, version, bytes, tables, counts };
+}
+
+function needOpfs(): OpfsStatic {
+  if (!Opfs || mode !== 'opfs') {
+    throw new Error('This browser is not keeping Mealo on disk, so a backup cannot be checked or restored here.');
+  }
+  return Opfs;
+}
+
+async function fileBytes(name: string): Promise<Uint8Array> {
+  const root = await navigator.storage.getDirectory();
+  const file = await (await root.getFileHandle(name.slice(1))).getFile();
+  return new Uint8Array(await file.arrayBuffer());
+}
+
+async function removeFile(name: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  await root.removeEntry(name.slice(1)).catch(() => {});
+}
+
+/**
+ * Open a backup beside the live database and say what is in it.
+ *
+ * `importDb` refuses anything that does not start as a SQLite file; a file
+ * that starts right and is broken further in is caught by integrity_check.
+ * The live database is not touched, opened or closed by any of this.
+ */
+async function inspect(bytes: Uint8Array, purpose: 'restore' | 'check'): Promise<BackupInfo> {
+  const O = needOpfs();
+  const path = purpose === 'restore' ? CANDIDATE : CHECK;
+  await removeFile(path);
+  try {
+    await O.importDb(path, bytes);
+  } catch {
+    throw new Error('This file is not a Mealo backup: it is not a database at all.');
+  }
+  let d: OoDb | null = null;
+  try {
+    d = new O(path);
+    return summarise(d, bytes.byteLength);
+  } catch (e) {
+    await removeFile(path);
+    throw new Error(`This file could not be opened as a database (${e instanceof Error ? e.message : String(e)}).`);
+  } finally {
+    d?.close();
+    // A fresh backup's copy has done its job once it has been read.
+    if (purpose === 'check') await removeFile(path);
+  }
+}
+
+/** Put a file in place of the live database and open it. The caller has closed `db`. */
+async function putInPlace(O: OpfsStatic, bytes: Uint8Array): Promise<void> {
+  // A journal left beside the old file belongs to the old file. Applied to
+  // the new one it would "roll back" pages of someone's restored records.
+  await removeFile(`${LIVE}-journal`);
+  await removeFile(`${LIVE}-wal`);
+  await O.importDb(LIVE, bytes);
+  db = new O(LIVE);
+  db.exec({ sql: 'PRAGMA foreign_keys = ON;' });
+}
+
+/**
+ * Replace everything on this phone with the backup last inspected.
+ *
+ * In this order, and the order is the safety:
+ *   - the file is judged again, here, so nothing but a file that passed can
+ *     be restored whatever the screen did;
+ *   - a copy of the live database is taken, and if that fails nothing else
+ *     happens;
+ *   - the live database is replaced, opened, checked, brought up to this
+ *     app's version, and its rows counted against the file's;
+ *   - any failure after the replacement puts the copy back.
+ */
+async function restore(): Promise<{ restored: BackupInfo; before: BackupInfo }> {
+  const O = needOpfs();
+  if (!db) throw new Error('database not open');
+
+  let bytes: Uint8Array;
+  let file: BackupInfo;
+  try {
+    bytes = await fileBytes(CANDIDATE);
+    const d = new O(CANDIDATE);
+    try {
+      file = summarise(d, bytes.byteLength);
+    } finally {
+      d.close();
+    }
+  } catch {
+    throw new Error('Choose a backup file first.');
+  }
+  const why = refusal(file, LATEST_VERSION);
+  if (why) throw new Error(why);
+
+  const before = summarise(db, 0);
+  await removeFile(BEFORE);
+  try {
+    db.exec({ sql: 'VACUUM INTO ?', bind: [BEFORE] });
+  } catch (e) {
+    throw new Error(
+      `Nothing was changed. A copy of what is on this phone could not be made first, so the restore did not start (${e instanceof Error ? e.message : String(e)}).`,
+    );
+  }
+  const safety = await fileBytes(BEFORE);
+
+  db.close();
+  db = null;
+  try {
+    await putInPlace(O, bytes);
+    const opened = summarise(db!, bytes.byteLength);
+    if (opened.integrity !== 'ok') throw new Error(`the restored database did not pass its check (${opened.integrity.slice(0, 120)})`);
+    // An older backup is brought forward exactly as an update would have.
+    await migrate();
+    const restored = summarise(db!, bytes.byteLength);
+    const differs = sameRows(file, restored);
+    if (differs) throw new Error(`the restored database does not hold what the file did (${differs})`);
+    await removeFile(CANDIDATE);
+    return { restored, before };
+  } catch (e) {
+    // Back to exactly what was here. If even this fails, the copy is still
+    // on disk under BEFORE and the error says so.
+    const reason = e instanceof Error ? e.message : String(e);
+    try {
+      (db as OoDb | null)?.close();
+      db = null;
+      await putInPlace(O, safety);
+    } catch (again) {
+      throw new Error(
+        `The restore failed (${reason}) and what was on this phone could not be put back automatically (${again instanceof Error ? again.message : String(again)}). It is still saved on this phone; do not clear the app's data. Close and reopen Mealo.`,
+      );
+    }
+    throw new Error(`Nothing was changed. The restore failed and what was on this phone was put back (${reason}).`);
+  }
+}
+
 self.onmessage = async (ev: MessageEvent<Req>) => {
   const req = ev.data;
   const reply = (msg: Ok | Err) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
@@ -250,6 +419,16 @@ self.onmessage = async (ev: MessageEvent<Req>) => {
         break;
       case 'export':
         reply({ id: req.id, ok: true, result: exportDb() });
+        break;
+      case 'describe':
+        if (!db) throw new Error('database not open');
+        reply({ id: req.id, ok: true, result: summarise(db, 0) });
+        break;
+      case 'inspect':
+        reply({ id: req.id, ok: true, result: await inspect(req.bytes, req.purpose) });
+        break;
+      case 'restore':
+        reply({ id: req.id, ok: true, result: await restore() });
         break;
     }
   } catch (e) {
