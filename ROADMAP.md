@@ -314,7 +314,13 @@ should be shared and the one thing that takes real effort to build.
       There is no reset, by design.
 - [ ] Encrypted export and import with its own password
 - [ ] Touch polish on the flows you actually use
-- [ ] Web push via VAPID, Cloudflare Worker cron as sender
+- [x] **Web push via VAPID, Cloudflare Worker cron as sender** — 11 Oct 2026.
+      Due doses and an evening meal nudge. The relay is told the minutes to
+      ring a browser and nothing else; the push is empty and the words are
+      written on the phone. Asleep until whoever runs the deployment sets
+      the VAPID secrets. Tested at the relay and in the schedule; **a push
+      arriving on a real phone has not been seen yet**, which is what the
+      exit criterion below asks for. A weekly summary is not built.
 
 **Done when:** a meal logged on the phone appears on the Mac, a meal logged while
 the phone is offline appears once it reconnects, a reminder push arrives, and a
@@ -386,16 +392,63 @@ something a person can read back from paper is part of question 2.
 
 ## Phase 6 — Open-source release · 1 weekend
 
-- [ ] README that leads with what the app is not
-- [ ] Key setup walkthrough with provider data policies stated plainly
-- [ ] Licence, contribution notes, safety rules documented as requirements
-- [ ] GitHub Actions build and deploy
+- [x] README that leads with what the app is not — rewritten 11 Oct 2026,
+      with a walk through the demo at the top
+- [x] Key setup walkthrough with provider data policies stated plainly
+- [ ] Licence, contribution notes, safety rules documented as requirements —
+      the licence (MIT) is in and the README states the safety rules and the
+      tests behind them; there are no contribution notes
+- [ ] GitHub Actions build and deploy — Cloudflare builds and deploys on every
+      push to `main`; nothing runs the tests there
+- [x] A public demo with a made-up person — `npm run build:demo`, its own
+      Worker (`wrangler.demo.jsonc`), static files only
 
 **Done when:** a stranger clones the repo, adds their own key, and logs a meal
 within ten minutes using nothing but the README.
 
 **Trap:** shipping without saying plainly what the app is not. For a health tool
 that is the most important paragraph in the repository.
+
+---
+
+## Making it smart · October 2026
+
+Tracking was finished; this is what was built on top of it, in the order it
+was built. The rules it all follows are in the README under "How the AI is
+kept honest".
+
+- [x] **Names.** Ask Mealo, Thali, Dawa on screen; the job titles are gone.
+- [x] **A file for another AI.** The record as plain text, built by code.
+- [x] **Safety gates and their test suite.** Disordered eating and extreme
+      goals, a change to a medicine, a diagnosis, an empty record: each stopped
+      in code. Thresholds quoted from sources named in `safety/gates.ts`.
+- [x] **A report to read.** Charts and code-built observations, prints to PDF.
+- [x] **Ask Mealo with tools.** Thali and Dawa as lookups over the same
+      collected record the reports use; a cap on rounds; a check that removes
+      any figure the model was not given.
+- [x] **AI insights on the report**, switched on by the person, checked point
+      by point.
+- [x] **Doing things by chat.** A meal, doses and a symptom from a sentence,
+      each through a card the person confirms; the app reads those sentences
+      itself, because a model given the tool once ignored it. Symptoms have a
+      history.
+- [x] **Planning a day by chat.** Built by code from meals logged whole in the
+      last four weeks, with the amounts logged. Nothing is scaled to reach a
+      figure.
+- [x] **Reminders.** See Phase 5.
+- [x] **The demo, a walk through it, the README.** See Phase 6.
+
+Open, each to be discussed before it is built:
+
+- [ ] A weekly summary, written by the AI from observations code found. It
+      cannot be written while the app is closed: the key lives in the browser.
+- [ ] "Why?" on a figure: which dishes drove it.
+- [ ] "Show working": which lookups ran and what they returned, under an answer.
+- [ ] The label check in plain language.
+- [ ] Adversarial runs of the safety suite against a real model. Today the
+      suite tests the code around a model with scripted replies.
+- [ ] Photos: a nutrition label, a recipe, a medicine strip. Waits on a
+      decision about whether an image may leave the phone.
 
 ---
 
