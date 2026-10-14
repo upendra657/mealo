@@ -46,6 +46,12 @@ covers all of `src/`; `npm run build` (`tsc -b`) follows the references. The
 test scripts are under no tsconfig at all — esbuild and vite strip their types
 unchecked — so a type error in a test only shows up as a wrong result.
 
+**Clock-dependent bugs hide in daytime runs.** Two were found on 15 Oct
+2026 only because the suite ran at 01:49. Run any change that touches days,
+slots or times under other zones too; headless Chrome and node both follow
+`TZ`: `TZ=Europe/Moscow npm run test:e2e` puts the local clock just after
+midnight, `Asia/Bangkok` before 05:00, `America/New_York` in the evening.
+
 **`test:e2e` needs a Chromium.** If Playwright's own build is missing, point it
 at Chrome: `CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:e2e`.
 
@@ -102,6 +108,13 @@ rather than the only safeguard. Keep it that way.
 
 **Never handle credentials.** BYOK keys live in the browser's IndexedDB and go
 browser → provider directly. Do not accept, store, echo or request one.
+
+**D1 allows 50 queries per Worker invocation on the free plan**
+(developers.cloudflare.com/d1/platform/limits, read 15 Oct 2026). A loop of
+one query per row in a request handler fails past that, half done. Write
+many rows as one statement (`INSERT … SELECT … FROM json_each(?)`); whether
+a `batch()` counts as one query is not documented. The local simulator in
+`test:relay` may not enforce the limit, so a passing test proves nothing here.
 
 **Wrangler is pinned**, exactly, in `devDependencies` (4.148.0 since 7 Oct
 2026), after `npx` pulled a different version on five consecutive deploys.

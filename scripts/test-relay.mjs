@@ -213,6 +213,16 @@ try {
   ok('a host that only ends like one is refused', (await post('/push/schedule', { endpoint: 'https://evil-push.apple.com.example.org/x', times: [] })).s === 400);
   ok('times must be a list', (await post('/push/schedule', { endpoint: mine, times: 'soon' })).s === 400);
   ok('of numbers', (await post('/push/schedule', { endpoint: mine, times: ['08:00'] })).s === 400);
+  // A fortnight of medicines in four parts of the day and a meal nudge: 70
+  // rings. One INSERT each ran past D1's 50 queries per invocation on the
+  // free plan (15 Oct 2026). The local simulator may not hold to that limit,
+  // so this checks the other half: every ring of a long list is kept.
+  const busy = `https://fcm.googleapis.com/fcm/send/${b32()}`;
+  const seventy = Array.from({ length: 70 }, (_, i) => now + (i + 1) * 60 * MIN);
+  ok('a fortnight of seventy rings is taken whole', (await post('/push/schedule', { endpoint: busy, times: seventy })).j.rings === 70);
+  ok('and all seventy are held', ringsHeld(busy) === 70);
+  ok('a hundred, the most allowed, are held too', (await post('/push/schedule', { endpoint: busy, times: Array.from({ length: 100 }, (_, i) => now + (i + 1) * 60 * MIN) })).j.rings === 100 && ringsHeld(busy) === 100);
+  await post('/push/forget', { endpoint: busy });
   ok('no more than a hundred', (await post('/push/schedule', { endpoint: mine, times: Array.from({ length: 101 }, (_, i) => now + i * MIN) })).s === 400);
   ok('and none more than fifteen days ahead', (await post('/push/schedule', { endpoint: mine, times: [now + 16 * 86_400_000] })).s === 400);
   ok('an unknown push route', (await fetch(`${BASE}/push/nope`)).status === 404);

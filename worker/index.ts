@@ -221,11 +221,19 @@ function goodEndpoint(endpoint: unknown, env: Env): endpoint is string {
   return u.protocol === 'https:' && PUSH_HOSTS.some((h) => h.test(u.hostname));
 }
 
+/**
+ * Created on first use rather than by a migration someone has to remember to
+ * run, and then not asked again by this isolate: two statements on every
+ * request were two of the 50 queries an invocation is allowed.
+ */
+let pushTableReady = false;
 async function ensurePushTable(env: Env): Promise<void> {
+  if (pushTableReady) return;
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS push_rings (endpoint TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (endpoint, at))',
   ).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_push_rings_at ON push_rings(at)').run();
+  pushTableReady = true;
 }
 
 /**
@@ -259,8 +267,16 @@ async function schedule(request: Request, env: Env): Promise<Response> {
   await env.DB.prepare('DELETE FROM push_rings WHERE endpoint = ?').bind(endpoint).run();
   const held = await env.DB.prepare('SELECT COUNT(*) AS n FROM push_rings').first<{ n: number }>();
   if ((held?.n ?? 0) + minutes.size > MAX_ROWS) return json({ error: 'relay is full' }, 507);
-  for (const at of minutes) {
-    await env.DB.prepare('INSERT OR IGNORE INTO push_rings (endpoint, at) VALUES (?, ?)').bind(endpoint, at).run();
+  // The whole list in one statement. One INSERT per ring ran past the free
+  // plan's 50 D1 queries per invocation once a phone had medicines in three
+  // parts of the day (14 days x 4 rings), and failed halfway: the old rows
+  // already deleted, only the first few dozen written, and a 500 nobody saw
+  // (found 15 Oct 2026). A batch() might count as one query or as many;
+  // Cloudflare does not say, so this does not rely on it.
+  if (minutes.size > 0) {
+    await env.DB.prepare('INSERT OR IGNORE INTO push_rings (endpoint, at) SELECT ?, value FROM json_each(?)')
+      .bind(endpoint, JSON.stringify([...minutes]))
+      .run();
   }
   return json({ rings: minutes.size });
 }
