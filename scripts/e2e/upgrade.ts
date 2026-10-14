@@ -218,6 +218,9 @@ const SEEDS: Seed[] = [
       unit: 'katori', net_weight_g: 150, energy_kcal: 98, source: 'matched',
       plan_state: 'planned', updated_at: T },
   ] },
+  { version: 14, table: 'profiles', rows: [
+    { id: 'fx-night', name: 'Night owl', created_at: T, updated_at: T, night_tomorrow: 'begun' },
+  ] },
   { version: 10, table: 'intake_events', rows: [
     { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,
       status: 'taken', dose_id: 'fx-dose-1', for_day: '2026-10-05', updated_at: T },

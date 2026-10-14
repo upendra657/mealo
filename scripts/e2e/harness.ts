@@ -14,7 +14,9 @@ import {
   createProfile,
   initProfiles,
   listProfiles,
+  nightTomorrow,
   setActiveProfile,
+  setNightTomorrow,
   PRIMARY_PROFILE,
 } from '../../src/profiles/store';
 import { activeProfile } from '../../src/lib/active-profile';
@@ -808,6 +810,18 @@ async function main() {
   );
   check('insert stamped the profile automatically', Number(stamped[0].n) === 1, String(stamped[0].n));
 
+  // What "tomorrow" means after midnight is one person's habit, not the
+  // phone's: her answer must not become his.
+  check('nobody has been asked what tomorrow means at night', (await nightTomorrow()) === null);
+  await setNightTomorrow('begun');
+  check('her answer is kept', (await nightTomorrow()) === 'begun');
+
+  await setActiveProfile(PRIMARY_PROFILE);
+  check('and is not his', (await nightTomorrow()) === null);
+  await setNightTomorrow('after');
+  check('his is his own', (await nightTomorrow()) === 'after');
+  await setActiveProfile(partner);
+  check('and hers did not move', (await nightTomorrow()) === 'begun');
   await setActiveProfile(PRIMARY_PROFILE);
   const back = await mealsOn();
   check("and the partner's meal is not in his day", back.length === 1, String(back.length));

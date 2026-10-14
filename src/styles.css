@@ -3273,6 +3273,10 @@ textarea {
   line-height: 1.45;
   color: var(--muted);
 }
+/* A hint that opens its card, above the choices or the plan it is about. */
+.am-hint--lead {
+  margin: 0 0 10px;
+}
 .am-btns {
   display: flex;
   gap: 8px;
@@ -3591,6 +3595,18 @@ textarea {
   margin-top: 2px;
   font-size: 12px;
   line-height: 1.4;
+}
+/* "Which day?" after midnight. No icon above the date, as the report's
+   choices have, so the title sits at the top, and the two stay level when
+   one description wraps and the other does not. */
+.am-opts--days {
+  align-items: start;
+}
+.am-opts--days .am-opt {
+  text-align: left;
+}
+.am-opts--days .am-opt-t {
+  margin-top: 0;
 }
 .am-soon {
   margin-left: 4px;

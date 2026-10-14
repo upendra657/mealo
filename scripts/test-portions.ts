@@ -1214,6 +1214,7 @@ const SHIPPED: Record<number, string> = {
   11: '67e1fd8a3fbb5520',
   12: '5d81a83c35f6cae2',
   13: 'ca5525f7a2b617e6',
+  14: '705d60a7e713cd93',
 };
 
 /**
@@ -2322,25 +2323,25 @@ section('Backup and restore: what a file must be');
 }
 
 // ----------------------------------------------- planning a day by chat
-import { aimLine, belowFloor, distance, planReceipt, planRequest, rankDays, usualOptions, USUAL_MIN_DAYS, type Five, type Option, type PastMeal } from '../src/domain/mealplan';
+import { aimLine, asksAtNight, belowFloor, countFromToday, distance, nightAhead, planReceipt, planRequest, rankDays, usualOptions, USUAL_MIN_DAYS, type Five, type Option, type PastMeal } from '../src/domain/mealplan';
 import { stampFor } from '../src/domain/plan';
 {
   // Sunday 11 Oct 2026, 10:00.
   const now = new Date(2026, 9, 11, 10, 0);
   const ask = (t: string) => planRequest(t, now);
-  check('the sentence it was built for', ask('Plan tomorrow so I hit 90 g protein, using things I usually eat'), { ahead: 1, protein: 90, kcal: null });
-  check('a bare day', ask('plan tomorrow'), { ahead: 1, protein: null, kcal: null });
-  check('today', ask('Plan my meals for today'), { ahead: 0, protein: null, kcal: null });
-  check('tonight is today', ask('plan dinner tonight'), { ahead: 0, protein: null, kcal: null });
-  check('the day after', ask('please plan the day after tomorrow'), { ahead: 2, protein: null, kcal: null });
+  check('the sentence it was built for', ask('Plan tomorrow so I hit 90 g protein, using things I usually eat'), { ahead: 1, counted: true, protein: 90, kcal: null });
+  check('a bare day', ask('plan tomorrow'), { ahead: 1, counted: true, protein: null, kcal: null });
+  check('today', ask('Plan my meals for today'), { ahead: 0, counted: false, protein: null, kcal: null });
+  check('tonight is today', ask('plan dinner tonight'), { ahead: 0, counted: false, protein: null, kcal: null });
+  check('the day after', ask('please plan the day after tomorrow'), { ahead: 2, counted: true, protein: null, kcal: null });
   check('a weekday is the next one', [ask('plan Friday')?.ahead, ask('plan my food for wed')?.ahead, ask('plan monday')?.ahead], [5, 3, 1]);
   check('said on a Sunday, Sunday is a week away', ask('plan sunday')?.ahead, 7);
   check('in N days', ask('plan my meals in 3 days')?.ahead, 3);
-  check('no day named is tomorrow', ask('plan my meals so I get 100g of protein'), { ahead: 1, protein: 100, kcal: null });
+  check('no day named is tomorrow', ask('plan my meals so I get 100g of protein'), { ahead: 1, counted: true, protein: 100, kcal: null });
   check('politely', [ask('Can you plan tomorrow?')?.ahead, ask('could you please plan my meals for tomorrow')?.ahead, ask('I want you to plan tomorrow')?.ahead, ask("let's plan tomorrow")?.ahead, ask('help me plan tomorrow')?.ahead], [1, 1, 1, 1, 1]);
   check('a curly apostrophe from a phone', ask('let’s plan tomorrow')?.ahead, 1);
   check('other verbs need the word plan', [ask('make me a meal plan for tomorrow')?.ahead, ask('suggest a plan for Friday meals')?.ahead, ask('make me a sandwich tomorrow')], [1, 5, null]);
-  check('calories typed', ask('plan tomorrow at 1800 kcal with 120 g protein'), { ahead: 1, protein: 120, kcal: 1800 });
+  check('calories typed', ask('plan tomorrow at 1800 kcal with 120 g protein'), { ahead: 1, counted: true, protein: 120, kcal: 1800 });
   check('calories with a comma', ask('plan tomorrow around 2,000 calories')?.kcal, 2000);
   check('a calorie figure under the floor is seen as one', [ask('plan tomorrow at 600 kcal'), ask('plan tomorrow at 999 calories'), ask('plan tomorrow at 1000 calories'), ask('plan tomorrow')].map((a) => [a!.kcal, belowFloor(a!)]),
     [[600, true], [999, true], [1000, false], [null, false]]);
@@ -2353,6 +2354,28 @@ import { stampFor } from '../src/domain/plan';
     'I plan to eat less', 'my plan is to lose weight', 'the plan worked', 'tomorrow I will plan', 'is my meal plan ok', 'I just had 2 roti and dal',
     'make a report for last week', 'planning is hard', '', 'plan my medicines for tomorrow', 'plan when to take my tablets',
   ]) check(`not a plan request: ${t || '(empty)'}`, ask(t), null);
+
+  // ---- "tomorrow" after midnight: counted days are asked about, named ones are not
+  check('a weekday is named, not counted', [ask('plan Friday')?.counted, ask('plan sunday')?.counted], [false, false]);
+  check('kal, parso and in N days are counted', [ask('plan kal')?.counted, ask('plan parso')?.ahead, ask('plan my meals in 3 days')?.counted], [true, 2, true]);
+  // Thursday 15 Oct 2026, the night he found it.
+  const late = new Date(2026, 9, 15, 1, 30);
+  const lateAsk = (t: string) => planRequest(t, late)!;
+  check('at 01:30 "plan tomorrow" asks', asksAtNight(lateAsk('plan tomorrow so I hit 90 g protein'), late), true);
+  check('so does a plan with no day', asksAtNight(lateAsk('plan my meals so I get 100g of protein'), late), true);
+  check('"plan today" at 01:30 does not', asksAtNight(lateAsk('plan today'), late), false);
+  check('nor does a weekday', asksAtNight(lateAsk('plan Saturday'), late), false);
+  check('at 04:59 it still asks', asksAtNight(lateAsk('plan tomorrow'), new Date(2026, 9, 15, 4, 59)), true);
+  check('at 05:00 tomorrow is the calendar\'s', asksAtNight(planRequest('plan tomorrow', new Date(2026, 9, 15, 5))!, new Date(2026, 9, 15, 5)), false);
+  check('a plan with no sentence behind it never asks', asksAtNight({ ahead: 1, protein: null, kcal: null }, late), false);
+  check('the day that has just begun', [nightAhead(1, 'begun'), nightAhead(2, 'begun'), nightAhead(0, 'begun')], [0, 1, 0]);
+  check('the calendar\'s', [nightAhead(1, 'after'), nightAhead(2, 'after')], [1, 2]);
+  // Said on a Thursday at 01:30, "Thursday" was a week away.
+  check('the weekday that has just begun is today, not next week', lateAsk('plan thursday').ahead, 0);
+  check('and in the daytime still a week away', planRequest('plan thursday', new Date(2026, 9, 15, 10))!.ahead, 7);
+  // A model's plan: the person's words decide the day when they count it.
+  check('a model\'s plan reads the count from the words', [countFromToday('what should I eat tomorrow?'), countFromToday('kal ke liye'), countFromToday('the day after tomorrow please')], [1, 1, 2]);
+  check('and leaves its own day alone when they do not', [countFromToday('help me eat better'), countFromToday('what about friday')], [null, null]);
 
   check('noon on another day, the clock today', [stampFor(new Date(2026, 9, 12).getTime(), now), stampFor(new Date(2026, 9, 11).getTime(), now)], [new Date(2026, 9, 12, 12).getTime(), now.getTime()]);
 

@@ -29,8 +29,8 @@ import {
   type Pill,
 } from '../domain/chat';
 import { timeLabel, type PlannedDose } from '../domain/doses';
-import { planReceipt, type PlanAsk } from '../domain/mealplan';
-import { buildPlan, savePlan, type DayPlan } from '../domain/mealplanner';
+import { asksAtNight, nightAhead, planReceipt, type NightTomorrow, type PlanAsk } from '../domain/mealplan';
+import { buildPlan, dayAhead, savePlan, type DayPlan } from '../domain/mealplanner';
 import { deleteMeal, draftFromText, itemsFor, saveMeal, type DraftItem } from '../domain/meals';
 import { describeMeasure } from '../domain/measures';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
@@ -38,6 +38,7 @@ import { dayLabel } from '../domain/plan';
 import { guessSlot, slot } from '../domain/slots';
 import { SYMPTOM_GROUPS, suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, removeSymptom } from '../domain/symptoms';
+import { nightTomorrow, setNightTomorrow } from '../profiles/store';
 import { triage } from '../safety/redflags';
 import { DoseRow } from './MedLog';
 import { Chevron, Sheet, Tick, fmtQty } from './bits';
@@ -470,6 +471,7 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
 // ------------------------------------------------------------- a day planned
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** "Mon 12 Oct", day before month whatever the phone's language says. */
 const shortDate = (ms: number) => {
@@ -488,6 +490,12 @@ const shortDate = (ms: number) => {
  * "Another" steps through the next-nearest days rather than asking for a new
  * one, so every day offered is one the same rule produced and the first is
  * always the nearest.
+ *
+ * Before NIGHT_ENDS a day counted from today ("tomorrow") is two days, and
+ * which one is the person's to say: the first time, the card asks instead of
+ * planning, and the answer is kept on their profile. After that it plans
+ * straight away and says which reading it used, with Change beside it.
+ * Neither day is picked in advance: a default would be the app answering.
  */
 export function PlanFlow({
   at,
@@ -508,16 +516,94 @@ export function PlanFlow({
   const [n, setN] = useState(0);
   const [done, setDone] = useState<{ ids: string[]; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Judged at the moment the request was made, so a card left open past
+  // five does not change its question under the person's eyes.
+  const night = asksAtNight(ask, new Date(at));
+  // undefined while the profile is read; null when they have not been asked.
+  const [meant, setMeant] = useState<NightTomorrow | null | undefined>(night ? undefined : null);
+  const ahead = !night ? ask.ahead : meant ? nightAhead(ask.ahead, meant) : null;
 
   useEffect(() => {
+    if (!night) return;
     let live = true;
-    void buildPlan(ask).then((p) => {
+    void nightTomorrow().then((m) => {
+      if (live) setMeant(m);
+    });
+    return () => {
+      live = false;
+    };
+  }, [night]);
+
+  useEffect(() => {
+    if (ahead === null) return;
+    let live = true;
+    void buildPlan({ ...ask, ahead }).then((p) => {
       if (live) setPlan(p);
     });
     return () => {
       live = false;
     };
-  }, [ask]);
+  }, [ask, ahead]);
+
+  // The only thing that moves the day once the card is open, so the old
+  // plan is cleared here rather than in the effect that builds the new one.
+  const choose = async (m: NightTomorrow) => {
+    await setNightTomorrow(m);
+    setPlan(null);
+    setN(0);
+    setMeant(m);
+  };
+
+  if (night && meant === null) {
+    const begun = dayAhead(nightAhead(ask.ahead, 'begun'), new Date(at));
+    const after = dayAhead(ask.ahead, new Date(at));
+    // For "tomorrow" the two are named by what they are; for "day after
+    // tomorrow" or "in 3 days" by where the count starts.
+    const one = ask.ahead === 1;
+    return (
+      <div className="am-entry">
+        <div className="am-q">
+          <div className="am-q-t">{entryTime(at)} · Plan a day</div>
+          <div className="am-q-x">Which day?</div>
+        </div>
+        <div className="am-said">{said}</div>
+        <div className="am-card">
+          <div className="am-hint am-hint--lead">
+            It is {clock(at)} on {DAYS_LONG[new Date(at).getDay()]}. After midnight, "tomorrow" means the day that has
+            just begun to some people, and the day after it to others. Which do you mean?
+          </div>
+          <div className="am-opts am-opts--days">
+            <button className="am-opt" onClick={() => void choose('begun')}>
+              <div className="am-opt-t">{shortDate(begun)}</div>
+              <div className="am-opt-d">{one ? 'The day that has just begun' : 'Counting from the day that has just begun'}</div>
+            </button>
+            <button className="am-opt" onClick={() => void choose('after')}>
+              <div className="am-opt-t">{shortDate(after)}</div>
+              <div className="am-opt-d">{one ? 'The day after it' : 'Counting from the day after it'}</div>
+            </button>
+          </div>
+          <div className="am-hint">
+            Mealo remembers your answer for plans made after midnight. You can change it on any of them.
+          </div>
+          <div className="am-btns">
+            <button className="am-btn" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const nightLine = night && meant && (
+    <div className="am-hint am-hint--lead">
+      After midnight, "tomorrow" is {meant === 'begun' ? 'the day that has just begun' : 'the day after the one that has just begun'}, as you
+      chose.{' '}
+      <button className="am-see-link" onClick={() => void choose(meant === 'begun' ? 'after' : 'begun')}>
+        Change
+      </button>
+    </div>
+  );
 
   if (done && plan) {
     return (
@@ -544,6 +630,7 @@ export function PlanFlow({
       <div className="am-said">{said}</div>
       {plan && !choice && (
         <div className="am-card">
+          {nightLine}
           <div className="am-hint">{plan.empty}</div>
           <div className="am-btns">
             <button className="am-btn" onClick={onCancel}>
@@ -556,6 +643,7 @@ export function PlanFlow({
         <>
           <ToConfirm />
           <div className="am-card am-card--doses">
+            {nightLine}
             {choice.meals.map((m) => (
               <div key={m.slot}>
                 <div className="am-eyeb am-dose-g">{slot(m.slot).label}</div>

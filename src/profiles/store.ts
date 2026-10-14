@@ -27,6 +27,7 @@ import {
   setActiveProfileId,
 } from '../lib/active-profile';
 import { kvGet, kvSet } from '../lib/kv';
+import type { NightTomorrow } from '../domain/mealplan';
 
 const ACTIVE_KEY = 'active-profile';
 
@@ -37,6 +38,7 @@ export type Profile = {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  night_tomorrow: NightTomorrow | null;
 };
 
 export { activeProfile, PRIMARY_PROFILE };
@@ -132,6 +134,23 @@ export async function deleteProfile(id: string): Promise<void> {
     const next = profiles.find((p) => p.id !== id);
     if (next) await setActiveProfile(next.id);
   }
+}
+
+/**
+ * What "tomorrow" means to this person when said after midnight: 'begun',
+ * the day that has just begun, or 'after', the calendar's tomorrow. Null
+ * until they have been asked (mealplan.ts, `asksAtNight`).
+ */
+export async function nightTomorrow(): Promise<NightTomorrow | null> {
+  const rows = await query<{ night_tomorrow: NightTomorrow | null }>(
+    'SELECT night_tomorrow FROM profiles WHERE id = ?',
+    [activeProfile()],
+  );
+  return rows[0]?.night_tomorrow ?? null;
+}
+
+export async function setNightTomorrow(value: NightTomorrow): Promise<void> {
+  await update('profiles', activeProfile(), { night_tomorrow: value });
 }
 
 /** How much each person has logged — shown when picking who you are. */

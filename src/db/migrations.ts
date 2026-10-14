@@ -748,4 +748,22 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 14,
+  name: 'what tomorrow means after midnight',
+  sql: `
+    -- Said at 01:30, "plan tomorrow" means the day that has just begun to
+    -- some people and the day after it to others. Upendra's answer
+    -- (15 Oct 2026): ask the person once, and remember. 'begun' is the day
+    -- that has just begun, 'after' the calendar's tomorrow, NULL not asked
+    -- yet, which is every profile that exists today.
+    --
+    -- On the profile, not in browser storage: it is a habit of the person,
+    -- two people on one phone can answer differently, and a backup carries
+    -- the profiles table where it would not carry IndexedDB.
+    ALTER TABLE profiles ADD COLUMN night_tomorrow TEXT
+      CHECK (night_tomorrow IN ('begun', 'after'));
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

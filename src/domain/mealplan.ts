@@ -24,7 +24,7 @@
  */
 
 import { CALORIE_FLOOR } from '../safety/gates';
-import { DAYS_AHEAD } from './plan';
+import { DAYS_AHEAD, NIGHT_ENDS } from './plan';
 import { SLOTS, type SlotId } from './slots';
 
 // ---------------------------------------------------------------- the ask
@@ -32,6 +32,13 @@ import { SLOTS, type SlotId } from './slots';
 export type PlanAsk = {
   /** Whole days from today: 0 today, 1 tomorrow, up to DAYS_AHEAD. */
   ahead: number;
+  /**
+   * The day was counted from today — "tomorrow", "kal", "in 2 days", or no
+   * day at all — rather than named. After midnight a count is the one
+   * reading that depends on whom you ask (`asksAtNight`). Optional so that
+   * a plan built with no sentence behind it need not say.
+   */
+  counted?: boolean;
   /** A protein figure the person typed, in grams. Never one the app chose. */
   protein: number | null;
   /** A calorie figure the person typed. */
@@ -80,26 +87,69 @@ export function planRequest(text: string, now = new Date()): PlanAsk | null {
   const figured = protein !== null || kcal !== null;
   if (!FOODISH.test(rest) && !startsWithDay && !nothingElse && !figured) return null;
 
-  return { ahead: aheadOf(rest, now), protein, kcal };
+  return { ...aheadOf(rest, now), protein, kcal };
 }
 
-/** Which day a request names, as whole days from today. Tomorrow when none. */
-function aheadOf(rest: string, now: Date): number {
+/**
+ * Which day a request names, as whole days from today. Tomorrow when none,
+ * and that default is a count like "tomorrow" is.
+ */
+function aheadOf(rest: string, now: Date): { ahead: number; counted: boolean } {
   const s = rest.toLowerCase();
-  if (/\b(?:the )?day after tomorrow\b|\bparso\b/.test(s)) return 2;
-  if (/\btomorrow\b|\bkal\b/.test(s)) return 1;
-  if (/\b(?:today|tonight)\b/.test(s)) return 0;
-  const inDays = /\bin (\d) days?\b/.exec(s);
-  if (inDays) return Math.min(DAYS_AHEAD, Math.max(0, Number(inDays[1])));
+  const counted = countedIn(s);
+  if (counted !== null) return { ahead: counted, counted: true };
+  if (/\b(?:today|tonight)\b/.test(s)) return { ahead: 0, counted: false };
   for (let i = 0; i < 7; i++) {
     if (new RegExp(`\\b(?:${WEEKDAYS[i]}|${WEEKDAYS[i].slice(0, 3)})\\b`).test(s)) {
       // The next one. Said on a Monday, "Monday" is a week away: today has
-      // its own word.
+      // its own word. Except in the small hours, when "Thursday" said at
+      // 01:30 on a Thursday is the morning ahead, whichever way the person
+      // counts their nights, and never a week off.
       const gap = (i - now.getDay() + 7) % 7;
-      return gap === 0 ? 7 : gap;
+      return { ahead: gap === 0 ? (now.getHours() < NIGHT_ENDS ? 0 : 7) : gap, counted: false };
     }
   }
-  return 1;
+  return { ahead: 1, counted: true };
+}
+
+/** "tomorrow", "kal", "day after tomorrow", "parso", "in 3 days": the count, or null. */
+function countedIn(s: string): number | null {
+  if (/\b(?:the )?day after tomorrow\b|\bparso\b/.test(s)) return 2;
+  if (/\btomorrow\b|\bkal\b/.test(s)) return 1;
+  const inDays = /\bin (\d) days?\b/.exec(s);
+  if (inDays) return Math.min(DAYS_AHEAD, Math.max(0, Number(inDays[1])));
+  return null;
+}
+
+/**
+ * The day a model's plan is for, when the person's own words count it from
+ * today: read from those words rather than taken from the model, so that
+ * the night's question starts from the same reading whoever opened the
+ * card. Null when no word counts: with no day in the sentence the model
+ * chose one, and its choice is left alone.
+ */
+export function countFromToday(text: string): number | null {
+  return countedIn(text.toLowerCase());
+}
+
+// ------------------------------------------------- "tomorrow" after midnight
+
+/** 'begun': the day that has just begun. 'after': the calendar's tomorrow. */
+export type NightTomorrow = 'begun' | 'after';
+
+/**
+ * Whether the day of this plan turns on what the person means by
+ * "tomorrow" at night. Some count the hours after midnight as the night
+ * before, so their "tomorrow" is the calendar's today; some do not. His
+ * decision (15 Oct 2026): ask, once, and remember.
+ */
+export function asksAtNight(ask: PlanAsk, now = new Date()): boolean {
+  return !!ask.counted && now.getHours() < NIGHT_ENDS;
+}
+
+/** The day a counted request means, given the person's answer. */
+export function nightAhead(ahead: number, meant: NightTomorrow): number {
+  return meant === 'begun' ? Math.max(0, ahead - 1) : ahead;
 }
 
 /** "90 g protein", "90g of protein", "protein of 90 g". Held to a sane range. */

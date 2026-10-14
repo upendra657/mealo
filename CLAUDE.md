@@ -31,9 +31,9 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 939 pure-logic assertions, node, fast
+npm run test:portions  # 965 pure-logic assertions, node, fast
 npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 458 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 463 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 48 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -312,7 +312,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v13**. **Shipped means any database has run it — a dev browser included.**
+at **v14**. **Shipped means any database has run it — a dev browser included.**
 v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
 database never re-ran it, and every medicine save failed with "no column named
 freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum

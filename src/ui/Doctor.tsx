@@ -57,7 +57,7 @@ import {
   type Pill,
   type Span,
 } from '../domain/chat';
-import { belowFloor, planRequest, type PlanAsk } from '../domain/mealplan';
+import { belowFloor, countFromToday, planRequest, type PlanAsk } from '../domain/mealplan';
 import { loadTargets } from '../domain/targets';
 import { collectFacts, refreshCurrentState, renderSlice } from '../domain/state';
 import { suggestLabel } from '../domain/symptomlabels';
@@ -537,8 +537,10 @@ export function Doctor({
           ...cards.map((c) =>
             c.pill === 'plan'
               ? // The figures come from the person's words, read by the app;
-                // the model supplied only which day.
-                { kind: 'plan' as const, id: nextId.current++, at: Date.now(), said: c.said, ask: { ...(planRequest(c.said) ?? { protein: null, kcal: null }), ahead: c.ahead } }
+                // the model supplied only which day, and not even that when
+                // the words count it ("tomorrow"), since after midnight that
+                // count is the person's to settle (PlanFlow).
+                { kind: 'plan' as const, id: nextId.current++, at: Date.now(), said: c.said, ask: { ...(planRequest(c.said) ?? { protein: null, kcal: null }), ahead: countFromToday(c.said) ?? c.ahead, counted: countFromToday(c.said) !== null } }
               : { kind: 'flow' as const, pill: c.pill, id: nextId.current++, at: Date.now(), said: c.said, savedId: null },
           ),
         ]);
