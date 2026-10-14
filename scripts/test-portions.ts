@@ -1764,6 +1764,31 @@ section('Medicines: the schedule a day had');
   check('but half past midnight still belongs to the night before',
     planDay(day(11), [med], [daily, weekly], [], [halfPast], noon(20)).groups[0].doses[0].late, false);
 
+  // Two doses of one medicine in one part of the day. Matching every tick by
+  // medicine and time gave the second the first's tick: ticking "before
+  // breakfast" showed "after breakfast" taken too, and changing the second
+  // deleted the first's tick (15 Oct 2026).
+  const iron = { ...med, id: 'iron', name: 'Iron' };
+  const before = { ...daily, id: 'ib', medication_id: 'iron', position: 1, meal: 'before' as const, deleted_at: null };
+  const after = { ...before, id: 'ia', position: 2, meal: 'after' as const };
+  const firstOnly = { ...tick, id: 't1', dose_id: 'ib', medication_id: 'iron', meal: 'before' };
+  const both = planDay(day(11), [iron], [before, after], [], [firstOnly], noon(11)).groups[0].doses;
+  check('ticking one of two morning doses answers that one only',
+    both.map((p) => [p.dose.id, p.state, p.eventId]), [['ib', 'taken', 't1'], ['ia', 'due', null]]);
+  // Edited the same morning: both old rows replaced by new ones at the same
+  // times. Each orphaned tick goes to the new dose with the same meal.
+  const oldB = { ...before, id: 'ob', deleted_at: noon(11).getTime() - 3_600_000 };
+  const oldA = { ...after, id: 'oa', deleted_at: noon(11).getTime() - 3_600_000 };
+  const newB = { ...before, id: 'nb', from_day: day(11) };
+  const newA = { ...after, id: 'na', from_day: day(11) };
+  const orphan = { ...firstOnly, dose_id: 'ob' };
+  const edited = planDay(day(11), [iron], [oldB, oldA, newB, newA], [], [orphan], noon(11)).groups[0].doses;
+  check('after a same-day edit, the orphaned tick finds its own dose by meal',
+    edited.map((p) => [p.dose.id, p.state]), [['nb', 'taken'], ['na', 'due']]);
+  const vague = { ...orphan, meal: null };
+  check('an orphan that cannot tell two doses apart answers neither',
+    planDay(day(11), [iron], [oldB, oldA, newB, newA], [], [vague], noon(11)).groups[0].doses.map((p) => p.state), ['due', 'due']);
+
   // The log over the fortnight, from the same planDay.
   const log = buildLog(daysBetweenInclusive(day(1), day(14)), [med], [daily, weekly], [],
     [{ ...tick, for_day: day(11) }, { ...tick, id: 'u', dose_id: 'old', status: 'skipped' as const,
@@ -2430,7 +2455,7 @@ import { stampFor } from '../src/domain/plan';
 }
 
 // ------------------------------------------------------------ reminders
-import { clockOn, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
+import { clockOn, clockOnCalendar, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 {
@@ -2472,6 +2497,13 @@ import { runInNewContext } from 'node:vm';
   check('not on a day that has a meal', mealRings(['2026-10-11', '2026-10-12'], new Set(['2026-10-11']), on, now).map((r) => r.at), [at(12, 21)]);
   check('not once its time has passed', mealRings(['2026-10-11'], new Set(), on, at(11, 21, 1)), []);
   check('switched off: none', mealRings(['2026-10-11'], new Set(), { ...on, meals: false }, now), []);
+  // A nudge before three is on its own calendar day. It went through the
+  // medicine clock and rang a day late: set at 02:20 on Thursday for 02:31,
+  // the first ring was Friday's (15 Oct 2026).
+  const small = at(15, 2, 20);
+  check('a 02:31 nudge rings today at 02:31', mealRings(['2026-10-15', '2026-10-16'], new Set(), { ...on, mealTime: '02:31' }, small).map((r) => r.at), [at(15, 2, 31), at(16, 2, 31)]);
+  check('one at 00:00 is that day\'s midnight', clockOnCalendar('2026-10-15', '00:00'), at(15, 0));
+  check('doses keep the night rule', clockOn('2026-10-15', '02:31'), at(16, 2, 31));
   // His decision, 10 Oct: plain. No guilt, no streaks, nothing about calories.
   const words = [...rings, ...named, ...meals].map((r) => `${r.title} ${r.body}`).join(' ').toLowerCase();
   check('plain words: no guilt, no streak, no calories, no "should"', ['streak', 'calorie', 'kcal', 'should', 'forgot', 'missed', 'again', "don't", 'must', '!'].filter((w) => words.includes(w)), []);

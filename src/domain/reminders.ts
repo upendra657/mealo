@@ -90,6 +90,19 @@ export function clockOn(day: string, hhmm: string): number {
   return d.getTime();
 }
 
+/**
+ * A clock time on a calendar day, as a moment. For the meal nudge, whose
+ * days are calendar days: `clockOn` moves anything before three to the next
+ * calendar day, which is right for a night dose and put a 02:31 nudge meant
+ * for Thursday on Friday (seen live, 15 Oct 2026).
+ */
+export function clockOnCalendar(day: string, hhmm: string): number {
+  const m = HHMM.exec(hhmm);
+  const d = dateOf(day);
+  if (m) d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  return d.getTime();
+}
+
 /** What is still to be taken at one time of one day: the medicines' names, nothing else. */
 export type DueGroup = { time: TimeOfDay; names: string[] };
 
@@ -135,7 +148,7 @@ export function mealRings(days: string[], loggedDays: ReadonlySet<string>, s: Re
   const out: Ring[] = [];
   for (const day of days) {
     if (loggedDays.has(day)) continue;
-    const at = clockOn(day, s.mealTime);
+    const at = clockOnCalendar(day, s.mealTime);
     if (at <= now) continue;
     out.push({ at, kind: 'meals', title: 'Today’s meals', body: 'Nothing logged yet today. Open Mealo to add them.' });
   }

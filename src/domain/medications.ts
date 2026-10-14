@@ -654,7 +654,7 @@ export async function readMedsDay(day = medDay(), now = new Date()): Promise<Med
  * that same day swapped the row out from under it.
  */
 const TICKS = `SELECT e.id, e.dose_id, e.status, e.updated_at, e.taken_at, e.for_day,
-         e.medication_id, d.time_of_day
+         e.medication_id, d.time_of_day, d.meal
     FROM intake_events e LEFT JOIN med_doses d ON d.id = e.dose_id
    WHERE e.profile_id = ? AND e.deleted_at IS NULL`;
 

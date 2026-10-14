@@ -462,6 +462,8 @@ export type PlanIntake = {
       row it was made against being replaced by an edit the same day. */
   medication_id?: string;
   time_of_day?: TimeOfDay | null;
+  /** Before or after food, from the same row, to tell two doses at one time apart. */
+  meal?: string | null;
 };
 
 /**
@@ -562,21 +564,44 @@ export function planDay<M extends PlanMed>(
     byMed.set(d.medication_id, [...(byMed.get(d.medication_id) ?? []), d]);
   }
 
-  // The newest tick per dose wins. Keyed twice: by the row it was made
-  // against, and by medicine and time, so editing a schedule after ticking
-  // this morning's dose does not untick it.
+  // The newest tick per dose wins, found by the row it was made against.
+  // A tick whose row is no longer the schedule (edited the same day, after
+  // the tick) is found by medicine and time instead, so the edit does not
+  // untick it. Only those orphans: when every tick was matched by time, two
+  // doses of one medicine in one part of the day (before and after
+  // breakfast) shared a tick, and answering one answered both (15 Oct 2026).
+  const live = new Set([...byMed.values()].flat().map((d) => d.id));
   const byDose = new Map<string, PlanIntake>();
   const byTime = new Map<string, PlanIntake>();
+  const byMeal = new Map<string, PlanIntake>();
   const newer = (a: PlanIntake | undefined, b: PlanIntake) => !a || b.updated_at >= a.updated_at;
   for (const e of intake) {
-    if (e.dose_id && newer(byDose.get(e.dose_id), e)) byDose.set(e.dose_id, e);
+    if (e.dose_id && live.has(e.dose_id)) {
+      if (newer(byDose.get(e.dose_id), e)) byDose.set(e.dose_id, e);
+      continue;
+    }
     if (e.medication_id && e.time_of_day) {
       const k = `${e.medication_id}|${e.time_of_day}`;
       if (newer(byTime.get(k), e)) byTime.set(k, e);
+      const km = `${k}|${e.meal ?? ''}`;
+      if (newer(byMeal.get(km), e)) byMeal.set(km, e);
     }
   }
-  const tickFor = (d: PlanDose) =>
-    byDose.get(d.id) ?? (d.time_of_day ? byTime.get(`${d.medication_id}|${d.time_of_day}`) : undefined);
+  // How many of a medicine's doses fall in each part of the day. With one,
+  // an orphan at that time can only have been for it; with two, only one
+  // that also matches before or after food can.
+  const atTime = new Map<string, number>();
+  for (const d of live.size ? [...byMed.values()].flat() : []) {
+    if (!d.time_of_day) continue;
+    const k = `${d.medication_id}|${d.time_of_day}`;
+    atTime.set(k, (atTime.get(k) ?? 0) + 1);
+  }
+  const tickFor = (d: PlanDose) => {
+    const own = byDose.get(d.id);
+    if (own || !d.time_of_day) return own;
+    const k = `${d.medication_id}|${d.time_of_day}`;
+    return byMeal.get(`${k}|${d.meal ?? ''}`) ?? ((atTime.get(k) ?? 0) === 1 ? byTime.get(k) : undefined);
+  };
 
   const today = medDay(now);
   const nowRank = TIMES.findIndex((t) => t.id === partOfDay(now));
