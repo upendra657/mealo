@@ -163,7 +163,11 @@ export async function addMedication(draft: MedicationDraft): Promise<string> {
     rxcui: null,
     dose_text: draft.dose_text?.trim() || null,
     schedule: draft.schedule?.trim() || null,
-    started_on: todayIso(),
+    // The Meds screen's day, as addMedicine has it: between midnight and
+    // DAY_TURNS_AT_HOUR the screen is still on yesterday, and a calendar
+    // date here left the medicine off it until three (found by the e2e run
+    // at 01:49 on 15 Oct 2026).
+    started_on: medDay(),
     ended_on: null,
     notes: draft.notes?.trim() || null,
     deleted_at: null,
