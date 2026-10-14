@@ -8,10 +8,12 @@
  * the real app's bundle.
  *
  * What the flag changes, all of it: a made-up person is written into an
- * empty database on first open (`demo/seed.ts`); a line across the top of
- * every screen says the data is made up; and sync and reminders are off,
- * because the demo has no relay and a stranger's browser has no business
- * being paired with anything. Ask Mealo answers through a shared key that is
+ * empty database on first open (`demo/seed.ts`); and sync and reminders are
+ * off, because the demo has no relay and a stranger's browser has no business
+ * being paired with anything. Nothing on screen marks it as the demo: the
+ * line across the top that said so was taken out at Upendra's word on
+ * 12 Oct 2026, so only the address and the installed app's name ("Mealo
+ * demo") tell the two apart. Ask Mealo answers through a shared key that is
  * not in the build: it sits behind the demo's relay (`worker/demo-ai.js`),
  * and a visitor can switch to a key of their own.
  */

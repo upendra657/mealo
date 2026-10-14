@@ -141,12 +141,12 @@ npm install
 npm run dev:demo
 ```
 
-Either way it is the app with a made-up person in it, three weeks of meals,
-three supplements, weights and symptoms, so every screen has something on it. A
-line across the top says the data is made up. What you add stays in the browser,
-and sync and reminders are off. Everything works without a key. Ask Mealo's
-answers come through a shared, limited one on the deployed demo; on your own
-machine, or once that day's allowance is spent, they need yours.
+Either way it is the app with a made-up person in it, 45 days of meals,
+three supplements, weights and symptoms, so every screen has something on it.
+What you add stays in the browser, and sync and reminders are off. Everything
+works without a key. Ask Mealo's answers come through a shared, limited one on
+the deployed demo; on your own machine, or once that day's allowance is spent,
+they need yours.
 
 ## Running it for real
 
