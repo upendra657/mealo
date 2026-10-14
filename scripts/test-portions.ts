@@ -935,6 +935,12 @@ section('Measures: the picker is shorter than the vocabulary');
   }
   check('and nothing else is', [...offered].sort(), [...kept].sort());
 
+  // "pack" on screen, 'packet' underneath: the stored id did not move.
+  check('packet is shown as Pack', describeMeasure('packet'), 'Pack');
+  check('"packet" still finds it', toMeasure('packet')?.id, 'packet');
+  check('"pack" finds it', toMeasure('pack')?.id, 'packet');
+  check('"2 packs" finds it', toMeasure('packs')?.id, 'packet');
+
   check('the picker lost exactly the hidden ones', every.length - offered.length, gone.length);
   check('and every offered id still resolves',
     offered.every((i) => toMeasure(i) !== null), true);
@@ -1839,6 +1845,13 @@ section('Meals planned ahead: when a meal is a plan');
   check('but it is on a later day', plansAt(day(10), 'other', at(8)), true);
   check('anything tomorrow is planned, breakfast too', plansAt(day(10), 'breakfast', at(23, 30)), true);
   check('anything on a past day is logged', plansAt(day(8), 'dinner', at(0, 5)), false);
+  // Planning the morning after midnight: breakfast starts at hour 0, so
+  // without the night every breakfast added at 01:30 saved as eaten.
+  check('breakfast added at 01:30 is planned', plansAt(day(9), 'breakfast', at(1, 30)), true);
+  check('breakfast added at 04:59 is planned', plansAt(day(9), 'breakfast', at(4, 59)), true);
+  check('breakfast added at 05:00 is logged', plansAt(day(9), 'breakfast', at(5, 0)), false);
+  check('lunch added at 01:30 is planned', plansAt(day(9), 'lunch', at(1, 30)), true);
+  check('"Something else" at 01:30 is still logged', plansAt(day(9), 'other', at(1, 30)), false);
 
   check('7 days ahead is the last plannable day', lastPlannableDay(lunchtime), day(16));
   check('tomorrow is 1 day away', daysFromToday(day(10), lunchtime), 1);

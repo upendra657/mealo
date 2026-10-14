@@ -167,8 +167,12 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['dosas', 'dosai'] },
   { id: 'biscuit', label: 'biscuit', kind: 'count', grams: 12,  hidden: true, group: 'Pieces',
     aliases: ['biscuits', 'cookie', 'cookies'] },
-  { id: 'packet',  label: 'packet',  kind: 'count', grams: 100, group: 'Pieces',
-    aliases: ['packets', 'pack', 'packs', 'sachet', 'sachets', 'pouch'] },
+  // Shown as "pack", his word (15 Oct 2026). The id stays 'packet': it is
+  // what every meal, portion and synced anchor already holds, and renaming
+  // it would leave a phone that has not updated with portions it cannot
+  // resolve. "packet" typed in a meal still finds it through the id.
+  { id: 'packet',  label: 'pack',    kind: 'count', grams: 100, group: 'Pieces',
+    aliases: ['packets', 'packs', 'sachet', 'sachets', 'pouch'] },
   { id: 'bottle',  label: 'bottle',  kind: 'count', grams: 500, group: 'Pieces',
     aliases: ['bottles', 'can', 'cans', 'tetrapack'] },
   { id: 'clove',   label: 'clove',   kind: 'count', grams: 3,   hidden: true, group: 'Pieces',

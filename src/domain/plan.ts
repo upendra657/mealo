@@ -73,20 +73,32 @@ export function stampFor(dayStart: number, now = new Date()): number {
 }
 
 /**
+ * Until this hour the day has begun on the calendar and not yet for anyone
+ * in it. Breakfast's start hour is 0, so a breakfast planned at 01:30 for
+ * the morning ahead saved as eaten at 01:30 (15 Oct 2026). Moving that hour
+ * to 5 would have mended breakfast alone; the night is named instead
+ * because "tomorrow", said to Ask Mealo before five, turns on the same
+ * boundary. Five is his choice: late enough to cover planning after
+ * midnight, early enough that a meal logged at dawn is one being eaten.
+ */
+export const NIGHT_ENDS = 5;
+
+/**
  * Whether a meal saved now for this day and slot is a plan.
  *
  * Today, a slot is ahead when it starts after the current hour — the same
  * start hours the log flow already uses to guess the slot, so lunch is
- * planned until noon and dinner until seven. "Something else" is never
- * planned on today (his decision): it is late nights and meals that fit no
- * slot, so it has no time to be ahead of.
+ * planned until noon and dinner until seven — and every slot is ahead
+ * before NIGHT_ENDS. "Something else" is never planned on today (his
+ * decision): it is late nights and meals that fit no slot, so it has no
+ * time to be ahead of.
  */
 export function plansAt(dayStart: number, slotId: SlotId, now = new Date()): boolean {
   const ahead = daysFromToday(dayStart, now);
   if (ahead > 0) return true;
   if (ahead < 0) return false;
   if (slotId === 'other') return false;
-  return slot(slotId).from > now.getHours();
+  return Math.max(slot(slotId).from, NIGHT_ENDS) > now.getHours();
 }
 
 /**
