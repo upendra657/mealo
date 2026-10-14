@@ -203,8 +203,9 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 **Your deployment host has to send them too.** Without them the app silently falls
-back to an in-memory database that loses everything on reload. The status bar at
-the top of the Dev screen reports which mode is live — watch it after you deploy.
+back to an in-memory database that loses everything on reload. The This phone
+card at the top of the Dev screen says "Not kept on disk" when that happens —
+watch it after you deploy.
 
 ## Deploying
 
@@ -227,9 +228,9 @@ npm run build && npx wrangler deploy
 first. Connecting the repository in the Cloudflare dashboard (**Workers & Pages**)
 instead rebuilds and deploys on every push to `main`.
 
-**Check the status bar on the deployed page before anything else.** If it reads
-`in-memory` rather than `OPFS`, the headers aren't arriving and nothing you log
-will survive a reload.
+**Check Dev → This phone on the deployed page before anything else.** If it says
+"Not kept on disk", the headers aren't arriving and nothing you log will survive
+a reload.
 
 ### Reminders
 
@@ -276,7 +277,7 @@ cannot install web apps.
 
 Storage durability improves once installed: browsers weigh user engagement when
 deciding whether to grant persistent storage, and an installed app scores higher
-than a tab. Back up regularly until the status bar says `persistent`.
+than a tab. Back up regularly while Dev → This phone says the browser may clear it.
 
 ## Project layout
 

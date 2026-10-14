@@ -66,7 +66,7 @@ export const DEFAULT_REMINDERS: ReminderSettings = {
 export type Ring = {
   /** ms since the epoch, on the minute. */
   at: number;
-  kind: 'doses' | 'meals';
+  kind: 'doses' | 'meals' | 'test';
   title: string;
   body: string;
 };
@@ -158,6 +158,20 @@ export function mealRings(days: string[], loggedDays: ReadonlySet<string>, s: Re
 /** The days a schedule covers, today's Meds day first. */
 export function scheduleDays(today: string, n = SCHEDULE_DAYS): string[] {
   return Array.from({ length: n }, (_, i) => addDays(today, i));
+}
+
+/**
+ * The ring "Send a test reminder" adds: at the first whole minute at least
+ * half a minute away, so the relay's once-a-minute run has not already
+ * passed it. It goes through the same list, relay and service worker as any
+ * other ring, which is the point of it.
+ */
+export function testRingTime(now: number): number {
+  return Math.ceil((now + 30_000) / 60_000) * 60_000;
+}
+
+export function testRingAt(at: number): Ring {
+  return { at, kind: 'test', title: 'Mealo', body: 'A test reminder. Reminders work on this phone.' };
 }
 
 /** Soonest first, and no more than the relay will hold for one browser. */

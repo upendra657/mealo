@@ -6,7 +6,9 @@
  * not the test.
  */
 
-import { initDb, query, run as sql, describeDatabase, inspectBackup, makeBackup, restoreBackup, run } from '../../src/db/client';
+import { initDb, query, run as sql, describeDatabase, inspectBackup, keepWeeklyCopy, makeBackup, restoreBackup, run } from '../../src/db/client';
+import { listCopies, snapshotFile } from '../../src/db/snapshots';
+import { lastBackupAt, noteBackup } from '../../src/domain/upkeep';
 import { sameRows } from '../../src/db/backup';
 import { LATEST_VERSION } from '../../src/db/migrations';
 import { ProfileScopeError, ScopeError, scopedDb } from '../../src/db/scope';
@@ -1668,6 +1670,10 @@ async function main() {
     await cyclePlan(await row(), today);
     now = await readDay(today);
     check('ticked, it is eaten', (await row()).plan_state === 'eaten');
+    // Ticked on its own day, it was eaten about now, not when it was planned.
+    const stamped = await query<{ eaten_at: number }>('SELECT eaten_at FROM meals WHERE id = ?', [(await row()).meal_id]);
+    check('and takes the time of the tick', Math.abs(Number(stamped[0].eaten_at) - Date.now()) < 60_000,
+      String(stamped[0].eaten_at));
     near('and counts: +300 Cal today', now.totals[0] - before.totals[0], 300, 0.01);
     check('no longer grey', now.planned[0] === 0);
     facts = await collectFacts();
@@ -1681,6 +1687,17 @@ async function main() {
     check('but stays on the list', (await listedRows(today)).length === 1);
     await cyclePlan(await row(), today);
     check('a third makes it planned again', (await row()).plan_state === 'planned');
+
+    // Ticked a day late, it takes its slot's usual hour on its own day.
+    const yesterday = today - 86_400_000;
+    const lateId = await saveMeal([{ ...thali, label: 'fixture late tick' }],
+      { mealType: 'lunch', eatenAt: yesterday + 12 * 3_600_000, planned: true });
+    const lateRow = (await itemsFor([lateId]))[0];
+    await cyclePlan(lateRow, yesterday);
+    const lateAt = await query<{ eaten_at: number }>('SELECT eaten_at FROM meals WHERE id = ?', [lateId]);
+    check('ticked the next day, lunch is put at 13:00 on its day',
+      Number(lateAt[0].eaten_at) === yesterday + 13 * 3_600_000, new Date(Number(lateAt[0].eaten_at)).toString());
+    await deleteMeal(lateId);
 
     // A meal logged as eaten has no circle; a tap on it changes nothing.
     const [plain] = await draftFromText('1 piece fixture plain');
@@ -1968,6 +1985,28 @@ async function main() {
     const fp0 = await everything();
     check('there is real data to back up', held.counts.meals > 0 && held.counts.meal_items > 0 && held.counts.custom_foods > 0 && held.counts.profiles >= 2,
       JSON.stringify(held.counts));
+
+    // The weekly copy inside the phone (15 Oct 2026): taken when there is
+    // none, not again within the week, then into the other slot, then over
+    // the older of the two. `now` stands in for days passing; the files'
+    // own times say how old the copies are.
+    const t0 = Date.now();
+    const w1 = await keepWeeklyCopy(t0);
+    check('the first weekly copy is taken', w1.taken === true);
+    check('not again the next day', (await keepWeeklyCopy(t0 + 86_400_000)).taken === false);
+    check('a week on, a second, in the other slot', (await keepWeeklyCopy(t0 + 8 * 86_400_000)).taken === true &&
+      (await listCopies()).filter((c) => c.kind === 'weekly').length === 2);
+    check('and after that, two are kept, never three', (await keepWeeklyCopy(t0 + 16 * 86_400_000)).taken === true &&
+      (await listCopies()).filter((c) => c.kind === 'weekly').length === 2);
+    const weeklyCopy = (await listCopies()).find((c) => c.kind === 'weekly')!;
+    const copyInfo = await inspectBackup(await snapshotFile(weeklyCopy));
+    check('a weekly copy opens as a whole, sound database', copyInfo.integrity === 'ok' && sameRows(held, copyInfo) === null,
+      String(sameRows(held, copyInfo)));
+
+    // When the last backup was: none, then the moment one was handed over.
+    check('no backup noted yet', (await lastBackupAt()) === null);
+    await noteBackup(t0);
+    check('a backup is noted', (await lastBackupAt()) === t0);
 
     const { file, info } = await makeBackup();
     check('the backup was opened and passed its check', info.integrity === 'ok' && info.version === LATEST_VERSION, JSON.stringify([info.integrity, info.version]));

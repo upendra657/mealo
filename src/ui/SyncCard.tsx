@@ -25,7 +25,8 @@ import {
 } from '../lib/household';
 import { lastSyncAt } from '../domain/librarysync';
 import { describe, syncLibrary } from '../domain/relay';
-import { useToast } from './bits';
+import { ago, RELAY_KEEP_DAYS, syncTone } from '../domain/upkeep';
+import { Chevron, useToast } from './bits';
 
 type Phase = 'loading' | 'alone' | 'paired';
 
@@ -37,6 +38,8 @@ export function SyncCard() {
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState<number | null>(null);
   const [said, setSaid] = useState<string | null>(null);
+  const [pairing, setPairing] = useState(false);
+  const [now] = useState(() => Date.now());
   const toast = useToast();
 
   const refresh = useCallback(async () => {
@@ -104,26 +107,27 @@ export function SyncCard() {
 
   if (phase === 'loading') return null;
 
+  const tone = syncTone(last, now);
+
+  // "Household", his word for the card on 15 Oct 2026: the two of them, and
+  // the kitchen and medicine cupboard they share. The last sync is always
+  // shown, amber after a week, and with what to do once the relay is close
+  // to forgetting (domain/upkeep.ts), because a phone left out for 30 days
+  // misses what was pruned and nothing else would say so.
   return (
     <section className="card">
-      <h2>Shared library</h2>
-
       {phase === 'alone' ? (
         <>
-          <p className="small muted">
-            One of you creates the household and shows the code; the other
-            enters it. From then on a dish or a medicine either of you adds
-            shows up for both. Only the libraries travel — meals, doses taken,
-            sicknesses and weights stay on the phone they were logged on, and
-            a medicine marked Keep private never leaves its phone.
+          <p className="small muted" style={{ marginTop: 0 }}>
+            One of you creates the household and shows the code; the other enters it. From then on a dish or a medicine either of you adds
+            shows up for both. Only the libraries travel: meals, doses taken, sicknesses and weights stay on the phone they were logged on,
+            and a medicine marked Keep private never leaves its phone.
           </p>
-
-          <button className="primary" onClick={() => void start()} disabled={busy}>
+          <button className="bk-btn bk-btn--go" onClick={() => void start()} disabled={busy}>
             Create a household
           </button>
-
-          <label className="field">
-            <span>or enter the code from the other phone</span>
+          <label className="dv-f" style={{ marginTop: 16 }}>
+            <span>Or enter the code from the other phone</span>
             <input
               value={joining}
               onChange={(e) => setJoining(e.target.value)}
@@ -132,60 +136,77 @@ export function SyncCard() {
               spellCheck={false}
             />
           </label>
-          <button
-            className="primary"
-            onClick={() => void join()}
-            disabled={busy || joining.trim().length < 20}
-          >
+          <button className="bk-btn" onClick={() => void join()} disabled={busy || joining.trim().length < 20}>
             Join
           </button>
         </>
       ) : (
         <>
-          <p className="small muted">
-            Paired. <span className="num">{id?.slice(0, 6)}…</span> ·{' '}
-            {last ? `last synced ${when(last)}` : 'not synced yet'}
-          </p>
-
-          <div className="syncrow">
-            <button className="primary" onClick={() => void run()} disabled={busy}>
-              {busy ? 'Syncing…' : 'Sync now'}
-            </button>
-            <button className="link" onClick={() => void toggleCode()} disabled={busy}>
-              {code ? 'Hide code' : 'Show pairing code'}
-            </button>
+          <div className="dv-kv">
+            <span className="k">Food and medicine library</span>
+            <span className="v" data-tone={tone === 'ok' ? 'ok' : 'warn'}>
+              {last ? `synced ${ago(last, now)}` : 'not synced yet'}
+            </span>
           </div>
-
-          {said && <p className="small">{said}</p>}
-
-          {code && (
-            <>
-              {/* Said plainly, because it is true: this string is the key. */}
-              <p className="small keywarn">
-                This code is the key to your library. Anyone who has it can read
-                every dish and medicine in it. Hand it to the other phone and
-                nowhere else.
-              </p>
-              <p className="paircode" onClick={() => void copy(code, toast)}>
-                {code}
-              </p>
-              <div className="syncrow">
-                <button className="link" onClick={() => void copy(code, toast)}>
-                  Copy
-                </button>
-              </div>
-            </>
+          {(tone === 'amber' || tone === 'urgent') && (
+            <div className="dv-state" data-tone="warn" style={{ marginTop: 4 }}>
+              {tone === 'urgent'
+                ? `The relay keeps changes for ${RELAY_KEEP_DAYS} days. Open Mealo on both phones and sync before then, or older changes will not reach this one.`
+                : 'Open Mealo on the other phone too, so each picks up what the other added.'}
+            </div>
+          )}
+          <button className="bk-btn" onClick={() => void run()} disabled={busy}>
+            {busy ? 'Syncing…' : 'Sync now'}
+          </button>
+          {said && (
+            <p className="small" style={{ margin: '8px 0 0' }}>
+              {said}
+            </p>
           )}
 
-          <div className="syncrow">
-            <button className="link" onClick={() => void unpair()} disabled={busy}>
-              Unpair this phone
-            </button>
-          </div>
-          <p className="small muted">
-            Unpairing stops the exchange. It deletes nothing — every dish and
-            medicine you already have stays where it is.
-          </p>
+          <button className="dv-go" aria-expanded={pairing} onClick={() => setPairing((v) => !v)}>
+            <span className="grow">
+              Pairing
+              <span className="amt">
+                Paired · <span className="num">{id?.slice(0, 6)}…</span> · show the code, or unpair
+              </span>
+            </span>
+            <Chevron dir={pairing ? 'down' : 'right'} />
+          </button>
+          {pairing && (
+            <div className="dv-in">
+              <div className="syncrow">
+                <button className="link" onClick={() => void toggleCode()} disabled={busy}>
+                  {code ? 'Hide code' : 'Show pairing code'}
+                </button>
+              </div>
+              {code && (
+                <>
+                  {/* Said plainly, because it is true: this string is the key. */}
+                  <p className="small keywarn">
+                    This code is the key to your library. Anyone who has it can read every dish and medicine in it. Hand it to the other
+                    phone and nowhere else.
+                  </p>
+                  <p className="paircode" onClick={() => void copy(code, toast)}>
+                    {code}
+                  </p>
+                  <div className="syncrow">
+                    <button className="link" onClick={() => void copy(code, toast)}>
+                      Copy
+                    </button>
+                  </div>
+                </>
+              )}
+              <div className="syncrow">
+                <button className="link" onClick={() => void unpair()} disabled={busy}>
+                  Unpair this phone
+                </button>
+              </div>
+              <p className="small muted">
+                Unpairing stops the exchange. It deletes nothing: every dish and medicine you already have stays where it is.
+              </p>
+            </div>
+          )}
         </>
       )}
     </section>
@@ -199,13 +220,4 @@ async function copy(code: string, toast: (m: string) => void) {
   } catch {
     toast('Copy failed — select it by hand.');
   }
-}
-
-function when(ms: number): string {
-  const mins = Math.round((Date.now() - ms) / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} h ago`;
-  return new Date(ms).toLocaleDateString();
 }

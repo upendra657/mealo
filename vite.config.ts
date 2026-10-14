@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
  * SQLite's OPFS VFS needs the page to be cross-origin isolated, which means
  * these two headers. They apply to `vite dev` and `vite preview`; when you
  * deploy, the host has to send them too or the app silently falls back to an
- * in-memory database. The status bar reports which mode is live — watch it.
+ * in-memory database. Dev's This phone card says so when it happens — watch it.
  *
  * Side effect worth knowing: with COEP require-corp, cross-origin subresources
  * need CORP/CORS headers of their own. That rules out casually dropping in a

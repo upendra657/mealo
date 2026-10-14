@@ -27,8 +27,8 @@ import {
   type Food,
 } from './foods';
 import { toMeasure } from './measures';
-import { canTick, nextPlanState, type PlanState } from './plan';
-import { guessSlot, type SlotId } from './slots';
+import { canTick, nextPlanState, tickStamp, type PlanState } from './plan';
+import { guessSlot, normaliseSlot, type SlotId } from './slots';
 import {
   resolveFor,
   upsertPortion,
@@ -397,13 +397,25 @@ export async function updateMealItem(
  * circle and is left alone.
  */
 export async function cyclePlan(
-  item: Pick<MealItem, 'id' | 'plan_state'>,
+  item: Pick<MealItem, 'id' | 'plan_state' | 'meal_id'>,
   dayStart: number,
+  now = new Date(),
 ): Promise<PlanState | null> {
-  if (!canTick(dayStart)) throw new Error('A planned meal can be ticked on its day, not before');
+  if (!canTick(dayStart, now)) throw new Error('A planned meal can be ticked on its day, not before');
   const next = nextPlanState(item.plan_state);
   if (next === null) return item.plan_state;
   await db.update('meal_items', item.id, { plan_state: next });
+  // Eaten now carries when it was eaten (tickStamp). On the meal, which is
+  // where the time lives: the last item ticked sets it. Skipped or set back
+  // to a plan leaves it, since neither counts toward anything.
+  if (next === 'eaten') {
+    const meal = await db.query<{ meal_type: string | null }>(
+      'SELECT meal_type FROM meals WHERE id = ? AND profile_id = ?',
+      [item.meal_id, activeProfile()],
+    );
+    const at = meal[0] ? tickStamp(dayStart, normaliseSlot(meal[0].meal_type), now) : null;
+    if (at !== null) await db.update('meals', item.meal_id, { eaten_at: at });
+  }
   return next;
 }
 

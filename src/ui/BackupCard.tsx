@@ -15,14 +15,25 @@
  *     back if anything goes wrong (db/worker.ts).
  *
  * The rules a file must pass are in db/backup.ts.
+ *
+ * Since 15 Oct 2026 this is the "This phone" card at the top of Dev: when
+ * the last backup was, what is stored and which build is running (what the
+ * status lines above the old screen said, in words), and the copies the app
+ * keeps inside the phone by itself, weekly and before each update.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { describe, refusal, sizeLabel, type BackupInfo } from '../db/backup';
-import { describeDatabase, inspectBackup, makeBackup, restoreBackup, saveFile } from '../db/client';
+import { describeDatabase, initDb, inspectBackup, restoreBackup, saveFile, type DbInfo } from '../db/client';
 import { LATEST_VERSION } from '../db/migrations';
+import { listCopies, snapshotFile, type Snapshot } from '../db/snapshots';
+import { localDayKey } from '../domain/day';
+import { ago, BACKUP_NUDGE_DAYS, daysSince, lastBackupAt } from '../domain/upkeep';
+import { backUpEverything, type Made } from './backupfile';
+import { checkPersisted, formatBytes, requestPersist, type PersistState } from '../lib/persist';
 
-type Made = { name: string; info: BackupInfo; how: 'shared' | 'downloaded' };
+declare const __BUILD_STAMP__: string;
+
 type Chosen = { name: string; file: BackupInfo; now: BackupInfo; refused: string | null };
 
 /**
@@ -31,21 +42,14 @@ type Chosen = { name: string; file: BackupInfo; now: BackupInfo; refused: string
  * Screen; a plain download there can open the file in a viewer and save
  * nothing. Everywhere else it is an ordinary download.
  */
-async function hand(file: File): Promise<'shared' | 'downloaded' | 'cancelled'> {
-  const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-  if (phone && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: file.name });
-      return 'shared';
-    } catch (e) {
-      // Closing the sheet is not a failure, and must not be reported as a
-      // backup that was saved.
-      if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled';
-    }
-  }
-  saveFile(file, file.name);
-  return 'downloaded';
+/** Named for what it holds and the local day, so a file in Downloads says which it is unopened. */
+async function saveCopy(c: Snapshot): Promise<void> {
+  const file = await snapshotFile(c);
+  const day = localDayKey(c.takenAt);
+  saveFile(file, c.kind === 'weekly' ? `mealo-weekly-${day}.sqlite3` : `mealo-before-v${c.version + 1}-${day}.sqlite3`);
 }
+
+const shortDate = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
 function Counts({ info }: { info: BackupInfo }) {
   return (
@@ -63,7 +67,30 @@ export function BackupCard() {
   const [chosen, setChosen] = useState<Chosen | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [db, setDb] = useState<DbInfo | null>(null);
+  const [storage, setStorage] = useState<PersistState | null>(null);
+  const [last, setLast] = useState<number | null>(null);
+  const [copies, setCopies] = useState<Snapshot[]>([]);
+  const [showCopies, setShowCopies] = useState(false);
+  const [now] = useState(() => Date.now());
   const picker = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    void initDb().then((d) => live && setDb(d));
+    // Asking on every visit is fine: a browser that granted it answers at
+    // once, and one that refused does not ask the person again.
+    void requestPersist()
+      .catch(() => checkPersisted())
+      .then((p) => live && setStorage(p));
+    void lastBackupAt().then((t) => live && setLast(t));
+    void listCopies()
+      .then((c) => live && setCopies(c))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const say = (e: unknown) => setProblem(e instanceof Error ? e.message : String(e));
 
@@ -72,10 +99,12 @@ export function BackupCard() {
     setProblem(null);
     setMade(null);
     try {
-      const { file, info } = await makeBackup();
-      const how = await hand(file);
-      if (how === 'cancelled') setProblem('The backup was made but not saved: the share sheet was closed. Press Back up everything again and choose Save to Files.');
-      else setMade({ name: file.name, info, how });
+      const got = await backUpEverything();
+      if (got === 'cancelled') setProblem('The backup was made but not saved: the share sheet was closed. Press Back up everything again and choose Save to Files.');
+      else {
+        setMade(got);
+        setLast(Date.now());
+      }
     } catch (e) {
       say(e);
     } finally {
@@ -115,13 +144,44 @@ export function BackupCard() {
     }
   };
 
+  const stale = last === null || daysSince(last, now) >= BACKUP_NUDGE_DAYS;
+
   return (
     <section className="card bk">
-      <h2>Your data</h2>
-      <p className="muted small">
-        Everything you log lives on this phone and nowhere else. A backup is one file holding all of it: meals, your food table, medicines and
-        doses, weight, symptoms, the chat, every profile.
-      </p>
+      {db && db.mode !== 'opfs' && (
+        <div className="dv-state" data-tone="warn" style={{ marginTop: 0, marginBottom: 12 }}>
+          <b>Not kept on disk.</b> This browser is holding Mealo in memory, and everything is lost on reload. The page needs its isolation
+          headers (COOP and COEP).
+        </div>
+      )}
+      {db?.snapshot.status === 'failed' && (
+        <div className="dv-state" data-tone="warn" style={{ marginTop: 0, marginBottom: 12 }}>
+          <b>No copy was kept before this update.</b> {db.snapshot.error}
+        </div>
+      )}
+      <div className="dv-kv">
+        <span className="k">Last backup</span>
+        <span className="v" data-tone={stale ? 'warn' : undefined}>
+          {last === null ? 'none from this phone yet' : ago(last, now)}
+        </span>
+      </div>
+      <div className="dv-kv">
+        <span className="k">Saved</span>
+        <span className="v">
+          {storage?.usage !== undefined ? `${formatBytes(storage.usage)}, ` : ''}on this phone only
+          {storage && !storage.persisted && (
+            <span className="small" style={{ display: 'block', color: 'var(--warn)' }}>
+              the browser may clear it if space runs low
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="dv-kv">
+        <span className="k">Version</span>
+        <span className="v">
+          {db ? `v${db.version} · ` : ''}built {__BUILD_STAMP__}
+        </span>
+      </div>
 
       <button className="bk-btn bk-btn--go" disabled={busy !== null} onClick={() => void backUp()}>
         {busy === 'backup' ? 'Making the backup…' : 'Back up everything'}
@@ -141,11 +201,6 @@ export function BackupCard() {
         </div>
       )}
 
-      <h3 className="bk-h">Restore</h3>
-      <p className="muted small">
-        Puts a backup in place of what is on this phone. You are shown what the file holds first, and a copy of what is here now is kept
-        before anything is replaced.
-      </p>
       <input
         ref={picker}
         type="file"
@@ -153,9 +208,42 @@ export function BackupCard() {
         aria-label="Choose a backup file"
         onChange={(e) => void choose(e.target.files?.[0])}
       />
-      <button className="bk-btn" disabled={busy !== null || done} onClick={() => picker.current?.click()}>
-        {busy === 'reading' ? 'Reading the file…' : 'Restore from a backup'}
-      </button>
+      <div className="dv-two">
+        <button className="bk-btn" disabled={busy !== null || done} onClick={() => picker.current?.click()}>
+          {busy === 'reading' ? 'Reading…' : 'Restore a backup'}
+        </button>
+        <button className="bk-btn" aria-expanded={showCopies} onClick={() => setShowCopies((v) => !v)}>
+          Copies kept · {copies.length}
+        </button>
+      </div>
+      <p className="muted small" style={{ margin: '10px 0 0' }}>
+        One file with everything: meals, your food table, medicines and doses, weight, symptoms, the chat, every profile. Save it to Files or
+        iCloud Drive; it does not leave the phone any other way. Restoring shows what a file holds first, and keeps a copy of what is here
+        before anything is replaced.
+      </p>
+
+      {showCopies && (
+        <div className="bk-box">
+          {copies.length === 0 && <p>None yet. The first weekly copy is taken the next time Mealo starts.</p>}
+          {copies.map((c) => (
+            <div className="dv-copy" key={c.name}>
+              <span className="grow">
+                {c.kind === 'weekly' ? 'Weekly copy' : `Before the v${c.version + 1} update`}
+                <span className="amt">
+                  {shortDate(c.takenAt)} · {formatBytes(c.bytes)}
+                </span>
+              </span>
+              <button className="link" onClick={() => void saveCopy(c)}>
+                Save
+              </button>
+            </div>
+          ))}
+          <p className="small muted" style={{ marginTop: 8 }}>
+            Kept inside the app by itself: one a week, two weeks back, and one before each update changes how the data is laid out. They
+            protect against a fault in the app, not against losing the phone. To put one back, save it, then Restore a backup.
+          </p>
+        </div>
+      )}
 
       {chosen && !done && (
         <div className="bk-box" data-tone={chosen.refused ? 'bad' : 'warn'}>

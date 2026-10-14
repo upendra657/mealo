@@ -132,7 +132,10 @@ import {
   lastPlannableDay,
   nextPlanState,
   plansAt,
+  tickStamp,
+  USUAL_HOUR,
 } from '../src/domain/plan';
+import { guessSlot } from '../src/domain/slots';
 import { createHash } from 'node:crypto';
 import { LATEST_VERSION, MIGRATIONS, type Migration } from '../src/db/migrations';
 
@@ -1879,6 +1882,14 @@ section('Meals planned ahead: when a meal is a plan');
   check('lunch added at 01:30 is planned', plansAt(day(9), 'lunch', at(1, 30)), true);
   check('"Something else" at 01:30 is still logged', plansAt(day(9), 'other', at(1, 30)), false);
 
+  // When a ticked plan was eaten (his rule, 15 Oct 2026).
+  check('ticked on its day: now', tickStamp(day(9), 'dinner', at(20, 40)), at(20, 40).getTime());
+  check('ticked a day late: its slot\'s usual hour', tickStamp(day(8), 'dinner', at(9, 15)), new Date(2026, 9, 8, 20).getTime());
+  check('breakfast\'s usual hour is 8', tickStamp(day(8), 'breakfast', at(9, 15)), new Date(2026, 9, 8, 8).getTime());
+  check('"Something else" has none, and keeps its time', tickStamp(day(8), 'other', at(9, 15)), null);
+  check('nothing for a day not yet come', tickStamp(day(10), 'lunch', at(9, 15)), null);
+  check('every usual hour sits in the window the clock guesses for its slot',
+    Object.entries(USUAL_HOUR).every(([id, h]) => guessSlot(new Date(2026, 9, 9, h!)) === id), true);
   check('7 days ahead is the last plannable day', lastPlannableDay(lunchtime), day(16));
   check('tomorrow is 1 day away', daysFromToday(day(10), lunchtime), 1);
   check('yesterday is -1', daysFromToday(day(8), lunchtime), -1);
@@ -2455,6 +2466,8 @@ import { stampFor } from '../src/domain/plan';
 }
 
 // ------------------------------------------------------------ reminders
+import { ago, backupDue, BACKUP_NUDGE_DAYS, RELAY_KEEP_DAYS, SYNC_AMBER_DAYS, SYNC_URGENT_DAYS, syncTone } from '../src/domain/upkeep';
+import { testRingAt, testRingTime } from '../src/domain/reminders';
 import { clockOn, clockOnCalendar, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -2540,6 +2553,29 @@ import { runInNewContext } from 'node:vm';
   const src = readFileSync('public/push-sw.js', 'utf8');
   check('the worker reads the key the app writes', [/NOTE_KEY = 'reminders\.note'/.test(src), /NOTE_KEY = 'reminders\.note'/.test(readFileSync('src/domain/remindersync.ts', 'utf8'))], [true, true]);
   check('every push ends in showNotification, whatever happened before it', /if \(rings\.length === 0\) rings = \[FALLBACK\];\s+await Promise\.all\(\s+rings\.map\(\(r\) =>\s+self\.registration\.showNotification/.test(src), true);
+}
+
+section('Keeping the record safe: backup and sync warnings, the test ring');
+{
+  const DAY = 86_400_000;
+  const now = new Date(2026, 9, 15, 9).getTime();
+  // His numbers, 15 Oct 2026: a backup nudge after 7 days, sync amber after 7.
+  check('the thresholds', [BACKUP_NUDGE_DAYS, SYNC_AMBER_DAYS, SYNC_URGENT_DAYS, RELAY_KEEP_DAYS], [7, 7, 25, 30]);
+  check('the relay really keeps 30 days', /const KEEP_DAYS = 30;/.test(readFileSync('worker/index.ts', 'utf8')), true);
+  check('no backup nudge on a phone with nothing on it', backupDue(null, now, false), false);
+  check('a phone with records and no backup is asked', backupDue(null, now, true), true);
+  check('six days is fine, seven is asked', [backupDue(now - 6 * DAY, now, true), backupDue(now - 7 * DAY, now, true)], [false, true]);
+  check('sync: never, fresh, a week, nearly forgotten',
+    [syncTone(null, now), syncTone(now - 6 * DAY, now), syncTone(now - 7 * DAY, now), syncTone(now - 25 * DAY, now)], ['never', 'ok', 'amber', 'urgent']);
+  check('how long ago, in words',
+    [ago(now - 20_000, now), ago(now - 4 * 60_000, now), ago(now - 3 * 3_600_000, now), ago(now - DAY - 3_600_000, now), ago(now - 12 * DAY, now)],
+    ['just now', '4 min ago', '3 h ago', 'yesterday', '12 days ago']);
+  // The test ring lands on a whole minute at least half a minute away, so
+  // the relay's once-a-minute run has not already gone past it.
+  const at = (h: number, m: number, sec: number) => new Date(2026, 9, 15, h, m, sec).getTime();
+  check('asked at 03:41:10, rings at 03:42', testRingTime(at(3, 41, 10)), at(3, 42, 0));
+  check('asked at 03:41:40, rings at 03:43', testRingTime(at(3, 41, 40)), at(3, 43, 0));
+  check('a test ring says so, with no medicine and no amount', [testRingAt(0).kind, /test/i.test(testRingAt(0).body), /\d/.test(testRingAt(0).body)], ['test', true, false]);
 }
 
 // ------------------------------------------------------------------ done

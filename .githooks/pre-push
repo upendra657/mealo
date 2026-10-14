@@ -1,0 +1,5 @@
+#!/bin/sh
+# Every push to main is a release: nothing goes up that has not passed
+# scripts/check.mjs, against exactly what is being pushed. Turned on for a
+# clone with `git config core.hooksPath .githooks` (see CLAUDE.md).
+exec node scripts/check.mjs --push

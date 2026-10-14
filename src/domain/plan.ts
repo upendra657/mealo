@@ -102,6 +102,39 @@ export function plansAt(dayStart: number, slotId: SlotId, now = new Date()): boo
 }
 
 /**
+ * When each slot is usually eaten, for a plan ticked after its day. Inside
+ * the window `guessSlot` gives each slot, so the hour reads as that meal.
+ * "Something else" has none: it is the slot for what fits no time.
+ */
+export const USUAL_HOUR: Partial<Record<SlotId, number>> = {
+  breakfast: 8,
+  msnack: 11,
+  lunch: 13,
+  esnack: 17,
+  dinner: 20,
+};
+
+/**
+ * When a plan ticked eaten was eaten, as best the app can say.
+ *
+ * A plan keeps the moment it was made (01:30 for every slot of a day
+ * planned after midnight) or noon for a later day, and the lookup of what
+ * was eaten before a symptom reads that time. His rule, 15 Oct 2026: ticked
+ * on its own day, it was eaten about now; ticked on a later day, at its
+ * slot's usual hour. Null leaves the time as it is.
+ */
+export function tickStamp(dayStart: number, slotId: SlotId, now = new Date()): number | null {
+  const n = daysFromToday(dayStart, now);
+  if (n > 0) return null;
+  if (n === 0) return now.getTime();
+  const h = USUAL_HOUR[slotId];
+  if (h === undefined) return null;
+  const d = new Date(dayStart);
+  d.setHours(h, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
  * What a tap does, in the order the Meds circle goes: a plan becomes eaten,
  * eaten becomes skipped, skipped goes back to a plan. A meal logged as eaten
  * (NULL) has no circle, so it has no next state.

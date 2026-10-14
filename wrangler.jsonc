@@ -11,8 +11,8 @@
 	// file from the assets directory, and Vite copies public/_headers to dist/.
 	// That matters more than which product serves the files — without those two
 	// headers SQLite silently falls back to an in-memory database and nothing
-	// logged on a phone survives a reload. Check the app's status bar after
-	// deploying; it reports which mode is live.
+	// logged on a phone survives a reload. Check Dev's This phone card after
+	// deploying; it says "Not kept on disk" when the headers are missing.
 	"name": "mealo",
 	"compatibility_date": "2026-09-01",
 	// The sync relay lives in the app's own Worker: same origin, so no CORS

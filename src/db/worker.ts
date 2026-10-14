@@ -34,6 +34,15 @@ const CANDIDATE = '/mealo.restore-candidate.sqlite3';
 const CHECK = '/mealo.backup-check.sqlite3';
 /** What was on the phone before the last restore. Kept until the next one. */
 const BEFORE = '/mealo.before-restore.sqlite3';
+/**
+ * The weekly copy kept inside the phone, in two slots. When the newer is a
+ * week old the older is written over, so there is always a copy from this
+ * week and one from the week before. Asked for on 15 Oct 2026 ("Inside the
+ * phone works for now"). It guards against a fault in the app, not against
+ * losing the phone or clearing its data: it lives where the database does.
+ */
+const WEEKLY = ['/mealo.weekly-a.sqlite3', '/mealo.weekly-b.sqlite3'] as const;
+const WEEK_MS = 7 * 86_400_000;
 
 type Sqlite3Init = (config?: Record<string, unknown>) => Promise<unknown>;
 
@@ -55,7 +64,8 @@ type Req =
   | { id: number; type: 'export' }
   | { id: number; type: 'describe' }
   | { id: number; type: 'inspect'; bytes: Uint8Array; purpose: 'restore' | 'check' }
-  | { id: number; type: 'restore' };
+  | { id: number; type: 'restore' }
+  | { id: number; type: 'weekly'; now: number };
 
 type Ok = { id: number; ok: true; result: unknown };
 type Err = { id: number; ok: false; error: string };
@@ -160,7 +170,7 @@ async function migrate(): Promise<void> {
  * A failure here does not stop the update. Refusing to migrate would leave
  * the new build unable to open the data at all, and the likeliest cause —
  * storage full — would stop the database growing anyway. It is reported
- * instead, in the status bar.
+ * instead, at the top of Dev's This phone card.
  */
 async function takeSnapshot(from: number): Promise<SnapshotOutcome> {
   if (!db) throw new Error('database not open');
@@ -403,6 +413,34 @@ async function restore(): Promise<{ restored: BackupInfo; before: BackupInfo }> 
   }
 }
 
+/**
+ * Take this week's copy if the newest is a week old or there is none. The
+ * empty slot is filled first, then the older of the two. `now` is passed in
+ * so the test can stand a week later; the files' own times say how old the
+ * copies are.
+ */
+async function weekly(now: number): Promise<{ taken: boolean; at: number | null }> {
+  if (!db || mode !== 'opfs') return { taken: false, at: null };
+  const root = await navigator.storage.getDirectory();
+  const ages = await Promise.all(
+    WEEKLY.map(async (name) => {
+      try {
+        return (await (await root.getFileHandle(name.slice(1))).getFile()).lastModified;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const newest = Math.max(0, ...ages.map((a) => a ?? 0));
+  if (newest > 0 && now - newest < WEEK_MS) return { taken: false, at: newest };
+  const slot = ages[0] === null ? 0 : ages[1] === null ? 1 : ages[0] <= ages[1] ? 0 : 1;
+  // VACUUM INTO will not write over a file, and the old copy in this slot is
+  // the one this replaces.
+  await removeFile(WEEKLY[slot]);
+  db.exec({ sql: 'VACUUM INTO ?', bind: [WEEKLY[slot]] });
+  return { taken: true, at: now };
+}
+
 self.onmessage = async (ev: MessageEvent<Req>) => {
   const req = ev.data;
   const reply = (msg: Ok | Err) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
@@ -429,6 +467,9 @@ self.onmessage = async (ev: MessageEvent<Req>) => {
         break;
       case 'restore':
         reply({ id: req.id, ok: true, result: await restore() });
+        break;
+      case 'weekly':
+        reply({ id: req.id, ok: true, result: await weekly(req.now) });
         break;
     }
   } catch (e) {

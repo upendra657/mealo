@@ -39,6 +39,8 @@ import {
   mealRings,
   readSettings,
   scheduleDays,
+  testRingAt,
+  testRingTime,
   type ReminderSettings,
   type Ring,
 } from './reminders';
@@ -46,6 +48,32 @@ import {
 const SETTINGS_KEY = 'reminders.settings';
 /** The same key public/push-sw.js reads. */
 const NOTE_KEY = 'reminders.note';
+/** What happened the last time the list was handed to the relay. */
+const STATE_KEY = 'reminders.state';
+/** A test ring asked for and not yet due, kept so a rebuild before it rings keeps it. */
+const TEST_KEY = 'reminders.test';
+
+/**
+ * The last hand-over, for the card to say. Before 15 Oct 2026 a refused list
+ * went to the console and the card still read "on"; this is what lets it say
+ * "Working, next at 07:00" or "the relay did not take it, at 07:12".
+ */
+export type RelayState = {
+  /** When the list was sent. */
+  at: number;
+  ok: boolean;
+  /** The relay's HTTP status; 0 when it could not be reached at all. */
+  status: number;
+  /** Rings in the list sent. */
+  count: number;
+  /** The first ring in it, and the last. */
+  next: { at: number; title: string } | null;
+  until: number | null;
+};
+
+export async function loadRelayState(): Promise<RelayState | null> {
+  return (await kvGet<RelayState>(STATE_KEY)) ?? null;
+}
 
 export async function loadReminders(): Promise<ReminderSettings> {
   return readSettings(await kvGet(SETTINGS_KEY));
@@ -185,9 +213,11 @@ export async function buildRings(s: ReminderSettings, now = new Date()): Promise
     const today = await mealsOn(startOfToday(now));
     if ((await itemsFor(today.map((m) => m.id))).some((i) => counts(i.plan_state))) logged.add(calendarDay(now));
   }
+  const test = await kvGet<number>(TEST_KEY);
   return inOrder([
     ...doseRings(days, s, now.getTime()),
     ...mealRings(scheduleDays(calendarDay(now)), logged, s, now.getTime()),
+    ...(test && test > now.getTime() ? [testRingAt(test)] : []),
   ]);
 }
 
@@ -212,12 +242,40 @@ export async function refreshReminders(now = new Date()): Promise<number | null>
 
   const rings = await buildRings(s, now);
   await kvSet(NOTE_KEY, rings);
-  const res = await fetch('/push/schedule', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ endpoint: sub.endpoint, times: rings.map((r) => r.at) }),
+  let status = 0;
+  try {
+    const res = await fetch('/push/schedule', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: sub.endpoint, times: rings.map((r) => r.at) }),
+    });
+    status = res.status;
+  } catch {
+    // Offline. Recorded as status 0 and tried again on the next change or
+    // the next time the app comes to the front.
+  }
+  const ok = status >= 200 && status < 300;
+  await kvSet<RelayState>(STATE_KEY, {
+    at: now.getTime(),
+    ok,
+    status,
+    count: rings.length,
+    next: rings[0] ? { at: rings[0].at, title: rings[0].title } : null,
+    until: rings.length ? rings[rings.length - 1].at : null,
   });
-  return res.ok ? rings.length : null;
+  return ok ? rings.length : null;
+}
+
+/**
+ * "Send a test reminder": one ring a minute or so from now, through the same
+ * list, relay and service worker as every other. Returns when it should ring,
+ * or null when reminders are not on for the person selected.
+ */
+export async function sendTest(now = new Date()): Promise<number | null> {
+  const at = testRingTime(now.getTime());
+  await kvSet(TEST_KEY, at);
+  const sent = await refreshReminders(now);
+  return sent === null ? null : at;
 }
 
 /**

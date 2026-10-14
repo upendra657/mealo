@@ -26,6 +26,7 @@ left open — from the change list Upendra approves.
 ## Commands
 
 ```bash
+npm run check          # everything below, plus types, lint and build, twice at another hour (~30 s)
 npm run dev            # vite, COOP/COEP headers already set
 npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
@@ -59,11 +60,21 @@ at Chrome: `CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google
 made to hang again. It now stops after two minutes and prints what wrangler
 said, rather than sitting silent.
 
+**Every push runs `npm run check` first** (`.githooks/pre-push`, on since
+15 Oct 2026; a fresh clone needs `git config core.hooksPath .githooks`). It
+refuses a push when the tree has uncommitted changes to tracked files, when
+the commit pushed is not the one checked out, when a file the build could
+reach is untracked, when a CSV or database is in the pushed commits, or when
+a commit has another author email; then it runs types, lint, build and all
+five suites, the three main ones a second time with the clock moved to the
+night (or the evening, if it already is night). A suite that reports no
+count does not pass. Never `--no-verify`: if the check is wrong, fix it.
+
 **A push to `main` deploys.** Cloudflare Workers Builds builds from GitHub on
 every push. Confirmed 7 Oct 2026: the live bundle switched to a GitHub build
 about 90 seconds after the push, identical to the local one apart from its
-build stamp. So what is live is what is on `main`, and the status bar's build
-stamp is Cloudflare's, not the Mac's. A push is a release; nothing goes to
+build stamp. So what is live is what is on `main`, and the build stamp in Dev →
+This phone is Cloudflare's, not the Mac's. A push is a release; nothing goes to
 `main` untested.
 
 `wrangler deploy` is only for putting something live without pushing — and the

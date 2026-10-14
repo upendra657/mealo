@@ -14,6 +14,7 @@ import { readDay, type DayView } from '../domain/day';
 import { loadTargets, standing, type Targets } from '../domain/targets';
 import { weightsSince, byDay } from '../domain/weight';
 import { Banner } from './Banner';
+import { BackupNudge } from './BackupNudge';
 import { Bubble, Code, Cutlery, Flame, Pill, Scale } from './bits';
 import type { Screen } from '../App';
 
@@ -185,6 +186,7 @@ export function Home({
       </div>
 
       <Banner cards={cards} />
+      <BackupNudge />
 
       <div className="foot">
         Not a medical device. Informational only — it does not diagnose, and it

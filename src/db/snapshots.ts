@@ -27,7 +27,9 @@ export type SnapshotOutcome =
   | { status: 'failed'; version: number; error: string };
 
 export type Snapshot = {
-  /** The schema version the copy holds. */
+  /** Taken before an update migrated the database, or the weekly copy. */
+  kind: 'pre-update' | 'weekly';
+  /** The schema version the copy holds; for a weekly copy, 0 (it is whatever was current). */
   version: number;
   name: string;
   bytes: number;
@@ -50,12 +52,32 @@ export async function listSnapshots(): Promise<Snapshot[]> {
   for (let v = LATEST_VERSION - 1; v >= 1; v--) {
     try {
       const file = await (await root.getFileHandle(snapshotName(v))).getFile();
-      found.push({ version: v, name: file.name, bytes: file.size, takenAt: file.lastModified });
+      found.push({ kind: 'pre-update', version: v, name: file.name, bytes: file.size, takenAt: file.lastModified });
     } catch {
       /* no copy from before this version */
     }
   }
   return found;
+}
+
+/** The two weekly slots in db/worker.ts. Names only; the worker writes them. */
+const WEEKLY_NAMES = ['mealo.weekly-a.sqlite3', 'mealo.weekly-b.sqlite3'];
+
+/** Every copy kept inside the phone, newest first: weekly and pre-update. */
+export async function listCopies(): Promise<Snapshot[]> {
+  const found = await listSnapshots();
+  if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory) {
+    const root = await navigator.storage.getDirectory();
+    for (const name of WEEKLY_NAMES) {
+      try {
+        const file = await (await root.getFileHandle(name)).getFile();
+        found.push({ kind: 'weekly', version: 0, name: file.name, bytes: file.size, takenAt: file.lastModified });
+      } catch {
+        /* that slot is empty */
+      }
+    }
+  }
+  return found.sort((a, b) => b.takenAt - a.takenAt);
 }
 
 /** Removes all but the newest KEEP, counting the one just taken at `newest`. */

@@ -2,8 +2,8 @@
 #
 # These two headers are not optional. SQLite's OPFS backend requires the page
 # to be cross-origin isolated; without them the app silently falls back to an
-# in-memory database that loses everything on reload. The status bar at the top
-# of the app reports which mode is live — check it after the first deploy.
+# in-memory database that loses everything on reload. Dev's This phone card
+# says "Not kept on disk" when that happens — check it after the first deploy.
 #
 # GitHub Pages cannot set custom headers at all, which is why it isn't an
 # option for hosting this.

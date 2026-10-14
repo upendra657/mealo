@@ -21,6 +21,7 @@ import {
 import { AvatarMenu } from './ui/AvatarMenu';
 import { initFoodLibrary } from './domain/foods';
 import { syncLibrary } from './domain/relay';
+import { keepWeeklyCopy } from './db/client';
 import { startLists } from './domain/refdata';
 import { startFoods } from './domain/seed';
 import { startReminders } from './domain/remindersync';
@@ -97,7 +98,11 @@ export default function App() {
           .catch((e) => console.warn('[foods] reference table:', e))
           // The demo has no relay, and a stranger's browser is paired with
           // nobody.
-          .then(() => (DEMO ? undefined : syncLibrary().catch(() => {})));
+          .then(() => (DEMO ? undefined : syncLibrary().catch(() => {})))
+          // After the sync, so the first screen is never waiting on it. A
+          // failure costs this week's copy and nothing else; said in the
+          // console because there is no screen to say it on yet.
+          .then(() => (DEMO ? undefined : keepWeeklyCopy().catch((e) => console.warn('[weekly copy]', e))));
 
         // Medicine lists: clear an import the app was closed during, then
         // load the bundled HSA register if this build's copy is new. Neither

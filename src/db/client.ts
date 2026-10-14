@@ -158,6 +158,15 @@ export async function downloadDatabase(): Promise<void> {
 }
 
 /** What this phone holds now, counted the way a backup is. */
+/**
+ * The weekly copy inside the phone (db/worker.ts), taken if this week's is
+ * missing. Called once after start; it is a VACUUM INTO of a few megabytes.
+ */
+export async function keepWeeklyCopy(now = Date.now()): Promise<{ taken: boolean; at: number | null }> {
+  await initDb();
+  return call<{ taken: boolean; at: number | null }>({ type: 'weekly', now });
+}
+
 export async function describeDatabase(): Promise<BackupInfo> {
   await initDb();
   return call<BackupInfo>({ type: 'describe' });

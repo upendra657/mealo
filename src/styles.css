@@ -118,6 +118,16 @@ body {
   height: 100%;
 }
 
+/* No double-tap zoom, and no font inflation when the phone turns sideways.
+   With maximum-scale in index.html, the page stays at the size it was drawn
+   (his request, 15 Oct 2026). The dials' own touch-action still applies:
+   the browser uses whichever is narrower. */
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--ink);
@@ -4245,6 +4255,116 @@ button.am-opt {
 .bk-file {
   display: none;
 }
+
+/* ---------------------------------------------------------------- Dev ---
+   The Dev screen as reorganised on 15 Oct 2026, from the mock-up he
+   approved: sections under one kind of heading (.section-h), the state of
+   each thing said in a line, and every long or rarely used part folded into
+   a row that opens. Before it, card titles were browser-default h2s beside
+   one .section-h, Ask Mealo's three cards sat apart, and the provider's
+   fields were squeezed into a 120 px column. */
+.dv-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+}
+.dv-kv:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.dv-kv .k { color: var(--muted); flex: none; }
+.dv-kv .v { margin-left: auto; text-align: right; }
+.dv-kv .v[data-tone='warn'] { color: var(--warn); }
+.dv-kv .v[data-tone='ok'] { color: var(--ok); }
+.dv-kv .v[data-tone='bad'] { color: var(--bad); }
+.dv-state {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.dv-state[data-tone='ok'] { background: var(--ok-bg); color: #b9e8d6; }
+.dv-state[data-tone='warn'] { background: var(--warn-bg); color: var(--warn); }
+.dv-state b { font-weight: 500; color: var(--ink-text); }
+.dv-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.dv-go {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+  text-align: left;
+}
+.dv-go + .dv-go { margin-top: 0; }
+.dv-go:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.dv-go:last-child { padding-bottom: 0; }
+.dv-go .grow { display: block; }
+.dv-go .amt { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.dv-go .n { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.dv-go .n svg { vertical-align: -3px; }
+.dv-in { padding-top: 6px; }
+.dv-f { display: block; margin-top: 12px; }
+.dv-f:first-child { margin-top: 0; }
+.dv-f > span { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.dv-f input,
+.dv-f select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 15px;
+  outline: none;
+}
+.dv-f input { font-family: var(--mono); font-size: 14px; }
+.dv-f select { appearance: none; }
+.dv-f input:focus,
+.dv-f select:focus { border-color: var(--accent); }
+.dv-tag { display: block; margin-top: 8px; font-size: 12.5px; color: var(--ok); }
+.dv-tag[data-tone='warn'] { color: var(--warn); }
+.dv-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.dv-copy:first-child { border-top: 0; }
+.dv-copy .grow .amt { display: block; font-size: 12.5px; color: var(--muted); }
+
+/* The Home nudge, below the banner: amber, because a phone with no recent
+   backup is one lost phone away from losing everything on it. */
+.nudge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(232, 180, 74, 0.45);
+  border-radius: 12px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 14px;
+  text-align: left;
+}
+.nudge .grow b { display: block; font-weight: 400; font-size: 15px; color: var(--ink-text); }
+.nudge .grow span { display: block; margin-top: 2px; }
+.nudge .go { flex: none; font-weight: 500; }
 .bk-box {
   margin-top: 10px;
   padding: 12px 14px;

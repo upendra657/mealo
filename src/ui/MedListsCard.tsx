@@ -40,7 +40,11 @@ type Draft = {
 
 const NONE = '';
 
-export function MedListsCard() {
+/**
+ * `embedded`: drawn inside the Dev screen's Lists card, under its own row,
+ * so without the heading and the card around it (15 Oct 2026).
+ */
+export function MedListsCard({ embedded = false }: { embedded?: boolean } = {}) {
   /** null until read: "No lists yet" flashed up while the query was in flight. */
   const [sets, setSets] = useState<RefSet[] | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -114,8 +118,8 @@ export function MedListsCard() {
 
   return (
     <>
-      <div className="section-h">Medicine lists</div>
-      <div className="card mlists">
+      {!embedded && <div className="section-h">Medicine lists</div>}
+      <div className={embedded ? 'mlists dv-in' : 'card mlists'}>
         <p className="small muted" style={{ marginTop: 0 }}>
           What Add meds can fill a medicine in from. Lists stay on this phone — never synced, never
           shared. Only a medicine you save from one goes into the household library.
