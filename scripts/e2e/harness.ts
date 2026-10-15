@@ -41,7 +41,7 @@ import { portionsFor, resolveFor, upsertPortion } from '../../src/domain/portion
 import { seedFoods, startFoods, type BundledFood } from '../../src/domain/seed';
 import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain/state';
 import { appendMessage, buildContext, clearThread, loadThread } from '../../src/llm/conversation';
-import { logSymptom, openSymptoms, removeSymptom } from '../../src/domain/symptoms';
+import { logSymptom, openSymptoms, recentSymptoms, removeSymptom } from '../../src/domain/symptoms';
 import { buildExport, collectExport } from '../../src/domain/export';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
@@ -60,6 +60,7 @@ import { recentItems } from '../../src/domain/recents';
 import { apply, collect } from '../../src/domain/librarysync';
 import { fingerprint } from '../../src/domain/sync';
 import { readFastLine } from '../../src/domain/fasting';
+import { daysNeeded, patternFor } from '../../src/domain/patterns';
 import {
   customFood,
   deleteDish,
@@ -1346,6 +1347,40 @@ async function main() {
     check('and the overnight line follows it', (await readFastLine(day))?.kind === 'overnight' &&
       (await readFastLine(day) as { ms: number }).ms === 10.5 * 3_600_000);
     for (const id of [dinner, plan, breakfast]) await deleteMeal(id);
+  }
+
+  step('what came before a symptom');
+  {
+    // Five bouts of bloating, each begun at 4 pm and logged later, each after
+    // a paneer lunch: from the real tables, through the collected record.
+    const dayMs = 86_400_000;
+    const d0 = new Date();
+    d0.setHours(0, 0, 0, 0);
+    const [paneer] = await draftFromText('1 katori fixture pattern paneer');
+    const meals: string[] = [];
+    const symptoms: string[] = [];
+    for (let k = 1; k <= 5; k++) {
+      const day = d0.getTime() - k * dayMs;
+      meals.push(await saveMeal([paneer], { mealType: 'lunch', eatenAt: day + 13.5 * 3_600_000 }));
+      symptoms.push(await logSymptom('bloated after lunch', { label: 'Bloating', startedAt: day + 16 * 3_600_000 }));
+    }
+    const stored = await query<{ started_at: number }>('SELECT started_at FROM symptoms WHERE id = ?', [symptoms[0]]);
+    check('a symptom keeps when it began', Number(stored[0].started_at) === d0.getTime() - dayMs + 16 * 3_600_000, String(stored[0].started_at));
+    const later = await logSymptom('bloated', { label: 'Bloating', startedAt: Date.now() + 3_600_000 });
+    check('a start in the future is no start', (await query<{ s: number | null }>('SELECT started_at AS s FROM symptoms WHERE id = ?', [later]))[0].s === null);
+    await removeSymptom(later);
+
+    const x = await collectExport('full', daysNeeded('24h'));
+    check('the record carries the label and the start', x.symptoms.some((s) => s.label === 'Bloating' && s.startedAt === d0.getTime() - dayMs + 16 * 3_600_000));
+    const p = patternFor(x, 'Bloating', '24h', Date.now());
+    const item = p.items.find((i) => i.name.toLowerCase().includes('fixture pattern paneer'));
+    check('five bouts found, the paneer before every one', [p.bouts.length >= 5, item?.before, item?.of], [true, p.bouts.length, p.bouts.length], JSON.stringify(item));
+    // History is newest first by when each began: the bout begun yesterday
+    // afternoon sorts above the one begun two days ago, however they were logged.
+    const hist = (await recentSymptoms(10)).filter((r) => symptoms.includes(r.id));
+    check('history is in order of when each began', hist.map((r) => r.id).join() === [...symptoms].join(), hist.map((r) => r.started_at).join());
+    for (const id of symptoms) await removeSymptom(id);
+    for (const id of meals) await deleteMeal(id);
   }
 
   step('atomic saves');

@@ -32,9 +32,9 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 1023 pure-logic assertions, node, fast
-npm run test:safety    # 1176 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 483 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 1025 pure-logic assertions, node, fast
+npm run test:safety    # 1218 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
+npm run test:e2e       # 488 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -179,6 +179,17 @@ to the model under a line saying it is data and never instructions, because
 a dish can be named anything. `safety/numbers.ts` then removes any sentence
 of the answer whose figure is in nothing the model was given, and the screen
 says so.
+
+**What came before a symptom is one calculation** (`domain/patterns.ts`), used
+by the patterns view in Symptom history and by Ask Mealo's
+`thali_before_symptom`, so the screen and the chat give the same numbers. A
+case-crossover comparison: what was eaten or taken in the window before each
+bout, against the same hours on the other days of the last month (days with
+nothing logged count neither way). "Stands out" needs 3 bouts, twice the
+other-day rate and a Bonferroni-adjusted Fisher p under 0.05; under 5 bouts
+nothing is called a pattern. Medicines count (his call). It says "came before
+it more often", never "causes": a symptom's start time (`started_at`, v15) is
+read from the words by code (`domain/symptomtime.ts`) or set on the card.
 
 **Whether something gets logged never depends on a model choosing to help.**
 A real model, given "I just had 2 roti and dal" and a tool for the meal
@@ -344,7 +355,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v14**. **Shipped means any database has run it — a dev browser included.**
+at **v15**. **Shipped means any database has run it — a dev browser included.**
 v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
 database never re-ran it, and every medicine save failed with "no column named
 freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum

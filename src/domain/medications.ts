@@ -664,6 +664,25 @@ export async function readMedsDay(day = medDay(), now = new Date()): Promise<Med
  * rows included — so planDay can still match a tick to its dose after an edit
  * that same day swapped the row out from under it.
  */
+/**
+ * Doses ticked taken in a span of time, with when and which medicine: what
+ * the patterns view counts as taken before a symptom (15 Oct 2026, his
+ * call: "it is ingested and affects the body"). The tick's time stands for
+ * the dose's; a tick made late is counted late, the same limit as a meal
+ * logged late.
+ */
+export async function takenBetween(fromMs: number, toMs: number): Promise<{ at: number; medicine: string }[]> {
+  const rows = await db.query<{ at: number; name: string; strength: string | null }>(
+    `SELECT e.taken_at AS at, m.name AS name, m.dose_text AS strength
+       FROM intake_events e JOIN medications m ON m.id = e.medication_id
+      WHERE e.profile_id = ? AND e.deleted_at IS NULL AND e.status = 'taken'
+        AND e.taken_at >= ? AND e.taken_at < ?
+      ORDER BY e.taken_at`,
+    [activeProfile(), fromMs, toMs],
+  );
+  return rows.map((r) => ({ at: r.at, medicine: [r.name, r.strength].filter(Boolean).join(' ') }));
+}
+
 const TICKS = `SELECT e.id, e.dose_id, e.status, e.updated_at, e.taken_at, e.for_day,
          e.medication_id, d.time_of_day, d.meal
     FROM intake_events e LEFT JOIN med_doses d ON d.id = e.dose_id

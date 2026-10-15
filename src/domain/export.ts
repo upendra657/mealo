@@ -41,7 +41,7 @@ import { burnsSince, goalBurn } from './burn';
 import { clock } from './chat';
 import { mealsBetween } from './meals';
 import { describeMeasure, toMeasure } from './measures';
-import { listEpisodes, listStopped, listActive, medicineDetail, readLog } from './medications';
+import { listEpisodes, listStopped, listActive, medicineDetail, readLog, takenBetween } from './medications';
 import { counts, type PlanState } from './plan';
 import { slot } from './slots';
 import { recentSymptoms } from './symptoms';
@@ -115,7 +115,10 @@ export type ExportInput = {
   medicines: ExportMedicine[];
   doseDays: ExportDoseDay[];
   notTaken: { day: string; medicine: string; time: string; state: 'skipped' | 'missed' }[];
-  symptoms: { at: number; text: string; resolvedAt: number | null }[];
+  /** `at` is when it was logged; `startedAt` when it began, if that was given (v15). */
+  symptoms: { at: number; text: string; resolvedAt: number | null; label?: string | null; startedAt?: number | null }[];
+  /** Doses ticked taken, with when: for the patterns view and its lookup. */
+  intakes?: { at: number; medicine: string }[];
   episodes: { name: string; from: string; to: string; recoveredOn: string | null }[];
 };
 
@@ -470,7 +473,7 @@ export async function collectExport(scope: Scope, nDays: number, now = new Date(
   const fromMs = dateOf(days[0]).getTime();
   const toMs = dateOf(addDays(today, 1)).getTime();
 
-  const [targets, gw, gb, mealRows, weightRows, burnRows, log, active, stopped, episodes, symptomRows] = await Promise.all([
+  const [targets, gw, gb, mealRows, weightRows, burnRows, log, active, stopped, episodes, symptomRows, intakes] = await Promise.all([
     loadTargets(),
     goalWeight(),
     goalBurn(),
@@ -482,6 +485,7 @@ export async function collectExport(scope: Scope, nDays: number, now = new Date(
     listStopped(),
     listEpisodes(),
     recentSymptoms(days.length + 1),
+    takenBetween(fromMs, toMs),
   ]);
 
   const meals: ExportMeal[] = mealRows.map(({ meal, items }) => ({
@@ -568,7 +572,8 @@ export async function collectExport(scope: Scope, nDays: number, now = new Date(
     notTaken,
     symptoms: symptomRows
       .filter((s) => inPeriod.has(localDayKey(s.noted_at)))
-      .map((s) => ({ at: s.noted_at, text: s.raw_text, resolvedAt: s.resolved_at })),
+      .map((s) => ({ at: s.noted_at, text: s.raw_text, resolvedAt: s.resolved_at, label: s.label, startedAt: s.started_at })),
+    intakes,
     episodes: episodes
       .filter((e) => e.started_on <= today && e.last_day >= days[0])
       .map((e) => ({ name: e.name, from: e.started_on, to: e.last_day, recoveredOn: e.recovered_on })),

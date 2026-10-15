@@ -221,6 +221,10 @@ const SEEDS: Seed[] = [
   { version: 14, table: 'profiles', rows: [
     { id: 'fx-night', name: 'Night owl', created_at: T, updated_at: T, night_tomorrow: 'begun' },
   ] },
+  { version: 15, table: 'symptoms', rows: [
+    { id: 'fx-sym-3', profile_id: 'primary', noted_at: T, started_at: T - 7_200_000, raw_text: 'bloated after lunch',
+      label: 'Bloating', updated_at: T },
+  ] },
   { version: 10, table: 'intake_events', rows: [
     { id: 'fx-intake-3', profile_id: 'primary', medication_id: 'fx-med-3', taken_at: T,
       status: 'taken', dose_id: 'fx-dose-1', for_day: '2026-10-05', updated_at: T },

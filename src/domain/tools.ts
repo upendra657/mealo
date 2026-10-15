@@ -34,7 +34,8 @@ import { dateLabel, MAX_DAYS, MIN_DAYS, type ExportInput, type Scope } from './e
 import { describeMeasure } from './measures';
 import { counts, DAYS_AHEAD } from './plan';
 import { humanReport, MACROS } from './report';
-import { suggestLabel, wordsForModel } from './symptomlabels';
+import { suggestLabel, SYMPTOM_LABELS, wordsForModel } from './symptomlabels';
+import { daysNeeded, LOOK_DAYS, MIN_BOUTS, patternFor, sharedWords, TAG_WORDS, windowForHours, WINDOWS } from './patterns';
 import type { ToolDef } from '../llm/types';
 
 const DAYS = {
@@ -70,10 +71,9 @@ export const TOOLS: ToolDef[] = [
     'Everything eaten on one day, by meal and dish, with amounts and totals.',
     { days_ago: { type: 'integer', minimum: 0, maximum: MAX_DAYS - 1, description: '0 today, 1 yesterday.' } }, ['days_ago']),
   fn('thali_before_symptom',
-    'What was eaten in the hours before each logged symptom, and how often each dish appears before it versus overall. Shows what turns up together, not a cause.',
+    'Foods eaten and medicines taken before each bout of a symptom in the last month, against the same hours on other days. Shows what came before it more often, not a cause.',
     { symptom: { type: 'string', description: 'A word or two, e.g. "bloating".' },
-      hours: { type: 'integer', minimum: 1, maximum: 72, description: 'Hours before each entry; 24 if unsure.' },
-      days: DAYS }, ['symptom']),
+      hours: { type: 'integer', minimum: 1, maximum: 720, description: 'Hours to look back: 12, 24, 48, 168 or 720; 24 if unsure.' } }, ['symptom']),
   fn('dawa_adherence',
     'Medicine doses over a period: taken, skipped, missed, due, by medicine and time of day; sick periods.',
     { days: DAYS }, ['days']),
@@ -174,51 +174,65 @@ export function thaliDay(x: ExportInput, day: string) {
   };
 }
 
+/** Fewer bouts than this and nothing is called a pattern: patterns.ts, MIN_BOUTS. */
+export const FEW_EPISODES = MIN_BOUTS;
+
+/** The end of the record's last day, or now if that is still to come: the "now" a pattern is worked out at. */
+const recordNow = (x: ExportInput) => {
+  const last = x.days[x.days.length - 1];
+  const [y, m, d] = last.split('-').map(Number);
+  return Math.min(Date.now(), new Date(y, m - 1, d + 1).getTime() - 1);
+};
+
 /**
- * Below this many entries of a symptom, what precedes it is an anecdote.
- * The app's own number: with fewer than five, one dish eaten most days will
- * "precede" every one of them. The tool says so instead of leaving it out,
- * because the person asked and a small sample honestly labelled is still
- * theirs to see.
+ * What came before a symptom, for the model: the same calculation as the
+ * patterns view in Symptom history (patterns.ts), so the chat and the
+ * screen give the same numbers. Replaced on 15 Oct 2026 a version that set
+ * "entries with a dish before them" against "days the dish was eaten", two
+ * different counts, and guessed the label from the words every time.
+ *
+ * No words of the person's leave here: a bout is its day and time and what
+ * came before it. The phone number someone typed into a symptom stays home.
  */
-export const FEW_EPISODES = 5;
-
-export function thaliBeforeSymptom(x: ExportInput, symptom: string, hours: number) {
-  const want = symptom.trim().toLowerCase();
-  const label = suggestLabel(want);
-  const episodes = x.symptoms
-    .filter((s) => want !== '' && (s.text.toLowerCase().includes(want) || (label != null && suggestLabel(s.text) === label)))
-    .sort((a, b) => a.at - b.at);
-  const eatenMeals = x.meals.map((m) => ({ ...m, items: m.items.filter((i) => counts(i.plan_state)) })).filter((m) => m.items.length > 0);
-  const window = hours * 3_600_000;
-
-  const before = episodes.map((e) => {
-    const dishes = [...new Set(eatenMeals.filter((m) => m.at <= e.at && m.at > e.at - window).flatMap((m) => m.items.map((i) => i.name)))];
-    const d = new Date(e.at);
+export function thaliBeforeSymptom(x: ExportInput, symptom: string, hours: number, now = recordNow(x)) {
+  const want = symptom.trim();
+  const label = SYMPTOM_LABELS.find((l) => l.toLowerCase() === want.toLowerCase()) ?? (want ? suggestLabel(want) : null);
+  if (!label) {
+    return { symptom, bouts_found: 0, caution: 'No symptom label matches that word, so nothing was looked up. Ask which symptom they mean.' };
+  }
+  const window = windowForHours(hours);
+  const p = patternFor(x, label, window, now);
+  const when = (t: number) => {
+    const d = new Date(t);
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return { day: dateLabel(day), time: clock(e.at), words: wordsForModel(e.text), dishes_in_the_hours_before: dishes };
-  });
-
-  const loggedDays = new Set(eatenMeals.map((m) => m.day));
-  const daysWith = (dish: string) => new Set(eatenMeals.filter((m) => m.items.some((i) => i.name === dish)).map((m) => m.day)).size;
-  const tally = new Map<string, number>();
-  for (const b of before) for (const dish of b.dishes_in_the_hours_before) tally.set(dish, (tally.get(dish) ?? 0) + 1);
-  const seen = [...tally]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 8)
-    .map(([dish, n]) => ({ dish, before_entries: n, of_entries: before.length, eaten_on_logged_days: daysWith(dish), of_logged_days: loggedDays.size }));
-
+    return { day: dateLabel(day), time: clock(t) };
+  };
   return {
-    symptom,
-    hours_before: hours,
-    entries_found: before.length,
-    entries: before,
-    dishes_seen_before: seen,
+    symptom: label,
+    looked_back: WINDOWS.find((w) => w.id === window)!.label,
+    over: `the last ${LOOK_DAYS} days`,
+    bouts_found: p.bouts.length,
+    bouts: p.bouts.map((b) => ({ ...when(b.began), came_before: b.before.map((e) => ({ [e.kind]: e.name, ...when(e.at) })) })),
+    compared_with: { other_days_with_meals: p.foodDays, other_days_with_doses_due: p.medicineDays },
+    // Counted apart, likeness named (his call): say which share a word,
+    // never add their counts together.
+    names_sharing_a_word: [...sharedWords(p.items.map((i) => i.name))].map((word) => ({
+      word,
+      items: p.items.filter((i) => i.name.toLowerCase().split(/[^a-z\u0900-\u097f]+/).includes(word)).map((i) => i.name),
+    })),
+    items: p.items.slice(0, 10).map((i) => ({
+      [i.kind]: i.name,
+      before_bouts: i.before,
+      of_bouts: i.of,
+      same_hours_on_other_days: i.other,
+      of_other_days: i.ofOther,
+      finding: TAG_WORDS[i.tag],
+    })),
     caution:
-      before.length === 0
-        ? 'No entry of this symptom was found in the period.'
-        : `${before.length < FEW_EPISODES ? `Only ${before.length} ${before.length === 1 ? 'entry' : 'entries'}: too few to show a pattern. ` : ''}` +
-          'This shows what was eaten before the symptom, and how often those dishes are eaten anyway. It can show that things turn up together. It cannot show that one causes the other. Say "these show up together", never "this causes it".',
+      p.bouts.length === 0
+        ? 'No bout of this symptom was logged in the last month.'
+        : `${p.few ? `Only ${p.bouts.length} ${p.bouts.length === 1 ? 'bout' : 'bouts'}: too few to show a pattern. Report what came before each, nothing more. ` : ''}` +
+          'Each item is compared with the same hours on other days of the month. "Stands out" means it came before this symptom more often than on other days, too often to be chance alone; that is all it means. It cannot show that a food or a medicine causes the symptom. Say "came before it more often", never "causes" or "triggers". Each dish is counted on its own: you may point out names that share a word (names_sharing_a_word), never add their counts together. Whether to stop or change any medicine, or to cut out a food, is for their doctor.',
   };
 }
 
@@ -286,8 +300,8 @@ export async function runTool(name: string, args: Record<string, unknown>, read:
     }
     case 'thali_before_symptom': {
       if (typeof args.symptom !== 'string' || !args.symptom.trim()) return { result: { error: 'Say which symptom, in a word or two.' } };
-      const hours = Math.min(72, Math.max(1, Math.round(Number(args.hours) || 24)));
-      return { result: thaliBeforeSymptom(await read(daysArg(args.days, 30)), args.symptom, hours) };
+      const hours = Math.min(720, Math.max(1, Math.round(Number(args.hours) || 24)));
+      return { result: thaliBeforeSymptom(await read(daysNeeded(windowForHours(hours))), args.symptom, hours) };
     }
     case 'dawa_adherence':
       return { result: dawaAdherence(await read(daysArg(args.days))) };

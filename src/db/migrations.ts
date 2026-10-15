@@ -766,4 +766,18 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 15,
+  name: 'when a symptom started',
+  sql: `
+    -- When it began, beside when it was written down. "Bloated since lunch",
+    -- logged at 11 pm, began after lunch, and the patterns view (what was
+    -- eaten in the hours before a symptom) must not count the dinner that
+    -- came after it (Upendra, 15 Oct 2026). Read from the words by the app or
+    -- set on the card; NULL means it began when it was logged, which is
+    -- every row that exists today, so nothing is rewritten.
+    ALTER TABLE symptoms ADD COLUMN started_at INTEGER;
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

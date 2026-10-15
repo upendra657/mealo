@@ -104,9 +104,9 @@ All of this is tested, and the tests are part of the claim:
 
 | Suite | Checks | What it covers |
 |---|---|---|
-| `npm run test:safety` | 1,176 | the gates, the tools, the numbers and claims checks, the lookup loop, AI insights |
-| `npm run test:portions` | 1023 | portions, schedules, reports, planning, reminders: all the pure logic |
-| `npm run test:e2e` | 483 | the same code against a real SQLite database in a headless browser |
+| `npm run test:safety` | 1,218 | the gates, the tools, the numbers and claims checks, the lookup loop, AI insights |
+| `npm run test:portions` | 1025 | portions, schedules, reports, planning, reminders: all the pure logic |
+| `npm run test:e2e` | 488 | the same code against a real SQLite database in a headless browser |
 | `npm run test:relay` | 54 | the relay and the reminder sender against a real local D1 |
 
 It still does not make a model safe. It narrows what a model can do wrong here.

@@ -40,6 +40,8 @@ import { R1_TEST_PHRASES, RED_FLAGS, triage } from '../src/safety/redflags';
 import { countByLabel, suggestLabel } from '../src/domain/symptomlabels';
 import type { ExportInput, ExportItem } from '../src/domain/export';
 import { QUESTIONS, runCheck, runQuestion, SPACING_MS, summaryOf, verdictOf } from '../src/domain/modelcheck';
+import { fisherAtLeast, labelsInMonth, patternFor, sharedWords, windowForHours, WINDOWS } from '../src/domain/patterns';
+import { startFromWords } from '../src/domain/symptomtime';
 import { SYSTEM_PROMPT } from '../src/llm/askprompt';
 import { dawaAdherence, daysArg, FEW_EPISODES, pairsOf, runTool, symptomLog, thaliBeforeSymptom, thaliDay, thaliSummary, toolLabel, TOOLS, weightTrend } from '../src/domain/tools';
 import { chatWithTools, DATA_HEADER, MAX_TOOL_STEPS } from '../src/llm/toolloop';
@@ -1016,19 +1018,117 @@ section('Tools: what Thali works out');
   check('no timestamp leaves in a tool result', /\d{13}|T\d{2}:\d{2}/.test(JSON.stringify([s, d])), false);
 }
 
-section('Tools: what turns up before a symptom');
+section('Tools: what came before a symptom');
 {
-  const b = thaliBeforeSymptom(REC, 'bloating', 24);
-  check('entries are found by word or by label', b.entries_found, 2);
-  check('each with what was eaten in the hours before', b.entries.map((e) => e.dishes_in_the_hours_before), [['Rajma', 'Rice'], ['Rajma', 'Roti']]);
-  check('a dish is counted against how often it is eaten anyway', b.dishes_seen_before[0], { dish: 'Rajma', before_entries: 2, of_entries: 2, eaten_on_logged_days: 2, of_logged_days: 4 });
-  check('too few entries, and it says so', [FEW_EPISODES, b.caution.startsWith('Only 2 entries: too few to show a pattern.')], [5, true]);
-  check('it tells the model what it may and may not say', [b.caution.includes('cannot show that one causes the other'), b.caution.includes('Say "these show up together", never "this causes it"')], [true, true]);
-  check('a phone number in a symptom does not travel', JSON.stringify(b).includes('98201'), false);
-  check('the window is honoured', thaliBeforeSymptom(REC, 'bloating', 2).entries.map((e) => e.dishes_in_the_hours_before.length), [0, 0]);
-  check('a meal after the symptom is not "before" it', thaliBeforeSymptom(REC, 'headache', 24).entries[0].dishes_in_the_hours_before, ['Dal tadka', 'Roti', EVIL]);
-  check('nothing found is said plainly', [thaliBeforeSymptom(REC, 'rash', 24).entries_found, thaliBeforeSymptom(REC, 'rash', 24).caution], [0, 'No entry of this symptom was found in the period.']);
-  check('an empty word finds nothing rather than everything', thaliBeforeSymptom(REC, '  ', 24).entries_found, 0);
+  const b = thaliBeforeSymptom(REC, 'bloating', 24) as Exclude<ReturnType<typeof thaliBeforeSymptom>, { bouts?: undefined }>;
+  check('found by its label, from the person\'s words', [b.symptom, b.bouts_found], ['Bloating', 2]);
+  check('each bout with what was eaten in the hours before', b.bouts.map((x) => x.came_before.map((c) => (c as { food: string }).food)), [['Rajma', 'Rice'], ['Rajma', 'Roti']]);
+  check('a dish counted against the same hours on other days', b.items[0], { food: 'Rajma', before_bouts: 2, of_bouts: 2, same_hours_on_other_days: 0, of_other_days: 2, finding: 'Too few to tell' });
+  check('too few bouts, and it says so', [FEW_EPISODES, b.caution.startsWith('Only 2 bouts: too few to show a pattern.')], [5, true]);
+  check('it tells the model what it may and may not say', [b.caution.includes('cannot show that a food or a medicine causes'), b.caution.includes('never "causes" or "triggers"'), b.caution.includes('is for their doctor')], [true, true, true]);
+  check('no words of the person\'s travel, so no phone number either', JSON.stringify(b).includes('98201'), false);
+  // His shortest window is 12 hours: asked for 2, the lookup uses 12, and lunch three hours before is in it.
+  check('the shortest window is his 12 hours', [(thaliBeforeSymptom(REC, 'bloating', 2) as typeof b).looked_back, (thaliBeforeSymptom(REC, 'bloating', 2) as typeof b).bouts.map((x) => x.came_before.length)], ['12 h', [2, 2]]);
+  check('a meal after the symptom is not "before" it', (thaliBeforeSymptom(REC, 'headache', 24) as typeof b).bouts[0].came_before.map((c) => (c as { food: string }).food), [EVIL, 'Dal tadka', 'Roti']);
+  check('nothing found is said plainly', [(thaliBeforeSymptom(REC, 'rash', 24) as typeof b).bouts_found, (thaliBeforeSymptom(REC, 'rash', 24) as typeof b).caution], [0, 'No bout of this symptom was logged in the last month.']);
+  check('an empty word finds nothing rather than everything', thaliBeforeSymptom(REC, '  ', 24).bouts_found, 0);
+  check('the lookup tells the model which names share a word, and not to add them up', [Array.isArray(b.names_sharing_a_word), b.caution.includes('never add their counts together')], [true, true]);
+  check('hours map onto his windows', [windowForHours(6), windowForHours(24), windowForHours(48), windowForHours(100), windowForHours(500)], ['12h', '24h', '48h', '1w', '1m']);
+}
+
+section('Patterns: what came before a symptom, against other days');
+{
+  // A month, 1 to 31 Oct 2026. Rice at lunch every day. Paneer at 13:30 on
+  // six days, five of them followed by bloating at 16:00; one bloating with
+  // no paneer. Iron every morning; an antacid only on two bloating days.
+  const t = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const iso = (d: number) => `2026-10-${String(d).padStart(2, '0')}`;
+  const plain = (name: string): ExportItem => ({ name, quantity: 1, unit: 'katori', grams: 150, energy_kcal: 200, protein_g: 5, fat_g: 5, carbs_g: 30, fibre_g: 2, plan_state: null });
+  const paneerDays = [3, 8, 12, 17, 22, 26];
+  const bloatDays = [3, 8, 12, 17, 22, 29];
+  const month = Array.from({ length: 31 }, (_, i) => i + 1);
+  const X = {
+    meals: month.flatMap((d) => [
+      { day: iso(d), at: t(d, 13), slot: 'Lunch', items: [plain('Rice')] },
+      ...(paneerDays.includes(d) ? [{ day: iso(d), at: t(d, 13, 30), slot: 'Lunch', items: [plain('Paneer bhurji')] }] : []),
+    ]),
+    intakes: [...month.map((d) => ({ at: t(d, 8), medicine: 'Iron 100 mg' })), { at: t(12, 15), medicine: 'Antacid' }, { at: t(22, 15), medicine: 'Antacid' }],
+    doseDays: month.map((d) => ({ day: iso(d), taken: 1, skipped: 0, missed: 0, pending: 0 })),
+    symptoms: [
+      ...bloatDays.map((d) => ({ at: t(d, 16), text: 'bloated', resolvedAt: null, label: 'Bloating' })),
+      // Logged again two hours into the same bout: one bout, not two.
+      { at: t(8, 18), text: 'still bloated', resolvedAt: null, label: 'Bloating' },
+      // Six weeks ago: outside the month, history only.
+      { at: t(1, 16) - 45 * 86_400_000, text: 'bloated', resolvedAt: null, label: 'Bloating' },
+    ],
+  };
+  const now = t(31, 21);
+  const P = patternFor(X, 'Bloating', '24h', now);
+  const item = (n: string) => P.items.find((i) => i.name === n)!;
+  check('six bouts in the month: the repeat folded in, the old one left in history', P.bouts.length, 6);
+  check('compared with the other days of the month with meals logged', P.foodDays, 31 - 6);
+  check('paneer: before 5 of 6 bouts, at the same hours on 1 of 25 other days', [item('Paneer bhurji').before, item('Paneer bhurji').of, item('Paneer bhurji').other, item('Paneer bhurji').ofOther], [5, 6, 1, 25]);
+  check('so it stands out', item('Paneer bhurji').tag, 'stands-out');
+  check('the dates behind it are listed', item('Paneer bhurji').dates.length, 5);
+  check('rice, eaten every day, is no more common before bloating', [item('Rice').before, item('Rice').other, item('Rice').ofOther, item('Rice').tag], [6, 25, 25, 'usual']);
+  check('iron, taken every morning, likewise', item('Iron 100 mg').tag, 'usual');
+  check('a medicine is counted like a food', [item('Antacid').kind, item('Antacid').before, item('Antacid').other], ['medicine', 2, 0]);
+  check('two times is never "stands out", however rare otherwise', item('Antacid').tag, 'chance');
+  check('what stands out comes first', P.items[0].name, 'Paneer bhurji');
+
+  const started = { ...X, symptoms: [...X.symptoms, { at: t(30, 23), startedAt: t(30, 13, 45), text: 'bloated after lunch', resolvedAt: null, label: 'Bloating' }] };
+  const late = patternFor(started, 'Bloating', '12h', now).bouts.find((b) => new Date(b.began).getDate() === 30)!;
+  check('a symptom is timed from when it began, not when it was logged', late.began, t(30, 13, 45));
+  check('so nothing after it counts as before', late.before.every((e) => e.at <= t(30, 13, 45)), true);
+
+  check('a 12-hour window reaches the 8 am dose before a 4 pm bout', patternFor(X, 'Bloating', '12h', now).items.some((i) => i.name === 'Iron 100 mg'), true);
+  check('and not the day before\'s lunch', patternFor(X, 'Bloating', '12h', now).bouts[0].before.every((e) => e.at > t(3, 4)), true);
+  // A medicine added after the fact: ticks on days no schedule covered still count as medicine days.
+  check('a day with a dose ticked is a medicine day, schedule or not', patternFor({ ...X, doseDays: [] }, 'Bloating', '24h', now).medicineDays, 31 - 6);
+  check('days with nothing logged count neither way', patternFor({ ...X, meals: X.meals.filter((m) => !['2026-10-05', '2026-10-06'].includes(m.day)) }, 'Bloating', '24h', now).foodDays, 23);
+  check('under five bouts, nothing is called a pattern', patternFor({ ...X, symptoms: X.symptoms.slice(0, 3) }, 'Bloating', '24h', now).items.every((i) => i.tag === 'few'), true);
+  check('the labels of the month, most first', labelsInMonth({ symptoms: [...X.symptoms, { at: t(20, 9), text: 'headache', resolvedAt: null }] }, now), [{ label: 'Bloating', bouts: 6 }, { label: 'Headache', bouts: 1 }]);
+  check('his windows', WINDOWS.map((w) => w.label), ['12 h', '24 h', '48 h', '1 week', '1 month']);
+
+  // His call, 15 Oct 2026: two paneer dishes are never counted as one; the
+  // word they share is shown in bold.
+  check('a word two dishes share', [...sharedWords(['Paneer Bhurji', 'Paneer Tikka Masala', 'Rice'])], ['paneer']);
+  check('every word shared, and only shared ones', [...sharedWords(['Paneer Tikka Masala', 'Dal Masala', 'Paneer Bhurji'])].sort(), ['masala', 'paneer']);
+  check('the same dish twice shares nothing with itself', sharedWords(['Rice', 'Rice']).size, 0);
+  check('little words do not count', sharedWords(['Dal with rice', 'Paneer with roti', 'Aloo ka paratha', 'Gobi ka paratha']).has('with'), false);
+  check('so "paratha" is shared and "ka" is not', [...sharedWords(['Aloo ka paratha', 'Gobi ka paratha'])], ['paratha']);
+  const twoPaneer = { ...X, meals: [...X.meals, ...paneerDays.slice(0, 3).map((d) => ({ day: iso(d), at: t(d, 14), slot: 'Lunch', items: [plain('Paneer tikka masala')] }))] };
+  const P2 = patternFor(twoPaneer, 'Bloating', '24h', now);
+  check('the two paneer dishes stay two rows, counted apart', [P2.items.filter((i) => /paneer/i.test(i.name)).length, P2.items.find((i) => i.name === 'Paneer bhurji')!.before], [2, 5]);
+
+  // Fisher's exact test against figures worked by hand: 3 of 3 against 0 of
+  // 3 is 1/20; nothing unusual is 1.
+  check('Fisher: 3 of 3 before, 0 of 3 otherwise', Math.round(fisherAtLeast(3, 3, 0, 3) * 1e4) / 1e4, 0.05);
+  check('Fisher: no difference is no evidence', fisherAtLeast(0, 3, 0, 3), 1);
+}
+
+section('When a symptom began, read from the words');
+{
+  const t = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const now = new Date(t(15, 23));
+  const meals = [{ at: t(15, 13, 20), slot: 'lunch' as const }, { at: t(15, 20, 30), slot: 'dinner' as const }, { at: t(14, 21), slot: 'dinner' as const }];
+  const s = (text: string, n = now) => startFromWords(text, n, meals);
+  check('"after lunch": a minute after lunch as logged', [s('bloated after lunch')?.at, s('bloated after lunch')?.why], [t(15, 13, 21), 'after lunch (1:20 pm)']);
+  check('so dinner is not before it', (s('bloated after lunch')?.at ?? 0) < t(15, 20, 30), true);
+  check('"since breakfast" with no breakfast logged: its usual time', [s('acidity since breakfast')?.at, s('acidity since breakfast')?.why], [t(15, 8, 1), 'after breakfast (its usual time, 8:00 am)']);
+  check('"2 hours ago"', s('headache started 2 hours ago')?.at, t(15, 21));
+  check('"half an hour ago"', s('nauseous half an hour ago')?.at, t(15, 22, 30));
+  check('"at 3 pm"', s('stomach pain at 3 pm')?.at, t(15, 15));
+  check('a time later than now is yesterday\'s', startFromWords('pain at 11 pm', new Date(t(15, 22)), meals)?.at, t(14, 23));
+  check('"last night"', s('could not sleep last night')?.at, t(14, 22));
+  check('"after dinner" just after midnight is last night\'s dinner', startFromWords('acidity after dinner', new Date(t(16, 1)), meals)?.at, t(15, 20, 31));
+  check('in Hindi: "lunch ke baad"', s('lunch ke baad pet phool gaya')?.at, t(15, 13, 21));
+  // On the built app: at 4:52 pm with no lunch logged today, "after lunch"
+  // took yesterday's lunch. Now it is today's lunchtime.
+  const yLunchOnly = [{ at: t(14, 13), slot: 'lunch' as const }];
+  check('no lunch logged today: today\'s usual lunchtime, not yesterday\'s lunch', startFromWords('bloated after lunch', new Date(t(15, 16, 52)), yLunchOnly)?.at, t(15, 13, 1));
+  check('nothing to read: when it is logged', s('bloated'), null);
+  check('a dose-like number is not a time', s('took 2 tablets for the headache'), null);
 }
 
 section('Tools: what Dawa works out');

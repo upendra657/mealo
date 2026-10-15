@@ -15,6 +15,8 @@ const db = scopedDb('doctor');
 export type Symptom = {
   id: string;
   noted_at: number;
+  /** When it began, if not when it was logged (v15). */
+  started_at: number | null;
   raw_text: string;
   label: string | null;
   severity: number | null;
@@ -25,10 +27,13 @@ export type Symptom = {
 
 export async function logSymptom(
   rawText: string,
-  opts: { label?: string; severity?: number } = {},
+  opts: { label?: string; severity?: number; startedAt?: number | null } = {},
 ): Promise<string> {
+  const now = Date.now();
   return db.insert('symptoms', {
-    noted_at: Date.now(),
+    noted_at: now,
+    // Only a start before now is a start; anything else is "when logged".
+    started_at: opts.startedAt != null && opts.startedAt < now ? opts.startedAt : null,
     raw_text: rawText.trim(),
     label: opts.label?.trim() || null,
     severity: opts.severity ?? null,
@@ -57,10 +62,12 @@ export async function openSymptoms(): Promise<Symptom[]> {
 }
 
 export async function recentSymptoms(days = 14): Promise<Symptom[]> {
+  // Newest first by when it began, not when it was written down (15 Oct
+  // 2026): "bloated after lunch", logged at night, sits at lunchtime.
   return db.query<Symptom>(
     `SELECT * FROM symptoms
       WHERE profile_id = ? AND deleted_at IS NULL AND noted_at >= ?
-      ORDER BY noted_at DESC`,
+      ORDER BY COALESCE(started_at, noted_at) DESC`,
     [activeProfile(), Date.now() - days * 86_400_000],
   );
 }
@@ -76,3 +83,6 @@ export async function reopenSymptom(id: string): Promise<void> {
 export async function deleteSymptom(id: string): Promise<void> {
   await db.softDelete('symptoms', id);
 }
+
+/** When a symptom began: its start if one was given, else when it was logged. */
+export const beganAt = (s: Pick<Symptom, 'noted_at' | 'started_at'>) => s.started_at ?? s.noted_at;

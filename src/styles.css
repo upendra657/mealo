@@ -4374,6 +4374,39 @@ button.am-opt {
 .portions-edit .dv-copy .link { flex: none; font-size: 14px; }
 .portions-edit .field-lbl { margin-bottom: 0; }
 
+/* What came before a symptom (ui/PatternView.tsx). The bar for "before" is
+   amber and the one for other days grey, so the eye compares the two; the
+   tag that matters, "Stands out", is the only one with colour. */
+.am-hist-done { color: var(--muted); font-size: 13px; }
+.am-hist-logged { text-transform: none; letter-spacing: 0; opacity: 0.8; }
+.pt-name b { font-weight: 600; color: var(--ink-text); }
+.pt-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: 14px; color: #c9d3cd; }
+.pt-chip b { color: var(--ink-text); font-weight: 500; }
+.pt-back { display: block; margin-bottom: 6px; font-size: 14px; color: var(--muted); }
+.pt-seg { display: flex; gap: 6px; margin: 10px 0 4px; }
+.pt-seg button { flex: 1; padding: 8px 0; border-radius: 10px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); white-space: nowrap; }
+.pt-seg button[data-on] { border-color: var(--am-g-bd); background: var(--am-g-bg); color: var(--am-g-ink); font-weight: 500; }
+.pt-row { padding: 12px 0; border-top: 1px solid var(--line); }
+.pt-top { display: flex; align-items: baseline; gap: 8px; font-size: 15px; }
+.pt-tag { margin-left: auto; font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pt-tag[data-k='stands-out'] { border-color: rgba(232, 180, 74, 0.5); color: var(--warn); background: var(--warn-bg); }
+.pt-bars { display: grid; grid-template-columns: 118px 1fr 56px; gap: 6px 8px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.pt-bar { height: 8px; border-radius: 4px; background: var(--empty); overflow: hidden; }
+.pt-bar i { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+.pt-bar i[data-b] { background: var(--warn); }
+.pt-n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-text); }
+.pt-none { grid-column: 1 / -1; }
+.pt-dates { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted); }
+.pt-dates li { padding: 3px 0; }
+.pt-note { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); font-size: 13px; line-height: 1.45; color: var(--muted); }
+.pt-note b { font-weight: 500; color: var(--ink-text); }
+.pt-how { margin: 12px 0 4px; }
+.pt-how p { margin: 8px 0 0; }
+
+/* "Started at" on the symptom card: the time wheel laid over the label. */
+.am-lab--when { position: relative; }
+.am-lab--when input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; }
+
 /* The model check's result (ui/ModelCheck.tsx). */
 .mc-box { margin-top: 10px; }
 .mc-rows { margin-top: 8px; }

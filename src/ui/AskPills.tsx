@@ -31,13 +31,14 @@ import {
 import { timeLabel, type PlannedDose } from '../domain/doses';
 import { asksAtNight, nightAhead, planReceipt, type NightTomorrow, type PlanAsk } from '../domain/mealplan';
 import { buildPlan, dayAhead, savePlan, type DayPlan } from '../domain/mealplanner';
-import { deleteMeal, draftFromText, itemsFor, saveMeal, type DraftItem } from '../domain/meals';
+import { deleteMeal, draftFromText, itemsFor, mealsBetween, saveMeal, startOfToday, type DraftItem } from '../domain/meals';
 import { describeMeasure } from '../domain/measures';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
-import { dayLabel } from '../domain/plan';
-import { guessSlot, slot } from '../domain/slots';
+import { counts, dayLabel } from '../domain/plan';
+import { guessSlot, normaliseSlot, slot } from '../domain/slots';
 import { SYMPTOM_GROUPS, suggestLabel } from '../domain/symptomlabels';
 import { logSymptom, removeSymptom } from '../domain/symptoms';
+import { startFromWords, type MealAt } from '../domain/symptomtime';
 import { nightTomorrow, setNightTomorrow } from '../profiles/store';
 import { triage } from '../safety/redflags';
 import { DoseRow } from './MedLog';
@@ -320,6 +321,26 @@ export function DosesFlow({ at, onCancel, onWrote }: FlowProps) {
 export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: FlowProps) {
   const [logged, setLogged] = useState<{ id: string; label: string | null } | null>(null);
   const [now] = useState(() => Date.now());
+  // When it began (15 Oct 2026): read from the words against today's and
+  // yesterday's eaten meals, and changeable here. Null is "when logged".
+  const [meals, setMeals] = useState<MealAt[]>([]);
+  const [picked, setPicked] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    void mealsBetween(startOfToday() - 86_400_000, now + 1).then((rows) => {
+      if (!live) return;
+      setMeals(
+        rows
+          .filter((r) => r.items.some((i) => counts(i.plan_state)))
+          .map((r) => ({ at: r.meal.eaten_at, slot: normaliseSlot(r.meal.meal_type) })),
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [now]);
+  const read = said !== null ? startFromWords(said, new Date(now), meals) : null;
+  const startedAt = picked ?? read?.at ?? null;
   // What the person picked, kept with the words it was picked for. "Change"
   // sends the words back to the bar, and a label chosen for the old ones
   // must not be waiting on the card when different ones come back.
@@ -403,8 +424,36 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
               </span>
             </div>
             <div className="am-kv">
-              <span className="am-kk">When</span>
-              <span>Now, {clock(now)}</span>
+              <span className="am-kk">Started at</span>
+              <span className="am-kvv">
+                <label className="am-lab am-lab--when">
+                  {startedAt === null
+                    ? `Now, ${clock(now)}`
+                    : `${clock(startedAt)}${startedAt < startOfToday() ? ' yesterday' : ''}`}
+                  <Chevron dir="down" size={13} />
+                  {/* The phone's own time wheel, laid over the label. A time
+                      later than now is yesterday's. */}
+                  <input
+                    type="time"
+                    aria-label="Started at"
+                    value={hhmmOf(startedAt ?? now)}
+                    onChange={(e) => {
+                      const m = /^(\d{2}):(\d{2})/.exec(e.target.value);
+                      if (!m) return;
+                      const d = new Date(now);
+                      d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+                      setPicked(d.getTime() > now ? d.getTime() - 86_400_000 : d.getTime());
+                    }}
+                  />
+                </label>
+                <span className="am-sug">
+                  {picked !== null
+                    ? 'Set by you.'
+                    : read
+                      ? `Read from your words: ${read.why}. Tap to change.`
+                      : 'When it is logged. Tap to set when it began.'}
+                </span>
+              </span>
             </div>
             <div className="am-btns">
               <button className="am-btn" onClick={onCancel}>
@@ -416,7 +465,7 @@ export function SymptomFlow({ at, said, onRetype, onCancel, onWrote, savedId }: 
               <button
                 className="am-btn am-btn--go"
                 onClick={async () => {
-                  setLogged({ id: await logSymptom(said, { label: label ?? undefined }), label });
+                  setLogged({ id: await logSymptom(said, { label: label ?? undefined, startedAt }), label });
                   onWrote();
                 }}
               >
@@ -710,4 +759,10 @@ export function PlanFlow({
       )}
     </div>
   );
+}
+
+/** "09:05", for a time input. */
+function hhmmOf(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
