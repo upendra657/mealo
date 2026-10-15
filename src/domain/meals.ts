@@ -458,6 +458,23 @@ export async function cyclePlan(
 }
 
 /** Move an item's meal into a different slot. */
+/**
+ * Put a meal at the time it was eaten ("Eaten at", 15 Oct 2026). The meal,
+ * not the item, holds the time, so every dish in it moves together.
+ */
+export async function setMealTime(mealId: string, eatenAt: number): Promise<void> {
+  await db.update('meals', mealId, { eaten_at: eatenAt });
+}
+
+/** When a meal was eaten, for the editor to start from. */
+export async function mealTime(mealId: string): Promise<number | null> {
+  const rows = await db.query<{ eaten_at: number }>(
+    'SELECT eaten_at FROM meals WHERE id = ? AND profile_id = ?',
+    [mealId, activeProfile()],
+  );
+  return rows[0]?.eaten_at ?? null;
+}
+
 export async function setMealSlot(
   mealId: string,
   mealType: MealType,

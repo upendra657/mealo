@@ -20,6 +20,8 @@ import {
   startOfToday,
   updateMealItem,
   setMealSlot,
+  setMealTime,
+  mealTime,
   type DraftItem,
   type MealType,
 } from '../domain/meals';
@@ -33,7 +35,8 @@ import {
 import { describeMeasure, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
 import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
-import { plansAt, stampFor } from '../domain/plan';
+import { daysFromToday, plansAt, stampFor } from '../domain/plan';
+import { clock } from '../domain/chat';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
 import { EditDish } from './EditDish';
@@ -109,6 +112,10 @@ export type Draft = {
   quantity: number;
   measure: string | null;
   slot: SlotId;
+  /** Still a plan: its time comes from the tick, so there is no "Eaten at". */
+  planned: boolean;
+  /** The day the item is on, for "Eaten at" to set a time on that day. */
+  dayStart: number;
   step: 'dish';
 } | null;
 
@@ -141,7 +148,20 @@ export function LogFlow({
   const [busy, setBusy] = useState(false);
   /** What the search box held when "add a dish" was pressed. */
   const [seed, setSeed] = useState('');
+  /**
+   * "Eaten at", chosen by the person (15 Oct 2026); null leaves the default:
+   * now for today, the slot's usual hour for another day, and for an edit
+   * the time the meal already has (`kept`).
+   */
+  const [when, setWhen] = useState<number | null>(null);
+  const [kept, setKept] = useState<number | null>(null);
   const toast = useToast();
+  const day = editing?.dayStart ?? dayStart ?? startOfToday();
+
+  useEffect(() => {
+    if (!editing) return;
+    void mealTime(editing.mealId).then(setKept);
+  }, [editing]);
 
   // Rehydrate an edit into a live draft item.
   useEffect(() => {
@@ -211,14 +231,17 @@ export function LogFlow({
       if (editing) {
         await updateMealItem(editing.itemId, item);
         await setMealSlot(editing.mealId, slot);
+        if (when !== null && when !== kept) await setMealTime(editing.mealId, when);
         toast(`${item.label} updated`);
       } else {
         // Decided at the moment of saving, against the clock then: dinner
         // chosen at 6:58 and saved at 7:01 was logged at dinner time.
-        const planned = plansAt(dayStart ?? startOfToday(), slot);
+        const planned = plansAt(day, slot);
         await saveMeal([item], {
           mealType: slot,
-          eatenAt: stampFor(dayStart ?? startOfToday()),
+          // A plan's time comes from its tick, so a chosen time is for a
+          // meal eaten.
+          eatenAt: !planned && when !== null ? when : stampFor(day, new Date(), slot),
           planned,
         });
         toast(`${item.label} ${planned ? 'planned' : 'added'}`);
@@ -258,6 +281,10 @@ export function LogFlow({
           setItem={setItem}
           slot={slot}
           setSlot={setSlot}
+          when={editing ? (editing.planned ? null : (when ?? kept)) : plansAt(day, slot) ? null : (when ?? stampFor(day, new Date(), slot))}
+          chosen={when !== null && when !== kept}
+          day={day}
+          setWhen={setWhen}
           editing={!!editing}
           busy={busy}
           onBack={back}
@@ -532,6 +559,10 @@ function DishStep({
   setItem,
   slot,
   setSlot,
+  when,
+  chosen,
+  day,
+  setWhen,
   editing,
   busy,
   onBack,
@@ -542,6 +573,12 @@ function DishStep({
   setItem: (i: DraftItem) => void;
   slot: MealType;
   setSlot: (s: MealType) => void;
+  /** The time shown in "Eaten at", or null to leave the box out (a plan). */
+  when: number | null;
+  /** The person picked it, as opposed to the default. */
+  chosen: boolean;
+  day: number;
+  setWhen: (t: number) => void;
   editing: boolean;
   busy: boolean;
   onBack: () => void;
@@ -549,6 +586,8 @@ function DishStep({
   onEdit: () => void;
 }) {
   const [picker, setPicker] = useState<'qty' | 'meas' | 'slot' | null>(null);
+  const [late, setLate] = useState(false);
+  const isToday = daysFromToday(day) === 0;
   /** What the typed quantity box is showing, mid-edit. See the input below. */
   const [qtyDraft, setQtyDraft] = useState(String(item.quantity ?? 1));
   /**
@@ -681,6 +720,43 @@ function DishStep({
           </span>
         </button>
       </div>
+
+      {when !== null && (
+        <>
+          {/* A real time input laid over the box, so a tap opens the phone's
+              own time wheel; the box underneath only shows the choice. */}
+          <label className="afield afield--when">
+            <span className="k">Eaten at</span>
+            <span className="v">
+              <span className="t num">{isToday && !chosen && !editing ? `Now · ${clock(when)}` : clock(when)}</span>
+              <Chevron size={15} dir="down" />
+            </span>
+            <input
+              type="time"
+              aria-label="Eaten at"
+              value={hhmm(when)}
+              onChange={(e) => {
+                const t = atTime(day, e.target.value);
+                if (t === null) return;
+                // No later than now for a meal already eaten.
+                if (t > Date.now()) {
+                  setLate(true);
+                  return;
+                }
+                setLate(false);
+                setWhen(t);
+              }}
+            />
+          </label>
+          {(late || chosen) && (
+            <p className="small muted" style={{ margin: '8px 2px 0' }}>
+              {late
+                ? 'That is later than now. A meal still to come is planned from its slot instead.'
+                : 'Changes only when it is filed: the overnight line and what was eaten before a symptom read this time.'}
+            </p>
+          )}
+        </>
+      )}
 
       <div className="readout">
         <div className="head">
@@ -1061,4 +1137,19 @@ function NewDishStep({
       </div>
     </>
   );
+}
+
+/** "09:05", for the time input. */
+function hhmm(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** "09:05" on the day starting at `dayStart`, or null if the input is empty. */
+function atTime(dayStart: number, v: string): number | null {
+  const m = /^(\d{2}):(\d{2})/.exec(v);
+  if (!m) return null;
+  const d = new Date(dayStart);
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  return d.getTime();
 }

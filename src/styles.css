@@ -1014,6 +1014,22 @@ textarea {
   text-align: left;
   display: block;
 }
+/* "Eaten at": full width under Quantity and Measure, with the native time
+   input stretched over it, invisible, so the tap lands on the input. */
+.afield--when {
+  position: relative;
+  margin-top: 10px;
+  cursor: pointer;
+}
+.afield--when input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  cursor: pointer;
+}
 .afield .k {
   font-size: 12px;
   color: var(--muted);
@@ -4345,6 +4361,24 @@ button.am-opt {
 }
 .dv-copy:first-child { border-top: 0; }
 .dv-copy .grow .amt { display: block; font-size: 12.5px; color: var(--muted); }
+
+/* The overnight line on the Day screen (domain/fasting.ts): quiet on
+   purpose. Muted, no colour for "good" or "long", nothing to aim at. */
+.fastline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--muted);
+}
+.fastline .i { flex: none; opacity: 0.8; }
+.fastline b { font-weight: 400; color: var(--ink-text); }
+.fastline .v { flex: none; font-weight: 500; color: var(--ink-text); }
 
 /* The Home nudge, below the banner: amber, because a phone with no recent
    backup is one lost phone away from losing everything on it. */

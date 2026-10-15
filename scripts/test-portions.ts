@@ -2432,6 +2432,12 @@ import { stampFor } from '../src/domain/plan';
   check('a model\'s plan reads the count from the words', [countFromToday('what should I eat tomorrow?'), countFromToday('kal ke liye'), countFromToday('the day after tomorrow please')], [1, 1, 2]);
   check('and leaves its own day alone when they do not', [countFromToday('help me eat better'), countFromToday('what about friday')], [null, null]);
 
+  // His choice, 15 Oct 2026: another day takes the slot's usual hour, not noon.
+  const d10 = new Date(2026, 9, 10).getTime();
+  check('a past day: breakfast at 8, dinner at 20', [stampFor(d10, now, 'breakfast'), stampFor(d10, now, 'dinner')], [new Date(2026, 9, 10, 8).getTime(), new Date(2026, 9, 10, 20).getTime()]);
+  check('"Something else" keeps noon', stampFor(d10, now, 'other'), new Date(2026, 9, 10, 12).getTime());
+  check('a day ahead, a plan, keeps noon until its tick', stampFor(new Date(2026, 9, 13).getTime(), now, 'breakfast'), new Date(2026, 9, 13, 12).getTime());
+  check('today is the clock, whatever the slot', stampFor(new Date(2026, 9, 11).getTime(), now, 'breakfast'), now.getTime());
   check('noon on another day, the clock today', [stampFor(new Date(2026, 9, 12).getTime(), now), stampFor(new Date(2026, 9, 11).getTime(), now)], [new Date(2026, 9, 12, 12).getTime(), now.getTime()]);
 
   // ---- which meals are usual
@@ -2485,6 +2491,7 @@ import { stampFor } from '../src/domain/plan';
 }
 
 // ------------------------------------------------------------ reminders
+import { duration, fastLine, GAP_HOURS } from '../src/domain/fasting';
 import { ago, backupDue, BACKUP_NUDGE_DAYS, RELAY_KEEP_DAYS, SYNC_AMBER_DAYS, SYNC_URGENT_DAYS, syncTone } from '../src/domain/upkeep';
 import { needsSending, RESEND_AFTER_MS, scheduleSig, testRingAt, testRingTime, wordsOf } from '../src/domain/reminders';
 import { clockOn, clockOnCalendar, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
@@ -2596,6 +2603,31 @@ section('Sync: a large push goes in batches the relay will take');
   const huge = { ...dish(1), f: { ...dish(1).f, notes: 'y'.repeat(CHUNK_BYTES) } };
   check('a row bigger than a batch goes alone', chunkRows([dish(2), huge, dish(3)]).map((c) => c.length).sort().join(), '1,2');
   check('the relay\'s limit is what this was sized against', /const MAX_BODY = 512 \* 1024;/.test(readFileSync('worker/index.ts', 'utf8')), true);
+}
+
+section('The overnight line: time between meals, as a fact');
+{
+  const t = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const day15 = new Date(2026, 9, 15).getTime();
+  check('dinner 21:10, breakfast 09:30: 12 h 20 min overnight',
+    fastLine(day15, [t(14, 21, 10), t(15, 9, 30)], t(15, 13)), { kind: 'overnight', last: t(14, 21, 10), first: t(15, 9, 30), ms: 12 * 3_600_000 + 20 * 60_000 });
+  check('in words', duration(12 * 3_600_000 + 20 * 60_000), '12 h 20 min');
+  check('under an hour', duration(45 * 60_000), '45 min');
+  check('before the first meal today: the time since the last',
+    fastLine(day15, [t(14, 21, 10)], t(15, 8, 15)), { kind: 'since', last: t(14, 21, 10), ms: 11 * 3_600_000 + 5 * 60_000 });
+  // His late nights: a snack at 00:30 is the night before, not the morning.
+  check('a snack at 00:30 is the night before, so the fast runs from it',
+    (fastLine(day15, [t(14, 21), t(15, 0, 30), t(15, 9)], t(15, 13)) as { last: number }).last, t(15, 0, 30));
+  check('and is never the first meal of the day',
+    (fastLine(day15, [t(14, 21), t(15, 0, 30), t(15, 9)], t(15, 13)) as { first: number }).first, t(15, 9));
+  check('over 20 hours: no number, a meal may have gone unlogged',
+    fastLine(day15, [t(13, 21, 10), t(15, 12, 40)], t(15, 13)), { kind: 'gap', last: t(13, 21, 10), first: t(15, 12, 40) });
+  check('20 hours exactly is still a time', fastLine(day15, [t(14, 13), t(15, 9)], t(15, 13))?.kind, 'overnight');
+  check('still waiting after 20 hours: the same sentence', fastLine(day15, [t(14, 10)], t(15, 7))?.kind, 'gap');
+  check('no meal before it: nothing to say', fastLine(day15, [t(15, 9)], t(15, 13)), null);
+  check('a day not yet come: nothing', fastLine(new Date(2026, 9, 16).getTime(), [t(15, 21)], t(15, 22)), null);
+  check('a past day with no meal of its own: nothing', fastLine(new Date(2026, 9, 13).getTime(), [t(12, 21)], t(15, 13)), null);
+  check('the line\'s cut-off is his 20 hours', GAP_HOURS, 20);
 }
 
 section('Keeping the record safe: backup and sync warnings, the test ring');

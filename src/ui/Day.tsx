@@ -9,10 +9,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { readDay, type DayView } from '../domain/day';
+import { clock } from '../domain/chat';
+import { duration, readFastLine, type FastLine } from '../domain/fasting';
 import { cyclePlan, deleteMealItem, startOfToday, type MealItem } from '../domain/meals';
 import { canTick, circleOf, dayLabel, lastPlannableDay } from '../domain/plan';
 import { toMeasure } from '../domain/measures';
-import { slot as slotOf } from '../domain/slots';
+import { slot as slotOf, type SlotId } from '../domain/slots';
 import {
   loadTargets,
   OVER_IS_BAD,
@@ -40,12 +42,14 @@ export function Day({
 }) {
   const start = dayStart ?? startOfToday();
   const [view, setView] = useState<DayView | null>(null);
+  const [fast, setFast] = useState<FastLine | null>(null);
   const [targets, setTargets] = useState<Targets | null>(null);
   const [calendar, setCalendar] = useState(false);
   const toast = useToast();
 
   const refresh = useCallback(async () => {
     setView(await readDay(start));
+    setFast(await readFastLine(start));
     setTargets(await loadTargets());
   }, [start]);
 
@@ -87,7 +91,7 @@ export function Day({
     await refresh();
   };
 
-  const edit = (item: MealItem) => {
+  const edit = (item: MealItem, slot: SlotId) => {
     setDraft({
       mode: 'edit',
       itemId: item.id,
@@ -96,7 +100,12 @@ export function Day({
       label: item.label,
       quantity: item.quantity ?? 1,
       measure: item.unit,
-      slot: 'other',
+      // The row's own slot. It was 'other' here from 24 Sep to 15 Oct 2026,
+      // and saving an edit moves the meal to the slot it carries, so changing
+      // a quantity filed the whole meal under "Something else".
+      slot,
+      planned: item.plan_state === 'planned',
+      dayStart: start,
       step: 'dish',
     });
     go('log');
@@ -230,6 +239,8 @@ export function Day({
         )}
       </button>
 
+      {fast && <FastRow line={fast} dayStart={start} />}
+
       {view && view.listed.length === 0 && (
         <>
           <div className="section-h">Nothing logged</div>
@@ -260,7 +271,7 @@ export function Day({
             <div className="row" key={item.id} data-plan={circle ?? undefined}>
               <button
                 className="row-tap"
-                onClick={() => edit(item)}
+                onClick={() => edit(item, g.slot)}
                 title="Change the amount"
               >
                 <span className="grow">
@@ -358,5 +369,49 @@ function PlanBar({
       <i style={{ width: `${eaten}%` }} />
       {grey > 0 && <i className="plan" style={{ width: `${grey}%` }} />}
     </Tag>
+  );
+}
+
+const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** "9:10 pm", "9:10 pm yesterday", "9:10 pm Tue": the time, and the day when it is not the one shown. */
+function at(ms: number, dayStart: number): string {
+  const days = Math.floor((ms - dayStart) / 86_400_000);
+  if (days === 0) return clock(ms);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const label = days === -1 && dayStart === today.getTime() ? 'yesterday' : WEEKDAY[new Date(ms).getDay()];
+  return `${clock(ms)} ${label}`;
+}
+
+/**
+ * The time between meals overnight (domain/fasting.ts): a fact, with no
+ * goal, streak or praise anywhere near it. Over 20 hours it gives no number
+ * at all, since that is almost always a meal that was not logged.
+ */
+function FastRow({ line, dayStart }: { line: FastLine; dayStart: number }) {
+  return (
+    <div className="fastline">
+      <svg className="i" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden>
+        <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
+      </svg>
+      {line.kind === 'gap' ? (
+        <span className="grow">
+          {line.first === null
+            ? `Nothing logged since ${at(line.last, dayStart)}. A meal may have gone unlogged.`
+            : `Nothing logged between ${at(line.last, dayStart)} and ${at(line.first, dayStart)}. A meal may have gone unlogged.`}
+        </span>
+      ) : (
+        <>
+          <span className="grow">
+            <b>{line.kind === 'overnight' ? 'Overnight' : 'Since your last meal'}</b>
+            {line.kind === 'overnight'
+              ? ` · last meal ${at(line.last, dayStart)}, first ${at(line.first, dayStart)}`
+              : ` · ${at(line.last, dayStart)}`}
+          </span>
+          <span className="v num">{duration(line.ms)}</span>
+        </>
+      )}
+    </div>
   );
 }

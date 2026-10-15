@@ -32,7 +32,7 @@ import {
   searchFoods,
   slugFor,
 } from '../../src/domain/foods';
-import { cyclePlan, deleteMeal, draftFromText, saveMeal, mealsOn, itemsFor } from '../../src/domain/meals';
+import { cyclePlan, deleteMeal, draftFromText, saveMeal, mealsOn, itemsFor, mealTime, setMealTime } from '../../src/domain/meals';
 import { buildPlan, dayAhead, savePlan } from '../../src/domain/mealplanner';
 import { DEFAULT_REMINDERS } from '../../src/domain/reminders';
 import { buildRings, refreshReminders } from '../../src/domain/remindersync';
@@ -59,6 +59,7 @@ import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
 import { apply, collect } from '../../src/domain/librarysync';
 import { fingerprint } from '../../src/domain/sync';
+import { readFastLine } from '../../src/domain/fasting';
 import {
   customFood,
   deleteDish,
@@ -1325,6 +1326,28 @@ async function main() {
   // ---- v10: the medicine library on the wire ------------------------------
   // ---- saves as one unit (15 Oct 2026) ------------------------------------
   // Each unit is made to fail on a late write; nothing from it may be left.
+  step('the overnight line');
+  {
+    // From the record: eaten meals count, a plan does not until ticked.
+    const dayMs = 86_400_000;
+    const d0 = new Date();
+    d0.setHours(0, 0, 0, 0);
+    const day = d0.getTime() - 10 * dayMs; // a quiet past day, clear of the other fixtures
+    const [dish] = await draftFromText('1 katori fixture fast dal');
+    const dinner = await saveMeal([dish], { mealType: 'dinner', eatenAt: day - 3 * 3_600_000 });
+    const plan = await saveMeal([dish], { mealType: 'breakfast', eatenAt: day + 8 * 3_600_000, planned: true });
+    const breakfast = await saveMeal([dish], { mealType: 'breakfast', eatenAt: day + 9 * 3_600_000 });
+    const line = await readFastLine(day);
+    check('the gap is from last night\'s dinner to the first meal eaten', line?.kind === 'overnight' && line.ms === 12 * 3_600_000,
+      JSON.stringify(line));
+    // "Eaten at": breakfast said to be at 7:30, not 9:00, moves the line.
+    await setMealTime(breakfast, day + 7.5 * 3_600_000);
+    check('a meal put at the time it was eaten', (await mealTime(breakfast)) === day + 7.5 * 3_600_000);
+    check('and the overnight line follows it', (await readFastLine(day))?.kind === 'overnight' &&
+      (await readFastLine(day) as { ms: number }).ms === 10.5 * 3_600_000);
+    for (const id of [dinner, plan, breakfast]) await deleteMeal(id);
+  }
+
   step('atomic saves');
   {
     const nut = scopedDb('nutritionist');

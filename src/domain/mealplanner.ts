@@ -210,7 +210,7 @@ export async function savePlan(dayStart: number, choice: PlanChoice, said: strin
   return saveMeals(
     choice.meals.map((m) => ({
       items: m.items,
-      opts: { rawText: said, mealType: m.slot, eatenAt: stampFor(dayStart, now), planned: plansAt(dayStart, m.slot, now) },
+      opts: { rawText: said, mealType: m.slot, eatenAt: stampFor(dayStart, now, m.slot), planned: plansAt(dayStart, m.slot, now) },
     })),
   );
 }

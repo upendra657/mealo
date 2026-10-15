@@ -59,17 +59,24 @@ export function lastPlannableDay(now = new Date()): number {
 }
 
 /**
- * When a meal logged for a day is stamped as having happened.
+ * When a meal logged for a day is stamped as having happened, unless the
+ * person says (the "Eaten at" box, 15 Oct 2026).
  *
- * Today gets the real clock so the order of meals is right. A past or a
- * future day gets midday, because pretending to know that Tuesday's lunch was
- * at 13:42 is inventing a fact; noon is visibly a placeholder.
+ * Today gets the real clock so the order of meals is right. A past day
+ * gets its slot's usual hour (USUAL_HOUR), his choice the same night: still
+ * a placeholder, since pretending to know that Tuesday's lunch was at 13:42
+ * is inventing a fact, but one inside the slot, so breakfast sorts before
+ * dinner and the overnight line is not measured to a noon nobody ate at. A
+ * day ahead is a plan, and keeps noon until its tick gives it a time; noon
+ * is kept too for "Something else" and a call with no slot.
  *
  * Here, and not in the log screen where it began, because a plan made in
  * Ask Mealo has to land at the same moment one made in Track meals would.
  */
-export function stampFor(dayStart: number, now = new Date()): number {
-  return dayStart === midnight(now) ? now.getTime() : dayStart + 12 * 3_600_000;
+export function stampFor(dayStart: number, now = new Date(), slotId?: SlotId): number {
+  if (dayStart === midnight(now)) return now.getTime();
+  const past = dayStart < midnight(now);
+  return dayStart + ((past && slotId && USUAL_HOUR[slotId]) || 12) * 3_600_000;
 }
 
 /**
