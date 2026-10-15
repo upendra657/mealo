@@ -135,7 +135,12 @@ export const MEASURES: readonly Measure[] = [
   // A serve is whatever that restaurant plates — 112g of fries or 750g of
   // penne. `needsOwn` stops the resolver inventing one and stops it lending
   // its size to any other measure.
-  { id: 'serve',   label: 'serve',   kind: 'count', grams: 300, needsOwn: true, hidden: true, group: 'Pieces',
+  //
+  // Back in the picker since 15 Oct 2026, his call: "Serve is my own measure
+  // and macros I want to use". Hidden on 7 Oct as one of the generic serving
+  // words, it is the one he weighs his own dishes in. `needsOwn` still holds:
+  // a serve is only ever the size recorded for that dish.
+  { id: 'serve',   label: 'serve',   kind: 'count', grams: 300, needsOwn: true, group: 'Pieces',
     aliases: ['serves', 'serving', 'servings', 'portion', 'portions', 'helping', 'plateful'] },
   { id: 'large',   label: 'large',   kind: 'count', grams: 200, needsOwn: true, hidden: true, group: 'Pieces',
     aliases: ['big'] },

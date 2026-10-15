@@ -918,7 +918,7 @@ section('Measures: the picker is shorter than the vocabulary');
 
   // Nineteen entries under Pieces, most of them a synonym for one of them.
   // These are out of the picker.
-  const gone = ['kg', 'l', 'handful', 'serve', 'large', 'regular', 'burger',
+  const gone = ['kg', 'l', 'handful', 'large', 'regular', 'burger',
                 'bar', 'nugget', 'whole',
                 // 7 Oct 2026: the measures that name a food, where piece is
                 // enough, and the three bowls this kitchen never logs in.
@@ -949,7 +949,8 @@ section('Measures: the picker is shorter than the vocabulary');
 
   // What stays: the four pieces worth naming, every bowl and spoon this
   // kitchen uses, and the three weights worth logging a plate in.
-  const kept = ['piece', 'slice', 'packet', 'bottle',
+  // serve back in on 15 Oct 2026, his call.
+  const kept = ['piece', 'serve', 'slice', 'packet', 'bottle',
                 'katori', 'smallbowl', 'bowl', 'cup', 'glass', 'teacup', 'tsp', 'tbsp',
                 'g', 'ml', 'tingu'];
   for (const id of kept) {

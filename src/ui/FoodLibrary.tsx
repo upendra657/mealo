@@ -16,6 +16,7 @@
 
 import { Chevron } from './bits';
 import type { Screen } from '../App';
+import { localDayKey } from '../domain/day';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   dishNamed,
@@ -156,39 +157,35 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
           whenever you update it.
         </p>
 
-        <div className="row">
-          <button
-            className="primary"
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-          >
+        {/* Five buttons in one row squeezed "Add a dish" onto three lines and
+            pushed "Check sheet" off the edge of a phone (15 Oct 2026). The
+            one used most leads, full width; the rest go two by two. */}
+        <button className="bk-btn bk-btn--go" onClick={() => setAdding((v) => !v)}>
+          {adding ? 'Close' : 'Add a dish'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv,text/plain"
+          hidden
+          onChange={(e) => void onFile(e.target.files?.[0])}
+        />
+        <div className="dv-two">
+          <button className="bk-btn" onClick={() => fileRef.current?.click()} disabled={busy}>
             {busy ? 'Reading…' : 'Import CSV'}
           </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv,text/plain"
-            hidden
-            onChange={(e) => void onFile(e.target.files?.[0])}
-          />
-          <button onClick={() => download('mealo-food-template.csv', TEMPLATE_CSV)}>
-            Template
-          </button>
           <button
+            className="bk-btn"
             disabled={foods.length === 0}
-            onClick={async () =>
-              download(
-                `mealo-foods-${new Date().toISOString().slice(0, 10)}.csv`,
-                await exportPersonalFoods(),
-              )
-            }
+            onClick={async () => download(`mealo-foods-${localDayKey(Date.now())}.csv`, await exportPersonalFoods())}
           >
             Export mine
           </button>
-          <button onClick={() => setAdding((v) => !v)}>
-            {adding ? 'Close' : 'Add a dish'}
+          <button className="bk-btn" onClick={() => download('mealo-food-template.csv', TEMPLATE_CSV)}>
+            Template
           </button>
           <button
+            className="bk-btn"
             disabled={foods.length === 0}
             title="Every quantity and measure the app thinks it knows, for you to correct"
             onClick={() => {
@@ -203,10 +200,9 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
                   })),
                 ),
               );
-              download(
-                `mealo-check-${new Date().toISOString().slice(0, 10)}.csv`,
-                checkSheetCsv(rows),
-              );
+              // The local day: toISOString is UTC, and before 05:30 here it
+              // named the file for yesterday.
+              download(`mealo-check-${localDayKey(Date.now())}.csv`, checkSheetCsv(rows));
             }}
           >
             Check sheet
@@ -591,94 +587,93 @@ function DishRow({
         )}
 
         {open && (
+          // Laid out on 15 Oct 2026, his words: "it looks almost impossible
+          // to add". It had no styles at all: a one-line form of "1 of
+          // [measure] weighs (g) [box] Record", and "= 100gremove" run
+          // together. Now the recorded portions are rows, and a new one is
+          // two full-width fields and one button.
           <div className="portions-edit">
             {portions.length > 0 && (
-              <ul className="small">
+              <div className="pe-list">
                 {portions.map((p) => (
-                  <li key={p.id} className="portion-line">
-                    <span>
-                      {p.quantity === 1 ? '' : `${p.quantity} `}
-                      {toMeasure(p.measure)?.label ?? p.measure} = {p.net_weight_g}g
-                      {p.source === 'derived' && (
-                        <span className="muted"> · learned while logging</span>
-                      )}
+                  <div key={p.id} className="dv-copy">
+                    <span className="grow">
+                      {p.quantity === 1 ? '1' : p.quantity} {toMeasure(p.measure)?.label ?? p.measure} = {p.net_weight_g} g
+                      {p.is_default ? ' ★' : ''}
+                      <span className="amt">
+                        {p.source === 'derived' ? 'learned while logging' : 'yours'}
+                        {p.is_default ? ' · default' : ''}
+                      </span>
                     </span>
-                    <span>
-                      {!p.is_default && (
-                        <button
-                          className="link"
-                          onClick={async () => {
-                            await setDefaultPortion(food.id, p.id);
-                            await onChanged();
-                          }}
-                        >
-                          make default
-                        </button>
-                      )}
+                    {!p.is_default && (
                       <button
                         className="link"
                         onClick={async () => {
-                          await deletePortion(p.id);
+                          await setDefaultPortion(food.id, p.id);
                           await onChanged();
                         }}
                       >
-                        remove
+                        Make default
                       </button>
-                    </span>
-                  </li>
+                    )}
+                    <button
+                      className="link link--bad"
+                      onClick={async () => {
+                        await deletePortion(p.id);
+                        await onChanged();
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
 
-            <div className="portion-row">
-              <label>
-                <span>1 of</span>
-                <MeasureSelect
-                  value={measure}
-                  onChange={setMeasure}
-                  allowBlank={false}
-                />
-              </label>
-              <label>
-                <span>weighs (g)</span>
-                <input
-                  type="number"
-                  value={weight}
-                  placeholder={
-                    measure
-                      ? String(resolvePortion(1, measure, anchors).grams)
-                      : ''
-                  }
-                  onChange={(e) => setWeight(e.target.value)}
-                />
-              </label>
-              <button
-                disabled={!measure || !weight}
-                onClick={async () => {
-                  await upsertPortion({
-                    foodId: food.id,
-                    measure: measure as string,
-                    quantity: 1,
-                    netWeightG: Number(weight),
-                    source: 'user',
-                  });
-                  setWeight('');
-                  await onChanged();
-                }}
-              >
-                Record
-              </button>
+            <div className="field-lbl" style={{ marginTop: portions.length ? 14 : 4 }}>
+              Add a portion
             </div>
+            <label className="dv-f">
+              <span>Measure</span>
+              <MeasureSelect value={measure} onChange={setMeasure} allowBlank={false} />
+            </label>
+            <label className="dv-f">
+              <span>1 {measure ? (toMeasure(measure)?.label ?? measure) : 'of it'} weighs, in grams</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={weight}
+                placeholder={measure ? String(resolvePortion(1, measure, anchors).grams) : ''}
+                onChange={(e) => setWeight(e.target.value)}
+              />
+            </label>
             {measure && !weight && (
-              <p className="small muted">
+              <p className="small muted" style={{ margin: '8px 2px 0' }}>
                 {(() => {
                   const r = resolvePortion(1, measure, anchors);
                   return r.measured
-                    ? `Right now 1 ${toMeasure(measure)?.label} works out to ${r.grams}g — ${r.note}.`
-                    : `Nothing recorded for this yet, so it would use ${r.grams}g.`;
+                    ? `Right now 1 ${toMeasure(measure)?.label} works out to ${r.grams} g: ${r.note}.`
+                    : `Nothing recorded for this yet, so it would use ${r.grams} g.`;
                 })()}
               </p>
             )}
+            <button
+              className="bk-btn bk-btn--go"
+              disabled={!measure || !weight}
+              onClick={async () => {
+                await upsertPortion({
+                  foodId: food.id,
+                  measure: measure as string,
+                  quantity: 1,
+                  netWeightG: Number(weight),
+                  source: 'user',
+                });
+                setWeight('');
+                await onChanged();
+              }}
+            >
+              Record portion
+            </button>
           </div>
         )}
       </div>
