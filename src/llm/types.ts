@@ -53,6 +53,20 @@ export type ChatResult = {
   model?: string;
   /** Wall-clock milliseconds for the request. */
   ms: number;
+  /** The provider's own limits, when it sends them and the browser may read them. */
+  limits?: RateLimits;
+};
+
+/**
+ * What an OpenAI-style provider says about its limits in response headers
+ * (Groq: x-ratelimit-limit-tokens is per minute, -requests per day). Null
+ * when absent, or when the provider does not expose them to a browser.
+ */
+export type RateLimits = {
+  tokensPerMinute: number | null;
+  requestsPerDay: number | null;
+  tokensLeft: number | null;
+  requestsLeft: number | null;
 };
 
 /**

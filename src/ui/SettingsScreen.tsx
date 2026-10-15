@@ -21,6 +21,7 @@ import { describeRedactions } from '../safety/deidentify';
 import { LlmError } from '../llm/types';
 import { BackupCard } from './BackupCard';
 import { RemindersCard } from './RemindersCard';
+import { ModelCheck } from './ModelCheck';
 import { DEMO } from '../lib/demo';
 
 type TestState =
@@ -181,6 +182,10 @@ export function SettingsScreen({
               {savedAt ? 'Saved' : 'Save'}
             </button>
           </div>
+
+          {/* Not in the demo: its provider is the shared relay, and a check
+              would spend the shared allowance. */}
+          {provider.key !== 'demo' && <ModelCheck cfg={s} needsKey={provider.needsKey} />}
 
           {test.kind === 'ok' && (
             <div className="result result--ok">

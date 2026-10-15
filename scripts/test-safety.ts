@@ -39,6 +39,8 @@ import {
 import { R1_TEST_PHRASES, RED_FLAGS, triage } from '../src/safety/redflags';
 import { countByLabel, suggestLabel } from '../src/domain/symptomlabels';
 import type { ExportInput, ExportItem } from '../src/domain/export';
+import { QUESTIONS, runCheck, runQuestion, SPACING_MS, summaryOf, verdictOf } from '../src/domain/modelcheck';
+import { SYSTEM_PROMPT } from '../src/llm/askprompt';
 import { dawaAdherence, daysArg, FEW_EPISODES, pairsOf, runTool, symptomLog, thaliBeforeSymptom, thaliDay, thaliSummary, toolLabel, TOOLS, weightTrend } from '../src/domain/tools';
 import { chatWithTools, DATA_HEADER, MAX_TOOL_STEPS } from '../src/llm/toolloop';
 import { LlmError, type ChatOptions, type ChatResult, type ToolCall } from '../src/llm/types';
@@ -1405,6 +1407,79 @@ section('Planning a day: the gates come first, and a model supplies only the day
   // A model that smuggles a figure into the words it passes gets the same
   // reading a person would: the floor still holds.
   check('a figure a model puts in the words is read like any other', [belowFloor(planRequest('plan tomorrow at 400 kcal')!), planRequest('plan tomorrow with 90 g protein')?.protein], [true, 90]);
+}
+
+section('The model check: two made-up questions, judged as the chat judges');
+{
+  const cfg = { provider: 'groq', baseUrl: 'https://api.example.invalid/v1', model: 'm', apiKey: 'k' };
+  const call = (id: string, name: string, args: unknown): ToolCall => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+  const reply = (text: string, toolCalls: ToolCall[] = [], tokens = 2000): ChatResult => ({ text, toolCalls, usage: { totalTokens: tokens }, ms: 1 });
+  /** A model scripted per request; what it was sent is kept. */
+  const model = (script: (ChatResult | Error)[]) => {
+    const seen: ChatOptions[] = [];
+    const ask = async (_c: unknown, o: ChatOptions) => {
+      seen.push(o);
+      const next = script[Math.min(seen.length - 1, script.length - 1)];
+      if (next instanceof Error) throw next;
+      return next;
+    };
+    return { ask, seen };
+  };
+  const [meals, meds] = QUESTIONS;
+
+  check('two questions, made up, one about meals and one about medicines', QUESTIONS.map((q) => [q.id, q.expect]), [['meals', 'thali_day'], ['meds', 'dawa_adherence']]);
+  check('a minute apart', SPACING_MS, 60_000);
+  // Shaped like the real lookups, so a model is judged on what it will get.
+  check('the made-up day has the real thali_day fields', Object.keys(meals.record as object).sort(), Object.keys(thaliDay(REC, '2026-10-09')).sort());
+  check('the made-up week has the real dawa_adherence fields', Object.keys(meds.record as object).sort(), Object.keys(dawaAdherence(REC)).sort());
+
+  const good = model([reply('', [call('c', 'thali_day', { days_ago: 1 })]), reply('- **Breakfast**: poha, 270 Cal.\n- **Dinner**: dal and rice, 180 and 200 Cal. 650 Cal in all.')]);
+  const g = await runQuestion(cfg, meals, good.ask);
+  check('a good model: looked up the day, answered, kept to the figures', [g.lookedUp, g.rightLookup, g.answered, g.invented], [true, true, true, []]);
+  check('two requests, their tokens counted', [g.requests, g.tokens], [2, 4000]);
+  check('it was sent Ask Mealo\'s own instructions', good.seen[0].messages[0].content, SYSTEM_PROMPT);
+  check('and the full list of lookups', good.seen[0].tools?.length, TOOLS.length);
+  check('and no one\'s record: the second request carries the made-up day', good.seen[1].messages.some((m) => m.role === 'tool' && m.content.includes('Poha')), true);
+
+  const lazy = model([reply('You ate about 1,900 Cal yesterday, mostly carbs.')]);
+  const l = await runQuestion(cfg, meals, lazy.ask);
+  check('a model that does not look anything up', [l.lookedUp, l.rightLookup], [false, false]);
+  check('and puts a figure in nothing it was given', l.invented.length, 1);
+
+  const wrongDay = model([reply('', [call('c', 'thali_day', { days_ago: 0 })]), reply('Today: nothing logged.')]);
+  check('looking up the wrong day is not the right lookup', (await runQuestion(cfg, meals, wrongDay.ask)).rightLookup, false);
+
+  const silent = model([reply('', [call('c', 'dawa_adherence', { days: 7 })]), reply(''), reply('')]);
+  const sq = await runQuestion(cfg, meds, silent.ask);
+  check('words that never come back are not an answer', [sq.rightLookup, sq.answered], [true, false]);
+
+  const limited = model([new LlmError('429 Too Many Requests', 'http', 429, 'rate limit')]);
+  const e = await runQuestion(cfg, meals, limited.ask);
+  check('a refusal is reported, not judged', [!!e.error, e.lookedUp], [true, false]);
+
+  check('the verdicts', [
+    verdictOf([g, { ...g, id: 'meds' }]),
+    verdictOf([l, { ...l, id: 'meds' }]),
+    verdictOf([g, sq]),
+    verdictOf([g, e]),
+  ], ['good', 'poor', 'partly', 'failed']);
+
+  // The whole check: both asked, the minute waited out between them.
+  const both = model([
+    reply('', [call('a', 'thali_day', { days_ago: 1 })]), reply('Poha, 270 Cal; dal and rice. 650 Cal.'),
+    reply('', [call('b', 'dawa_adherence', { days: 7 })]), reply('13 of 14 doses taken; Iron was missed once.'),
+  ]);
+  let waited = 0;
+  const steps: number[] = [];
+  const res = await runCheck(cfg, (st) => steps.push(st.question), both.ask, async (ms) => { waited += ms; });
+  check('the whole check: good, four requests', [res.verdict, res.requests, res.questions.length], ['good', 4, 2]);
+  check('about a minute waited before the second question', waited >= 55_000 && waited <= 60_000, true);
+  check('the screen is told which question is on', steps.includes(1) && steps.includes(2), true);
+  check('in words for the list', [summaryOf(res), summaryOf({ ...res, verdict: 'poor' })], ['good · 8,000 tokens', 'does not look things up']);
+
+  const stops = model([new LlmError('401 Unauthorized', 'http', 401, 'invalid key')]);
+  const halted = await runCheck(cfg, () => {}, stops.ask, async () => {});
+  check('a refused first question ends the check: no second spend', [halted.questions.length, halted.verdict, stops.seen.length], [1, 'failed', 1]);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

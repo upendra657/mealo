@@ -41,7 +41,7 @@ const DAYS = {
   type: 'integer',
   minimum: MIN_DAYS,
   maximum: MAX_DAYS,
-  description: `How many days back from today, today included (${MIN_DAYS} to ${MAX_DAYS}).`,
+  description: 'Days back, today included.',
 } as const;
 
 const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): ToolDef => ({
@@ -53,45 +53,53 @@ const fn = (name: string, description: string, properties: Record<string, unknow
  * What the model is told it can ask for. The descriptions are instructions
  * to a model, so they say when to use a tool and what comes back, and
  * nothing about how.
+ *
+ * Short on purpose (15 Oct 2026). This list goes with every request, and at
+ * ~5,900 characters it was the largest fixed cost of a question: about 1,500
+ * tokens before the person had said anything, against a free tier of 8,000
+ * tokens a minute. What a description must not lose is its limit, kept in
+ * every one that has one: a lookup shows what turns up together and not a
+ * cause; a card saves nothing until the person presses it; nothing says what
+ * to take or how much; the app, not the model, builds a plan or a report.
  */
 export const TOOLS: ToolDef[] = [
   fn('thali_summary',
-    'Meals over a period, worked out by the app: average calories, protein, carbs, fats and fibre on logged days against the targets, days logged, days within the calorie target, the dishes that supplied the most of each, and when meals are eaten. Use for any question about eating over more than one day.',
+    'Eating over several days: average calories and macros against targets, days logged, top dishes, meal times.',
     { days: DAYS }, ['days']),
   fn('thali_day',
-    'Everything eaten on one day, meal by meal and dish by dish, with amounts and the five figures for each dish, and the day\'s totals. Use for a question about a particular day.',
-    { days_ago: { type: 'integer', minimum: 0, maximum: MAX_DAYS - 1, description: '0 for today, 1 for yesterday, and so on.' } }, ['days_ago']),
+    'Everything eaten on one day, by meal and dish, with amounts and totals.',
+    { days_ago: { type: 'integer', minimum: 0, maximum: MAX_DAYS - 1, description: '0 today, 1 yesterday.' } }, ['days_ago']),
   fn('thali_before_symptom',
-    'What was eaten in the hours before each time a symptom was logged, and how often each dish turns up before it compared with how often it is eaten at all. Use when asked what might go with a symptom. It shows what turns up together; it cannot show a cause.',
-    { symptom: { type: 'string', description: 'The symptom, in a word or two, e.g. "bloating".' },
-      hours: { type: 'integer', minimum: 1, maximum: 72, description: 'How many hours before each entry to look at. 24 if unsure.' },
+    'What was eaten in the hours before each logged symptom, and how often each dish appears before it versus overall. Shows what turns up together, not a cause.',
+    { symptom: { type: 'string', description: 'A word or two, e.g. "bloating".' },
+      hours: { type: 'integer', minimum: 1, maximum: 72, description: 'Hours before each entry; 24 if unsure.' },
       days: DAYS }, ['symptom']),
   fn('dawa_adherence',
-    'Medicine doses over a period, worked out by the app: taken, skipped, missed and still due; doses not taken by medicine and time of day; the medicines of the period; sick periods. Use for any question about doses or medicines taken.',
+    'Medicine doses over a period: taken, skipped, missed, due, by medicine and time of day; sick periods.',
     { days: DAYS }, ['days']),
   fn('weight_trend',
-    'Logged weights over a period, the change between the first and last reading, the goal weight, and average daily burn against its goal.',
+    'Weights over a period, the change, the goal weight, and average daily burn.',
     { days: DAYS }, ['days']),
   fn('symptom_log',
-    'Symptoms logged over a period, each with its day and whether it is still open, in the person\'s own words.',
+    'Symptoms logged over a period, in the person\'s words, open or not.',
     { days: DAYS }, ['days']),
   fn('propose_meal',
-    'Put a "log a meal" card on screen for the person to confirm, when they say they ate or drank something. Pass their own words for the food. The app matches the dishes and works out the calories; nothing is saved unless they press the button. Do not add dishes or amounts they did not say.',
-    { text: { type: 'string', description: 'What they said they had, in their words, e.g. "2 roti and 1 katori dal".' } }, ['text']),
+    'Show a card to log a meal they say they had, from their own words. Saves nothing until they press it. Add no dishes or amounts they did not say.',
+    { text: { type: 'string', description: 'Their words, e.g. "2 roti and 1 katori dal".' } }, ['text']),
   fn('propose_doses',
-    'Put the "tick my doses" card on screen, listing the doses due now, when the person says they took or skipped their medicines. They tick each one themselves. Never say what to take or how much.',
+    'Show the card of doses due, when they say they took or skipped medicines; they tick each. Never say what to take or how much.',
     {}),
   fn('propose_symptom',
-    'Put a "log a symptom" card on screen for the person to confirm, when they describe how they feel and want it recorded. Pass their own words.',
-    { words: { type: 'string', description: 'The symptom in their words.' } }, ['words']),
+    'Show a card to log a symptom they describe, in their words. Saves nothing until they press it.',
+    { words: { type: 'string', description: 'Their words.' } }, ['words']),
   fn('propose_plan',
-    'Put a "plan a day" card on screen, when the person asks for a day\'s meals to be planned. Pass their own words. The app builds the day itself, only from meals they have logged in the last four weeks with the amounts they logged, and adds up the totals; you do not choose dishes or amounts and must not list any. Nothing is saved unless they press the button.',
-    { words: { type: 'string', description: 'The request in their words, e.g. "plan tomorrow so I hit 90 g protein".' },
-      days_ahead: { type: 'integer', minimum: 0, maximum: DAYS_AHEAD, description: '0 for today, 1 for tomorrow, up to 7.' } }, ['words', 'days_ahead']),
+    'Show a card that plans a day, when they ask. The app builds it from meals they logged; do not list dishes or amounts. Saves nothing until they press it.',
+    { words: { type: 'string', description: 'Their request, in their words.' },
+      days_ahead: { type: 'integer', minimum: 0, maximum: DAYS_AHEAD, description: '0 today, 1 tomorrow.' } }, ['words', 'days_ahead']),
   fn('prepare_report',
-    'Open the report sheet for the person, already filled in. Use when they ask for a report or an export. You do not write the report: the app does, after the person has seen the dates and pressed the button.',
+    'Open the report sheet, filled in, when they ask for a report or export. The app writes it after they press the button.',
     { scope: { type: 'string', enum: ['meals', 'meds', 'full'] }, days: DAYS,
-      for: { type: 'string', enum: ['human', 'ai'], description: '"human" for a report to read, "ai" for a file to give another AI.' } }, ['scope', 'days']),
+      for: { type: 'string', enum: ['human', 'ai'], description: '"human" to read, "ai" for another AI.' } }, ['scope', 'days']),
 ];
 
 export type ToolName =

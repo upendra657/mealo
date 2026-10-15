@@ -230,7 +230,17 @@ export async function chat(
   }
 
   const message = json.choices?.[0]?.message;
+  const header = (name: string) => {
+    const v = Number(res.headers.get(name));
+    return res.headers.get(name) !== null && Number.isFinite(v) ? v : null;
+  };
   return {
+    limits: {
+      tokensPerMinute: header('x-ratelimit-limit-tokens'),
+      requestsPerDay: header('x-ratelimit-limit-requests'),
+      tokensLeft: header('x-ratelimit-remaining-tokens'),
+      requestsLeft: header('x-ratelimit-remaining-requests'),
+    },
     text: message?.content ?? '',
     toolCalls: message?.tool_calls ?? [],
     model: json.model,

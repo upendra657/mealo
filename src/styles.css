@@ -4374,6 +4374,15 @@ button.am-opt {
 .portions-edit .dv-copy .link { flex: none; font-size: 14px; }
 .portions-edit .field-lbl { margin-bottom: 0; }
 
+/* The model check's result (ui/ModelCheck.tsx). */
+.mc-box { margin-top: 10px; }
+.mc-rows { margin-top: 8px; }
+.mc-row { display: flex; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.mc-mark { flex: none; width: 18px; font-weight: 600; color: var(--warn); }
+.mc-mark[data-ok] { color: var(--ok); }
+.mc-t { color: var(--ink-text); }
+.mc-d { display: block; margin-top: 2px; }
+
 /* The overnight line on the Day screen (domain/fasting.ts): quiet on
    purpose. Muted, no colour for "good" or "long", nothing to aim at. */
 .fastline {
