@@ -69,7 +69,7 @@ export type MealSummary = {
 
 export type StateFacts = {
   /**
-   * Today, as "Sun 18 Oct". Added 16 Oct 2026 with the weekly summary: the
+   * Today, as "Sun 18 Oct". Added 15 Oct 2026 with the weekly summary: the
    * lookups count days back from today, and a model asked about "the week
    * of 11 to 17 Oct" could not tell which days back those were. A date says
    * nothing about who someone is; R5 lets dates through for that reason.

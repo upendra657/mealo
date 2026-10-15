@@ -183,7 +183,7 @@ export function MedFormScreen({
     setQuery('');
   };
 
-  // Reference lists on this device — HSA, and whatever has been imported —
+  // Reference lists on this device — whatever has been imported —
   // searched as you type, a moment after the typing stops.
   const [refFound, setRefHits] = useState<RefHit[]>([]);
   // Hidden rather than cleared when the query is too short, so the effect

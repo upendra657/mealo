@@ -2,7 +2,7 @@
  * Show working: what Ask Mealo looked up for an answer, what came back, and
  * what the app took out of what it wrote.
  *
- * Approved 16 Oct 2026 from a mock-up: the working opens in place under the
+ * Approved 15 Oct 2026 from a mock-up: the working opens in place under the
  * answer, each lookup in plain rows, with "Exactly what was sent" for the
  * text the model received word for word; off until switched on in Dev,
  * because most people asking about their dinner do not want the plumbing.

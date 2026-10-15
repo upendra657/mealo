@@ -83,7 +83,7 @@ export type WeekText = {
  * A point under a heading whose list was empty is removed: the model was
  * told to write nothing there, so whatever it wrote is its own judgement.
  * So is a point that carries none of its own list's figures. Seen on the
- * first render, 16 Oct 2026: "Meals were logged on 6 of 7 days, against 6
+ * first render, 15 Oct 2026: "Meals were logged on 6 of 7 days, against 6
  * the week before" under BETTER, every figure true, the week no better. A
  * target or a count of logged days is shared by both lists and anchors
  * nothing; what anchors a point is the figure that moved.

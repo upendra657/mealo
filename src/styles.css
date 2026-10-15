@@ -4516,7 +4516,7 @@ button.am-opt {
 /* On paper: the report alone, dark ink on white. The app has one theme and
    it is dark; a printed page is not the app, and a page of black costs a
    cartridge and reads worse. */
-/* -- the weekly summary (WeekView.tsx), approved from the mock-up, 16 Oct 2026 */
+/* -- the weekly summary (WeekView.tsx), approved from the mock-up, 15 Oct 2026 */
 /* The week before, under each figure. Grey and in the figures' own type:
    a comparison to read, not a verdict, so never green or red. */
 .wk-was {
@@ -4589,7 +4589,7 @@ button.am-opt {
   opacity: 0.3;
 }
 
-/* -- Show working (Working.tsx), approved from the mock-up, 16 Oct 2026.
+/* -- Show working (Working.tsx), approved from the mock-up, 15 Oct 2026.
    Quiet on purpose: it is for checking an answer, not part of it. */
 .sw-link {
   align-self: flex-start;

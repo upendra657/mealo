@@ -44,7 +44,7 @@ export function SettingsScreen({
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [open, setOpen] = useState<null | 'told' | 'left' | 'meds'>(null);
-  /** Show working under Ask Mealo's answers. Off until switched on here (his call, 16 Oct 2026). */
+  /** Show working under Ask Mealo's answers. Off until switched on here (his call, 15 Oct 2026). */
   const [working, setWorking] = useState(false);
   const flip = (k: NonNullable<typeof open>) => setOpen((o) => (o === k ? null : k));
 

@@ -1687,6 +1687,21 @@ section('Importing a medicine list: Excel');
   let refused = '';
   try { readXlsx(enc('not a zip at all')); } catch (e) { refused = (e as Error).message; }
   check('an old .xls or anything else is refused in words', refused.includes('.xlsx'), true);
+
+  // A sheet by name: CoFID's figures are on its fourth sheet, after notes
+  // (scripts/import-starter.ts). Notes come first here too, so a name that
+  // was ignored and read the first sheet would give the wrong rows.
+  const two = zipSync({
+    'xl/workbook.xml': enc('<workbook><sheets><sheet name="Notes" sheetId="1" r:id="rId1"/><sheet name="1.3 Proximates" sheetId="2" r:id="rId2"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': enc('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>'),
+    'xl/worksheets/sheet1.xml': enc('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Read me</t></is></c></row></sheetData></worksheet>'),
+    'xl/worksheets/sheet2.xml': enc('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Food Code</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>12-467</t></is></c></row></sheetData></worksheet>'),
+  });
+  check('with no name, still the first sheet', readXlsx(two), [['Read me']]);
+  check('a sheet by its name', readXlsx(two, '1.3 Proximates'), [['Food Code'], ['12-467']]);
+  let missing = '';
+  try { readXlsx(two, 'Vitamins'); } catch (e) { missing = (e as Error).message; }
+  check('a name the file does not have is said, not read as the first', missing, 'No sheet called "Vitamins" in this file.');
 }
 
 section('The banner: one medicines card');

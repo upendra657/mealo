@@ -109,7 +109,7 @@ export async function clearStaleImports(now = Date.now()): Promise<number> {
   return stale.length;
 }
 
-/** Remove a list the person imported. The bundled one comes back on its own. */
+/** Remove a list the person imported. */
 export async function deleteSet(id: string): Promise<void> {
   await removeSet(id);
 }
@@ -310,51 +310,39 @@ export async function searchReference(q: string, limit = 8): Promise<RefHit[]> {
   });
 }
 
-// --------------------------------------------------------------- bundled
+// ------------------------------------------------------- once bundled
 
 /**
- * The lists that ship with the app — the Singapore HSA register — loaded into
- * the same tables on first start and again whenever the bundled copy changes.
- * Not awaited by the shell: search simply has no HSA rows until it is done.
+ * Singapore's HSA register shipped with the app until 15 Oct 2026 and was
+ * loaded into every phone on start. Upendra's call that night: "we do not
+ * buy medicines in Singapore; only the Indian options are relevant". It was
+ * 71% of a fresh database and was copied again into every in-phone backup,
+ * about 7 MB of a settled phone's 12. It stays a choice: its file imports
+ * like any other list, and the importer still recognises its columns.
  *
- * Once per page, whoever calls. React runs a development effect twice; the
- * first build of this started two loads side by side, neither saw the other's
- * list, and Singapore was in search twice.
+ * So a phone that has the bundled copy drops it: only the set the app's own
+ * loader wrote, built in and tagged HSA. An import from Dev is never built
+ * in, so a list someone imported, a Singapore one included, stays. Nothing
+ * points at these rows: a medicine saved from a suggestion is its own copy in
+ * the library, so no saved medicine changes.
+ *
+ * No VACUUM after it, on purpose (his words, 15 Oct 2026: "Make sure nothing
+ * happens to the existing data … TOP PRIORITY"). VACUUM rewrites the whole
+ * database file to give the space back; SQLite makes that safe, but it is
+ * the one step here that touches every row, and the space is not needed
+ * back: freed pages stay in the file and are reused as meals are logged.
+ * The in-phone copies are made with VACUUM INTO, so they shrink by
+ * themselves.
  */
-let builtins: Promise<void> | null = null;
-export function ensureBuiltins(): Promise<void> {
-  builtins ??= loadBuiltins().finally(() => {
-    builtins = null;
-  });
-  return builtins;
+export async function retireBundled(): Promise<number> {
+  const old = await db.query<{ id: string }>("SELECT id FROM med_ref_sets WHERE builtin = 1 AND tag = 'HSA'");
+  for (const s of old) await removeSet(s.id);
+  return old.length;
 }
 
-async function loadBuiltins(): Promise<void> {
-  const { default: hsa } = await import('../data/hsa.json');
-  const current = await db.query<RefSet>(
-    "SELECT * FROM med_ref_sets WHERE builtin = 1 AND tag = 'HSA' AND status = 'ready' AND deleted_at IS NULL",
-  );
-  if (current.some((s) => s.version === hsa.version)) return;
-  const { PRESETS } = await import('../lib/tabular');
-  const preset = PRESETS.find((p) => p.id === 'hsa-singapore')!;
-  await importList(
-    { kind: 'rows', header: hsa.header, rows: hsa.rows },
-    { name: preset.name, tag: preset.tag, source_url: preset.source_url, licence: preset.licence, builtin: true, version: hsa.version },
-    preset.mapping,
-    undefined,
-    current[0]?.id ?? null,
-  );
-  // Any other copy — another tab loading at the same moment — goes, so the
-  // phone settles on exactly one whatever raced.
-  const now = await db.query<RefSet>(
-    "SELECT * FROM med_ref_sets WHERE builtin = 1 AND tag = 'HSA' ORDER BY imported_at DESC",
-  );
-  for (const old of now.slice(1)) await removeSet(old.id);
-}
-
-/** Start-up work for the lists, once per page: clear the abandoned, load the bundled. */
+/** Start-up work for the lists, once per page: clear the abandoned, and the once bundled. */
 let startup: Promise<void> | null = null;
 export function startLists(): Promise<void> {
-  startup ??= clearStaleImports().then(() => ensureBuiltins());
+  startup ??= clearStaleImports().then(() => retireBundled()).then(() => undefined);
   return startup;
 }

@@ -1,7 +1,7 @@
 /**
  * The weekly summary, in Ask Mealo.
  *
- * Upendra's call, 16 Oct 2026: Ask Mealo is where a week is talked about,
+ * Upendra's call, 15 Oct 2026: Ask Mealo is where a week is talked about,
  * so the week lives there, and nowhere else. It arrives in the thread on
  * the first opening after a week ends (or from the Sunday reminder), and
  * "Your week" opens the sheet whose arrows step back through earlier ones.

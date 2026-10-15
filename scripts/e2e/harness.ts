@@ -108,7 +108,7 @@ import {
 import { addDays, dateOf, EVERY_DAY, medDay, scheduleOf } from '../../src/domain/doses';
 import { applyMeds, collectMeds } from '../../src/domain/medsync';
 import { upgradeFromPrevious } from './upgrade';
-import { clearStaleImports, ensureBuiltins, importList, listSets, searchReference } from '../../src/domain/refdata';
+import { clearStaleImports, importList, listSets, retireBundled, searchReference } from '../../src/domain/refdata';
 import { presetFor } from '../../src/lib/tabular';
 import { bulkInsert } from '../../src/db/client';
 import { strToU8, zipSync } from 'fflate';
@@ -1733,19 +1733,26 @@ async function main() {
     check('and the abandoned one is cleared on the next start',
       Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM med_ref_items WHERE set_id = 'stale'"))[0].n) === 0);
 
-    // The bundled HSA register.
-    // Twice at once, the way React's development effects and two open tabs
-    // call it: one HSA list either way.
-    await Promise.all([ensureBuiltins(), ensureBuiltins()]);
-    const hsaSets = (await listSets()).filter((x) => x.builtin === 1);
-    check('the HSA register loads on start', hsaSets.length === 1 && hsaSets[0].tag === 'HSA' && hsaSets[0].row_count > 5000,
-      JSON.stringify(hsaSets.map((x) => [x.tag, x.row_count])));
-    await ensureBuiltins();
-    check('and only once for one version', (await listSets()).filter((x) => x.builtin === 1).length === 1);
-    const panadol = await searchReference('norphen');
-    check('a Singapore product is found with its HSA tag and lined-up strengths',
-      panadol[0]?.tag === 'HSA' && panadol[0]?.ingredients.map((i) => i.strength).join() === '35 mg,450 mg',
-      JSON.stringify(panadol[0]));
+    // The HSA register, bundled until 15 Oct 2026, leaves a phone that has
+    // it: written here as the old loader wrote it (builtin = 1). The
+    // imported fixture lists, and every medicine, stay.
+    await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, version, updated_at) VALUES ('hsa-old', 'Singapore HSA register', 'HSA', 1, 'ready', 1, 0, '2026-09-01', 1)");
+    await sql(`INSERT INTO med_ref_items (id, set_id, name, name_norm, ingredients, discontinued, updated_at) VALUES ('hsa-old.1', 'hsa-old', 'NORPHEN TABLET', 'norphen tablet', '[{"name":"Orphenadrine","strength":"35 mg"}]', 0, 1)`);
+    check('the bundled register is searched while it is there', (await searchReference('norphen'))[0]?.tag === 'HSA');
+    const listsBefore = (await listSets()).filter((x) => x.builtin === 0).map((x) => x.id).sort().join();
+    const medsBefore = JSON.stringify(await query('SELECT id, name FROM med_products ORDER BY id'));
+    check('a start removes it', (await retireBundled()) === 1 && (await listSets()).every((x) => x.builtin === 0));
+    check('with its rows', Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM med_ref_items WHERE set_id = 'hsa-old'"))[0].n) === 0 &&
+      (await searchReference('norphen')).length === 0);
+    check('and leaves every imported list', (await listSets()).filter((x) => x.builtin === 0).map((x) => x.id).sort().join() === listsBefore);
+    check('and every saved medicine', JSON.stringify(await query('SELECT id, name FROM med_products ORDER BY id')) === medsBefore);
+    check('a second start finds nothing to do', (await retireBundled()) === 0);
+    // A Singapore list someone imported themselves is theirs, and stays.
+    await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, updated_at) VALUES ('hsa-mine', 'My HSA import', 'HSA', 0, 'ready', 1, 0, 1)");
+    await sql(`INSERT INTO med_ref_items (id, set_id, name, name_norm, ingredients, discontinued, updated_at) VALUES ('hsa-mine.1', 'hsa-mine', 'NORPHEN TABLET', 'norphen tablet', '[]', 0, 1)`);
+    check('an imported Singapore list is never retired', (await retireBundled()) === 0 && (await searchReference('norphen'))[0]?.setId === 'hsa-mine');
+    await sql("DELETE FROM med_ref_items WHERE set_id = 'hsa-mine'");
+    await sql("DELETE FROM med_ref_sets WHERE id = 'hsa-mine'");
     check('and still no meal row changed', JSON.stringify(await counts()) === JSON.stringify(before));
   }
 
@@ -2162,6 +2169,29 @@ async function main() {
     const names = JSON.stringify(await query('SELECT name FROM profiles ORDER BY id'));
     check('the demo seeder writes nothing into a database that has data', (await seedDemo()) === false && (await tally()) === before, before);
     check('and renames nobody', JSON.stringify(await query('SELECT name FROM profiles ORDER BY id')) === names, names);
+  }
+
+  // ---- the HSA register leaves a full phone, and nothing else moves ------
+  // His instruction, 15 Oct 2026: nothing may happen to the data on the
+  // phones. By here the database holds two profiles, meals, portions,
+  // medicines, doses, weights, symptoms and chat; every row of every table
+  // a person logged into, and every imported list, must be the same after
+  // the start-up clean-up as before it, value for value.
+  step('retiring the bundled register');
+  {
+    const KEPT = ['profiles', 'meals', 'meal_items', 'custom_foods', 'food_portions', 'food_aliases', 'medications', 'med_doses', 'med_products',
+      'intake_events', 'sick_episodes', 'weights', 'burns', 'symptoms', 'targets', 'messages', 'conversation_summaries', 'current_state', 'foods'];
+    const snapshot = async () => JSON.stringify(await Promise.all([
+      ...KEPT.map(async (t) => [t, await query(`SELECT * FROM ${t} ORDER BY rowid`)]),
+      ['imported lists', await query("SELECT * FROM med_ref_sets WHERE NOT (builtin = 1 AND tag = 'HSA') ORDER BY rowid")],
+      ['imported rows', await query("SELECT i.* FROM med_ref_items i JOIN med_ref_sets s ON s.id = i.set_id WHERE NOT (s.builtin = 1 AND s.tag = 'HSA') ORDER BY i.rowid")],
+    ]));
+    await sql("INSERT INTO med_ref_sets (id, name, tag, builtin, status, row_count, skipped, version, updated_at) VALUES ('hsa-full', 'Singapore HSA register', 'HSA', 1, 'ready', 2, 0, '2026-09-01', 1)");
+    await sql("INSERT INTO med_ref_items (id, set_id, name, name_norm, ingredients, discontinued, updated_at) VALUES ('hsa-full.1', 'hsa-full', 'A TABLET', 'a tablet', '[]', 0, 1), ('hsa-full.2', 'hsa-full', 'B TABLET', 'b tablet', '[]', 0, 1)");
+    const held = await snapshot();
+    check('there is a full record to protect', JSON.parse(held).filter((t: [string, unknown[]]) => t[1].length > 0).length >= 12, held.slice(0, 200));
+    check('the start-up clean-up removes the register', (await retireBundled()) === 1);
+    check('and every other row on the phone is exactly as it was', (await snapshot()) === held);
   }
 
   // ---- backup and restore ------------------------------------------------

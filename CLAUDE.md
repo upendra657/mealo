@@ -32,9 +32,9 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 1059 pure-logic assertions, node, fast
+npm run test:portions  # 1062 pure-logic assertions, node, fast
 npm run test:safety    # 1252 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 499 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 506 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -196,7 +196,7 @@ it more often", never "causes": a symptom's start time (`started_at`, v15) is
 read from the words by code (`domain/symptomtime.ts`) or set on the card.
 
 **The weekly summary: code judges, the model only writes** (`domain/week.ts`,
-`safety/weekly.ts`, `ui/WeekView.tsx`; 16 Oct 2026). Weeks run Sunday to
+`safety/weekly.ts`, `ui/WeekView.tsx`; 15 Oct 2026). Weeks run Sunday to
 Saturday; a ring at Sunday 10:00 says only "Your week is ready", and the week
 arrives in Ask Mealo's thread once, with "Your week" stepping back eight
 weeks. Figures come from `humanReport` over the same collected record.
@@ -244,9 +244,11 @@ never leaves its phone; who takes what — doses, ticks, sicknesses — never
 travels at all.
 
 **Medicine lists are the device's, not anyone's record.** `med_ref_sets` and
-`med_ref_items` hold the bundled HSA Singapore register (`scripts/import-hsa.mjs`
-→ `src/data/hsa.json`; re-run when HSA refreshes, about every six months) and
-any list imported in Dev from CSV or Excel. Never synced, never in the shared
+`med_ref_items` hold the lists imported in Dev from CSV or Excel (the A–Z
+India list is the one in use; the importer also knows HSA Singapore's
+columns). Nothing is bundled since 15 Oct 2026: the HSA register was 71% of
+a fresh database and copied into every in-phone backup, and `retireBundled`
+removes it from a phone that still has it. Never synced, never in the shared
 library; only a medicine someone saves from a suggestion becomes a library
 entry. Imports are staged ('importing' until complete, invisible to search,
 cleared if abandoned) and written through the worker's bulk path, which

@@ -3,7 +3,7 @@
  * the app itself counts as better or as something to work on.
  *
  * Approved 10 Oct 2026 as "code finds the observations, the AI writes it";
- * shaped by Upendra on 16 Oct from a mock-up: it rings on Sunday, covers the
+ * shaped by Upendra on 15 Oct from a mock-up: it rings on Sunday, covers the
  * seven complete days just gone (Sunday to Saturday), lives in Ask Mealo,
  * and steps back through earlier weeks so one can be held against another.
  *
@@ -56,7 +56,7 @@ export const WEEKS_BACK = 8;
 /** Days before a week begins that its figures read: the week before, and the patterns' month. */
 const LEAD_DAYS = Math.max(7, LOOK_DAYS + 2 - 7);
 
-/** The Sunday on or before a day. Weeks run Sunday to Saturday (his, 16 Oct 2026). */
+/** The Sunday on or before a day. Weeks run Sunday to Saturday (his, 15 Oct 2026). */
 export function weekStartOf(day: string): string {
   return addDays(day, -dateOf(day).getDay());
 }

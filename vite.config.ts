@@ -44,7 +44,10 @@ export default defineConfig({
       // own installer fetches them once, when the app is added to the Home
       // Screen; the running app never draws them. Cached, they added 450 kB
       // to what every phone downloads on every update.
-      includeAssets: ['favicon.png', 'apple-touch-icon.png', 'icon-192.png'],
+      // Nothing named here: the cache's own pattern below already takes every
+      // png but those two, and naming three of them as well put each in the
+      // cache twice (97 kB, found 15 Oct 2026).
+      includeAssets: [],
       includeManifestIcons: false,
       manifest: {
         name: DEMO ? 'Mealo demo' : 'Mealo',

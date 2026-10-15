@@ -3,7 +3,7 @@
  *
  * Three things ring. Doses that are due, at a clock time the person chose
  * for each part of the day; one nudge in the evening on a day with no meal
- * logged; and on Sunday, the week (since 16 Oct 2026). The week's ring says
+ * logged; and on Sunday, the week (since 15 Oct 2026). The week's ring says
  * only that it is ready: the summary needs a model, the model's key lives
  * in the browser, and nothing can write it while the app is closed, so it
  * is written when Ask Mealo is opened (domain/week.ts).
@@ -66,7 +66,7 @@ export const DEFAULT_REMINDERS: ReminderSettings = {
   times: { morning: '08:00', afternoon: '13:00', evening: '18:00', night: '21:30' },
   mealTime: '21:00',
   week: true,
-  // Mid-morning, his choice of Sunday (16 Oct 2026): late enough that
+  // Mid-morning, his choice of Sunday (15 Oct 2026): late enough that
   // Saturday's dinner has been logged, early enough to be read that day.
   weekTime: '10:00',
 };

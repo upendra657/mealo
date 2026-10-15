@@ -1,5 +1,8 @@
 /**
- * The first sheet of an Excel .xlsx file, as rows of text.
+ * One sheet of an Excel .xlsx file, as rows of text: the first, or the one
+ * named. The name is for the starter food list's build (scripts/
+ * import-starter.ts), whose CoFID figures are on the fourth sheet of the
+ * government's workbook; an import from the phone reads the first, as ever.
  *
  * An .xlsx is a zip of XML parts. fflate opens the zip; the XML is scanned
  * with regular expressions rather than DOMParser, for two reasons: it runs in
@@ -41,7 +44,7 @@ export function columnIndex(ref: string): number {
   return n - 1;
 }
 
-export function readXlsx(bytes: Uint8Array): string[][] {
+export function readXlsx(bytes: Uint8Array, sheetName?: string): string[][] {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes, {
@@ -54,7 +57,13 @@ export function readXlsx(bytes: Uint8Array): string[][] {
 
   const workbook = text('xl/workbook.xml');
   if (!workbook) throw new Error('No workbook inside this file.');
-  const rid = /<sheet\b[^>]*\br:id="([^"]+)"/.exec(workbook)?.[1];
+  const sheets = [...workbook.matchAll(/<sheet\b([^>]*)\/?>/g)].map((m) => ({
+    name: decode(/\bname="([^"]*)"/.exec(m[1])?.[1] ?? ''),
+    rid: /\br:id="([^"]+)"/.exec(m[1])?.[1],
+  }));
+  const chosen = sheetName === undefined ? sheets[0] : sheets.find((x) => x.name === sheetName);
+  if (sheetName !== undefined && !chosen) throw new Error(`No sheet called "${sheetName}" in this file.`);
+  const rid = chosen?.rid;
   const rels = text('xl/_rels/workbook.xml.rels') ?? '';
   let target: string | null = null;
   if (rid) {
@@ -66,7 +75,7 @@ export function readXlsx(bytes: Uint8Array): string[][] {
     ? target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`
     : 'xl/worksheets/sheet1.xml';
   const sheet = text(path);
-  if (!sheet) throw new Error('The first sheet could not be found inside this file.');
+  if (!sheet) throw new Error(`The ${sheetName ? `sheet "${sheetName}"` : 'first sheet'} could not be found inside this file.`);
 
   const shared: string[] = [];
   for (const m of (text('xl/sharedStrings.xml') ?? '').matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) {

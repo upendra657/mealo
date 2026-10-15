@@ -328,7 +328,7 @@ scripts/           tests (pure logic, safety, real SQLite in a browser, the
 
 1. The database never leaves the device unless the user exports it.
 2. What crosses the network is a de-identified slice, assembled per call.
-3. Facts come from sources (openFDA, RxNorm, USDA, Singapore's HSA register),
+3. Facts come from sources (openFDA, RxNorm, USDA, the medicine lists you import),
    not from weights.
 4. Fail closed — red-flag triage is code that runs before any model call.
 5. No recurring cost to anyone. Bring your own key.
@@ -338,9 +338,10 @@ scripts/           tests (pure logic, safety, real SQLite in a browser, the
 
 - `src/data/foods.json`: 329 foods from USDA FoodData Central (public domain).
   A fallback for typed meals; your own food table is what the search lists.
-- `src/data/hsa.json`: Singapore's Listing of Registered Therapeutic Products,
-  from the Health Sciences Authority under the Singapore Open Data Licence. The
-  source and version are recorded in the file.
+
+Medicine lists are not bundled. Import one in Dev → Lists from CSV or Excel:
+the importer recognises the A–Z medicine dataset of India and Singapore's HSA
+register by their columns.
 
 ## Status
 
