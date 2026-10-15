@@ -43,6 +43,7 @@ import { collectFacts, refreshCurrentState, renderSlice } from '../../src/domain
 import { appendMessage, buildContext, clearThread, loadThread } from '../../src/llm/conversation';
 import { logSymptom, openSymptoms, recentSymptoms, removeSymptom } from '../../src/domain/symptoms';
 import { buildExport, collectExport } from '../../src/domain/export';
+import { keepWeek, keptWeek, latestWeek, markWeekShown, readWeek, weekShown } from '../../src/domain/week';
 import { loadTargets, saveTargets, standing } from '../../src/domain/targets';
 import {
   burnOn,
@@ -2024,6 +2025,48 @@ async function main() {
     const other = await buildPlan({ ahead: 1, protein: null, kcal: null });
     check('one person\'s meals never plan another\'s day', !other.choices.some((c) => c.meals.some((m) => m.items.some((i) => i.label.startsWith('Plan ')))));
     await setActiveProfile(was);
+  }
+
+  // ---- the weekly summary, read from the real record ---------------------
+  // Its own person, so the weeks hold only these meals. What is tested here
+  // is the reading: the week's days and the week before split at Sunday in
+  // local time, from one read of the record, and one person's only.
+  step('the week');
+  {
+    const was = activeProfile();
+    const weekly = await createProfile('Weekly');
+    await setActiveProfile(weekly);
+    await saveDishFromPortion({ name: 'Week khichdi', quantity: 1, measure: 'katori', netWeightG: 150, energy: 200, protein: 10, fat: 5, carbs: 30, fibre: 2 });
+    const at = (iso: string, h: number) => {
+      const d = dateOf(iso);
+      d.setHours(h, 0, 0, 0);
+      return d.getTime();
+    };
+    const latest = latestWeek(localDayKey(Date.now()));
+    const khichdi = await draftFromText('1 katori week khichdi');
+    const ate = (iso: string, h: number) => saveMeal(khichdi, { mealType: h < 11 ? 'breakfast' : h < 17 ? 'lunch' : 'dinner', eatenAt: at(iso, h) });
+    await ate(latest, 13);
+    await ate(addDays(latest, 3), 13);
+    await ate(addDays(latest, 6), 23);
+    // Saturday night before it: the week before, not this one.
+    await ate(addDays(latest, -1), 22);
+    // The week still running is in neither, when it has begun.
+    if (at(addDays(latest, 7), 0) + 3_600_000 < Date.now()) await ate(addDays(latest, 7), 1);
+
+    const { cur, prev } = await readWeek(latest);
+    check('the week holds its own three days and nothing either side', cur.daysLogged === 3 && prev.daysLogged === 1, `${cur.daysLogged} / ${prev.daysLogged}`);
+    near('its calories are the meals added up, over logged days', cur.macros.energy_kcal.avg ?? -1, 200, 0.5);
+    check('its dishes are this person\'s', cur.topDishes.calories.join() === 'Week khichdi', cur.topDishes.calories.join());
+
+    await markWeekShown(latest);
+    check('the week is marked shown for this person', (await weekShown()) === latest);
+    await keepWeek(latest, { lead: 'A week.', better: [], workOn: [], removed: 0 }, 'basis');
+    check('and its lines are kept for this person', (await keptWeek(latest))?.lead === 'A week.');
+
+    await setActiveProfile(was);
+    const other = await readWeek(latest);
+    check('another person\'s week has none of these meals', !other.cur.topDishes.calories.includes('Week khichdi') && !other.prev.topDishes.calories.includes('Week khichdi'));
+    check('nor these lines, nor this mark', (await keptWeek(latest)) === null && (await weekShown()) !== latest);
   }
 
   // ---- reminders: the rings follow the record -----------------------------

@@ -102,14 +102,11 @@ export type Insights = {
 };
 
 /**
- * The model's reply, read into points and held to the four checks.
- *
- * A reply in the wrong shape gives no points and counts nothing as removed:
- * the page then says the insights could not be read, which is true, and not
- * that they were unsafe, which is not known.
+ * The four checks, for any data a model was given. `keep` returns the point
+ * as it may be shown, or null; `removed` counts the nulls. The weekly
+ * summary (weekly.ts) holds its sentences to these same checks.
  */
-export function readInsights(reply: string, x: ExportInput): Insights {
-  const data = insightData(x);
+export function pointChecker(data: unknown): { keep: (line: string, question: boolean) => string | null; removed: () => number } {
   const allowed = { numbers: numbersOf(data), pairs: pairsOf(data) };
   // A word the person recorded themselves ("Viral fever" as a sick period)
   // may be repeated back. Anything else that names a condition goes.
@@ -132,18 +129,33 @@ export function readInsights(reply: string, x: ExportInput): Insights {
     if (!ok) removed++;
     return ok ? text : null;
   };
+  return { keep, removed: () => removed };
+}
 
-  const section = (name: string, until?: string) => {
-    const start = reply.search(new RegExp(`^\\s*#*\\s*\\**${name}\\**:?\\s*$`, 'im'));
-    if (start === -1) return [];
-    const rest = reply.slice(start).split('\n').slice(1);
-    const end = until ? rest.findIndex((l) => new RegExp(`^\\s*#*\\s*\\**${until}\\**:?\\s*$`, 'i').test(l)) : -1;
-    return (end === -1 ? rest : rest.slice(0, end))
-      .map((l) => /^\s*(?:[-*•]|\d{1,2}[.)])\s+(.*)$/.exec(l)?.[1] ?? '')
-      .filter(Boolean);
-  };
+/**
+ * The points under each heading of a reply: "- a point" or "1. a point"
+ * lines between `name` and `until`, or to the end.
+ */
+export function sectionOf(reply: string, name: string, until?: string): string[] {
+  const start = reply.search(new RegExp(`^\\s*#*\\s*\\**${name}\\**:?\\s*$`, 'im'));
+  if (start === -1) return [];
+  const rest = reply.slice(start).split('\n').slice(1);
+  const end = until ? rest.findIndex((l) => new RegExp(`^\\s*#*\\s*\\**${until}\\**:?\\s*$`, 'i').test(l)) : -1;
+  return (end === -1 ? rest : rest.slice(0, end))
+    .map((l) => /^\s*(?:[-*•]|\d{1,2}[.)])\s+(.*)$/.exec(l)?.[1] ?? '')
+    .filter(Boolean);
+}
 
-  const insights = section('INSIGHTS', 'QUESTIONS').map((l) => keep(l, false)).filter((l): l is string => l !== null).slice(0, MAX_INSIGHTS);
-  const questions = section('QUESTIONS').map((l) => keep(l, true)).filter((l): l is string => l !== null).slice(0, MAX_QUESTIONS);
-  return { insights, questions, removed };
+/**
+ * The model's reply, read into points and held to the four checks.
+ *
+ * A reply in the wrong shape gives no points and counts nothing as removed:
+ * the page then says the insights could not be read, which is true, and not
+ * that they were unsafe, which is not known.
+ */
+export function readInsights(reply: string, x: ExportInput): Insights {
+  const { keep, removed } = pointChecker(insightData(x));
+  const insights = sectionOf(reply, 'INSIGHTS', 'QUESTIONS').map((l) => keep(l, false)).filter((l): l is string => l !== null).slice(0, MAX_INSIGHTS);
+  const questions = sectionOf(reply, 'QUESTIONS').map((l) => keep(l, true)).filter((l): l is string => l !== null).slice(0, MAX_QUESTIONS);
+  return { insights, questions, removed: removed() };
 }

@@ -32,9 +32,9 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 1025 pure-logic assertions, node, fast
-npm run test:safety    # 1218 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 488 assertions against real OPFS SQLite, headless browser
+npm run test:portions  # 1059 pure-logic assertions, node, fast
+npm run test:safety    # 1235 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
+npm run test:e2e       # 495 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -190,6 +190,19 @@ other-day rate and a Bonferroni-adjusted Fisher p under 0.05; under 5 bouts
 nothing is called a pattern. Medicines count (his call). It says "came before
 it more often", never "causes": a symptom's start time (`started_at`, v15) is
 read from the words by code (`domain/symptomtime.ts`) or set on the card.
+
+**The weekly summary: code judges, the model only writes** (`domain/week.ts`,
+`safety/weekly.ts`, `ui/WeekView.tsx`; 16 Oct 2026). Weeks run Sunday to
+Saturday; a ring at Sunday 10:00 says only "Your week is ready", and the week
+arrives in Ask Mealo's thread once, with "Your week" stepping back eight
+weeks. Figures come from `humanReport` over the same collected record.
+Which changes are "better" and which "to work on" is decided by
+`observations`, never by the model: better only means nearer the person's own
+targets, more doses taken or more days logged; weight, the overnight gap and
+symptoms are shown but never judged and never sent. Each sentence passes the
+report insights' checks (`pointChecker`) and must carry a figure from its own
+list. Lines are kept in IndexedDB per person per week, with the data they
+were written from, and offered again if the week changed under them.
 
 **Whether something gets logged never depends on a model choosing to help.**
 A real model, given "I just had 2 roti and dal" and a tool for the meal

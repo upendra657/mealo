@@ -1,11 +1,12 @@
 /**
  * Reminders: what rings, when, and what it says. The pure part.
  *
- * Two things ring. Doses that are due, at a clock time the person chose for
- * each part of the day, and one nudge in the evening on a day with no meal
- * logged. A weekly summary was the third thing asked for and is not here:
- * it needs a model, and the model's key lives in the browser, so nothing can
- * write it while the app is closed. It waits to be designed.
+ * Three things ring. Doses that are due, at a clock time the person chose
+ * for each part of the day; one nudge in the evening on a day with no meal
+ * logged; and on Sunday, the week (since 16 Oct 2026). The week's ring says
+ * only that it is ready: the summary needs a model, the model's key lives
+ * in the browser, and nothing can write it while the app is closed, so it
+ * is written when Ask Mealo is opened (domain/week.ts).
  *
  * How it reaches a phone, and what the relay is told (only the times), is in
  * `remindersync.ts` and `worker/index.ts`. This file decides the list.
@@ -41,6 +42,9 @@ export type ReminderSettings = {
   times: Record<TimeOfDay, string>;
   /** When the meal nudge rings. */
   mealTime: string;
+  /** The Sunday ring for the week just ended. */
+  week: boolean;
+  weekTime: string;
 };
 
 /**
@@ -61,12 +65,16 @@ export const DEFAULT_REMINDERS: ReminderSettings = {
   names: false,
   times: { morning: '08:00', afternoon: '13:00', evening: '18:00', night: '21:30' },
   mealTime: '21:00',
+  week: true,
+  // Mid-morning, his choice of Sunday (16 Oct 2026): late enough that
+  // Saturday's dinner has been logged, early enough to be read that day.
+  weekTime: '10:00',
 };
 
 export type Ring = {
   /** ms since the epoch, on the minute. */
   at: number;
-  kind: 'doses' | 'meals' | 'test';
+  kind: 'doses' | 'meals' | 'week' | 'test';
   title: string;
   body: string;
 };
@@ -155,6 +163,20 @@ export function mealRings(days: string[], loggedDays: ReadonlySet<string>, s: Re
   return out;
 }
 
+/**
+ * The Sunday ring. No figure and no word about the week on the lock screen:
+ * whoever picks the phone up reads it, and "a week under target" there would
+ * be the app judging someone in public.
+ */
+export function weekRings(days: string[], s: ReminderSettings, now: number): Ring[] {
+  if (!s.week) return [];
+  return days
+    .filter((day) => dateOf(day).getDay() === 0)
+    .map((day) => clockOnCalendar(day, s.weekTime))
+    .filter((at) => at > now)
+    .map((at) => ({ at, kind: 'week' as const, title: 'Your week', body: 'Your week is ready. Open Mealo to read it in Ask Mealo.' }));
+}
+
 /** The days a schedule covers, today's Meds day first. */
 export function scheduleDays(today: string, n = SCHEDULE_DAYS): string[] {
   return Array.from({ length: n }, (_, i) => addDays(today, i));
@@ -219,6 +241,8 @@ export function readSettings(stored: unknown): ReminderSettings {
     names: v.names === true,
     times,
     mealTime: isClock(v.mealTime) ? v.mealTime : DEFAULT_REMINDERS.mealTime,
+    week: v.week !== false,
+    weekTime: isClock(v.weekTime) ? v.weekTime : DEFAULT_REMINDERS.weekTime,
   };
 }
 

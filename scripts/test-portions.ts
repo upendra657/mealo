@@ -2550,8 +2550,8 @@ import { runInNewContext } from 'node:vm';
   check('plain words: no guilt, no streak, no calories, no "should"', ['streak', 'calorie', 'kcal', 'should', 'forgot', 'missed', 'again', "don't", 'must', '!'].filter((w) => words.includes(w)), []);
   check('soonest first, and no more than the relay holds', [inOrder([...meals, ...rings]).map((r) => r.at)[0], inOrder(Array.from({ length: 150 }, (_, i) => ({ ...meals[0], at: now + i }))).length], [at(11, 21), 100]);
 
-  check('stored settings are read back whole', readSettings({ on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30' }),
-    { on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30' });
+  check('stored settings are read back whole', readSettings({ on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30', week: false, weekTime: '09:15' }),
+    { on: true, profileId: 'p2', doses: false, meals: true, names: true, times: { morning: '07:15', afternoon: '13:00', evening: '18:00', night: '22:00' }, mealTime: '20:30', week: false, weekTime: '09:15' });
   check('nothing stored is the defaults', readSettings(undefined), DEFAULT_REMINDERS);
   check('a broken time falls back to its default, the rest is kept', readSettings({ on: true, times: { morning: 'early', night: '23:00' }, mealTime: 9 }),
     { ...DEFAULT_REMINDERS, on: true, times: { ...DEFAULT_REMINDERS.times, night: '23:00' } });
@@ -2665,6 +2665,130 @@ section('Keeping the record safe: backup and sync warnings, the test ring');
     [scheduleSig('https://e/1', [{ ...r(1), body: 'y' }, r(2)]) === sig, wordsOf([{ ...r(1), body: 'y' }, r(2)]) === wordsOf([r(1), r(2)])], [true, false]);
   check('a ring marked shown is not a change of words', wordsOf([{ ...r(1), shown: true }]) === wordsOf([r(1)]), true);
   check('a test ring says so, with no medicine and no amount', [testRingAt(0).kind, /test/i.test(testRingAt(0).body), /\d/.test(testRingAt(0).body)], ['test', true, false]);
+}
+
+// ------------------------------------------------------------ the week
+import { latestWeek, observations, weekData, weekDays, weekFigures, weekLabel, weekStartOf, WEEKS_BACK } from '../src/domain/week';
+import { weekRings } from '../src/domain/reminders';
+
+section('The week: Sunday to Saturday, and the latest complete one');
+{
+  check('every day of a week has the same Sunday', ['2026-10-11', '2026-10-14', '2026-10-17'].map(weekStartOf), ['2026-10-11', '2026-10-11', '2026-10-11']);
+  check('on a Sunday the latest week is the one that ended yesterday', latestWeek('2026-10-18'), '2026-10-11');
+  check('on a Saturday it is the one before, not the week still running', latestWeek('2026-10-17'), '2026-10-04');
+  check('seven days, Sunday first', [weekDays('2026-10-11')[0], weekDays('2026-10-11')[6], weekDays('2026-10-11').length], ['2026-10-11', '2026-10-17', 7]);
+  check('a week in one month names it once', weekLabel('2026-10-11'), 'Sun 11 – Sat 17 Oct');
+  check('a week across two months names both', weekLabel('2026-09-27'), 'Sun 27 Sep – Sat 3 Oct');
+  // The oldest week, its week before and the patterns' month must fit in
+  // one read of the record, whose limit is 90 days (MAX_DAYS).
+  check('the arrows never reach past one read of the record', 13 + 7 * (WEEKS_BACK - 1) + 25 + 1 <= MAX_DAYS, true);
+}
+
+section('The week: its figures, from the report\'s own arithmetic');
+{
+  const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
+  const iso = (d: number) => `2026-10-${String(d).padStart(2, '0')}`;
+  const dish = (name: string, kcal: number, p: number): ExportItem =>
+    ({ name, quantity: 1, unit: 'piece', grams: 100, energy_kcal: kcal, protein_g: p, fat_g: 0, carbs_g: 0, fibre_g: 0, plan_state: null });
+  // A day: breakfast at 09:00 and dinner at 21:00, split down the middle.
+  const day = (d: number, kcal: number, p: number, dinnerAt = 21) => [
+    { day: iso(d), at: at(d, 9), slot: 'Breakfast', items: [dish('Poha', kcal / 2, p / 2)] },
+    { day: iso(d), at: at(d, dinnerAt), slot: 'Dinner', items: [dish('Paneer curry', kcal / 2, p / 2)] },
+  ];
+  const doses = (d: number, taken: number, skipped = 0, missed = 0) => ({ day: iso(d), taken, skipped, missed, pending: 0 });
+  const X: ExportInput = {
+    scope: 'full',
+    days: Array.from({ length: 30 }, (_, i) => addDaysIso('2026-09-19', i)),
+    targets: { energy_kcal: 1900, protein_g: 90, fat_g: null, carbs_g: null, fibre_g: null },
+    goalWeightKg: null,
+    goalBurnKcal: null,
+    meals: [
+      // The week before: six days, 40 g protein, never over.
+      ...[4, 5, 6, 7, 8].flatMap((d) => day(d, 1800, 40)),
+      // Saturday's late dinner, which ends the next Sunday's overnight gap.
+      ...day(10, 1800, 40, 22.5),
+      // This week: every day; protein short on four, calories over on two.
+      ...[11, 12, 13, 14].flatMap((d) => day(d, 1800, 50)),
+      ...[15, 16].flatMap((d) => day(d, 2100, 90)),
+      ...day(17, 1800, 90),
+      // Planned and never eaten: counted nowhere.
+      { day: iso(17), at: at(17, 13), slot: 'Lunch', items: [{ ...dish('Biryani', 900, 30), plan_state: 'planned' }] },
+    ],
+    weights: [{ day: '2026-10-03', kg: 72.4 }, { day: iso(9), kg: 72.0 }, { day: iso(16), kg: 71.6 }],
+    burns: [],
+    medicines: [],
+    doseDays: [
+      ...[4, 5, 6, 7, 8, 9, 10].map((d) => (d <= 7 ? doses(d, 1, 0, 1) : doses(d, 2))),
+      ...[11, 12, 14, 16, 17].map((d) => doses(d, 2)),
+      doses(13, 1, 0, 1),
+      doses(15, 1, 1, 0),
+    ],
+    notTaken: [
+      ...[4, 5, 6, 7].map((d) => ({ day: iso(d), medicine: 'Iron', time: 'Morning', state: 'missed' as const })),
+      { day: iso(13), medicine: 'Iron', time: 'Night', state: 'missed' },
+      { day: iso(15), medicine: 'Iron', time: 'Night', state: 'skipped' },
+    ],
+    symptoms: [12, 14, 16].map((d) => ({ at: at(d, 15), text: 'tummy felt tight', label: 'Bloating', resolvedAt: null })),
+    episodes: [],
+  };
+  const cur = weekFigures(X, '2026-10-11');
+  const prev = weekFigures(X, '2026-10-04');
+
+  check('days with meals logged, this week and the week before', [cur.daysLogged, prev.daysLogged], [7, 6]);
+  check('averages over logged days, the planned biryani counted nowhere', [Math.round(cur.macros.energy_kcal.avg!), Math.round(cur.macros.protein_g.avg!)], [1886, 67]);
+  check('protein short of its target on four days: under 76%, the dial\'s own amber', cur.macros.protein_g.short, 4);
+  check('calories over the target on two days', [cur.macros.energy_kcal.over, prev.macros.energy_kcal.over], [2, 0]);
+  check('calories under the target are never counted against a day', cur.macros.energy_kcal.short, 0);
+  check('doses taken of those due', [cur.doses, prev.doses], [{ taken: 12, due: 14 }, { taken: 10, due: 14 }]);
+  check('doses not taken, gathered by time of day', cur.notTaken, [{ time: 'Night', n: 2 }]);
+  // Sunday's gap began on Saturday night, in the week before: 22:30 to 09:00.
+  check('the usual overnight gap: the middle one, Sunday\'s counted from Saturday night', [cur.overnight?.ms, cur.overnight?.nights], [12 * 3_600_000, 7]);
+  check('the week\'s last weight, and the last one before it began', [cur.weight.last, cur.weight.before], [{ day: iso(16), kg: 71.6 }, { day: iso(9), kg: 72.0 }]);
+  check('no fast-loss signal from a slow change', cur.weight.fastLoss, false);
+  check('the fast-loss signal, from readings four to six weeks apart',
+    weekFigures({ ...X, weights: [{ day: '2026-09-12', kg: 80 }, ...X.weights] }, '2026-10-11').weight.fastLoss, true);
+  check('symptoms by bouts, and too few in the month to call a pattern', cur.symptoms.map((s) => [s.label, s.bouts, s.few]), [['Bloating', 3, true]]);
+  check('a week with nothing logged says so', weekFigures({ ...X, meals: [], doseDays: [], weights: [], symptoms: [] }, '2026-10-11').any, false);
+
+  section('The week: what the app counts as better, and as something to work on');
+  const obs = observations(cur, prev);
+  check('better: nearer the targets, more doses, more days logged; nothing else',
+    obs.filter((o) => o.kind === 'better').map((o) => o.what),
+    ['protein average went up, towards the target', 'more of the doses due were taken', 'meals logged on more days']);
+  check('to work on: against the person\'s own targets, and doses not taken',
+    obs.filter((o) => o.kind === 'work_on').map((o) => o.what),
+    ['protein short of the target on most logged days', 'over the calorie target on some days', 'doses not taken']);
+  check('fewer days logged is never something to work on',
+    observations(prev, cur).some((o) => /meals logged|days logged/.test(o.what) && o.kind === 'work_on'), false);
+  check('one short day of seven is not something to work on',
+    observations({ ...cur, macros: { ...cur.macros, protein_g: { ...cur.macros.protein_g, short: 1 } } }, prev).some((o) => /protein short/.test(o.what)), false);
+  const lean = { ...cur, macros: { ...cur.macros, energy_kcal: { ...cur.macros.energy_kcal, avg: 1100, over: 0, short: 7 } } };
+  check('a week of low calories is neither better nor to work on', observations(lean, prev).some((o) => /calorie/.test(o.what)), false);
+  check('nothing better against a week with nothing in it', observations(cur, { ...prev, any: false }).some((o) => o.kind === 'better'), false);
+
+  const data = JSON.stringify(weekData(cur, prev));
+  check('the model is sent no weight, no overnight gap and no symptom', [/kg|weight|overnight|bloating/i.test(data), /71\.6|72\.0/.test(data)], [false, false]);
+  check('the model is sent both weeks and both lists', ['this_week', 'week_before', '"better"', '"to_work_on"', 'Sun 11'].map((k) => data.includes(k)), [true, true, true, true, true]);
+}
+
+section('The week: the Sunday ring');
+{
+  const on: ReminderSettings = { ...DEFAULT_REMINDERS, on: true, profileId: 'primary' };
+  const at = (d: number, h: number, m = 0, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
+  const days = scheduleDays('2026-10-15');
+  check('on each Sunday of the fortnight, at 10:00', weekRings(days, on, at(15, 12)).map((r) => r.at), [at(18, 10), at(25, 10)]);
+  check('not once its minute has passed', weekRings(days, on, at(18, 10, 0, 1)).map((r) => r.at), [at(25, 10)]);
+  check('switched off: none', weekRings(days, { ...on, week: false }, at(15, 12)), []);
+  check('at the time chosen', weekRings(days, { ...on, weekTime: '19:30' }, at(15, 12))[0].at, at(18, 19, 30));
+  const ring = weekRings(days, on, at(15, 12))[0];
+  check('its own kind, and no figure on the lock screen', [ring.kind, /\d/.test(ring.title + ring.body)], ['week', false]);
+  check('on unless turned off, at 10:00 unless changed', [readSettings({}).week, readSettings({}).weekTime, readSettings({ week: false, weekTime: '25:00' }).week, readSettings({ weekTime: '25:00' }).weekTime], [true, '10:00', false, '10:00']);
+}
+
+function addDaysIso(isoDay: string, n: number): string {
+  const [y, m, d] = isoDay.split('-').map(Number);
+  const x = new Date(y, m - 1, d + n);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
 
 // ------------------------------------------------------------------ done

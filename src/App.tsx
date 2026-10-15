@@ -55,7 +55,9 @@ export type Screen =
   | 'settings';
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('home');
+  /** Opened by a tap on the Sunday ring: the week, in Ask Mealo (push-sw.js). */
+  const [openWeek, setOpenWeek] = useState(() => new URLSearchParams(window.location.search).get('open') === 'week');
+  const [screen, setScreen] = useState<Screen>(openWeek ? 'doctor' : 'home');
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [active, setActive] = useState(activeProfile());
   const [failed, setFailed] = useState<string | null>(null);
@@ -131,6 +133,26 @@ export default function App() {
     window.scrollTo(0, 0);
   }, []);
 
+  // Read once, then out of the address, so that a reload later in the week
+  // does not open on the week again.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('open')) window.history.replaceState(null, '', window.location.pathname);
+  }, []);
+
+  // The same tap with the app already open: the service worker says so.
+  useEffect(() => {
+    const sw = navigator.serviceWorker;
+    if (!sw) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.open !== 'week') return;
+      setOpenWeek(true);
+      go('doctor');
+    };
+    sw.addEventListener('message', onMessage);
+    return () => sw.removeEventListener('message', onMessage);
+  }, [go]);
+  const weekOpened = useCallback(() => setOpenWeek(false), []);
+
   const avatar = profiles?.length ? (
     <AvatarMenu
       profiles={profiles}
@@ -201,7 +223,7 @@ export default function App() {
 
         {screen === 'library' && <FoodLibrary go={go} />}
 
-        {screen === 'doctor' && <Doctor go={go} setDayStart={setDayStart} />}
+        {screen === 'doctor' && <Doctor go={go} setDayStart={setDayStart} openWeek={openWeek} onWeekOpened={weekOpened} />}
 
         {screen === 'meds' && <Medications go={go} avatar={avatar} />}
 

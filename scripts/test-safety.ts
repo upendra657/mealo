@@ -1582,5 +1582,62 @@ section('The model check: two made-up questions, judged as the chat judges');
   check('a refused first question ends the check: no second spend', [halted.questions.length, halted.verdict, stops.seen.length], [1, 'failed', 1]);
 }
 
+// ======================================================= the weekly summary
+import { readWeekText, WEEK_PROMPT, weekMessages, MAX_POINTS } from '../src/safety/weekly';
+import { weekData, type WeekFigures } from '../src/domain/week';
+
+section('The weekly summary: what the model is sent');
+{
+  const week = (start: string, logged: number, protein: number, taken: number): WeekFigures => ({
+    start, days: [], any: true, daysLogged: logged,
+    macros: {
+      energy_kcal: { avg: 1886, target: 1900, short: 0, over: 2 },
+      protein_g: { avg: protein, target: 90, short: 4, over: 0 },
+      fibre_g: { avg: null, target: null, short: 0, over: 0 },
+    },
+    doses: { taken, due: 14 }, notTaken: [{ time: 'Night', n: 2 }],
+    overnight: { ms: 43_200_000, nights: 7 },
+    weight: { last: { day: '2026-10-16', kg: 71.6 }, before: { day: '2026-10-09', kg: 72.0 }, fastLoss: false },
+    symptoms: [{ label: 'Bloating', bouts: 3, few: true, standsOut: [] }],
+    topDishes: { calories: ['Paneer curry', 'Poha'], protein: ['Paneer curry'] },
+  });
+  const data = weekData(week('2026-10-11', 7, 67, 12), week('2026-10-04', 6, 40, 10));
+  const msgs = weekMessages(data);
+  check('one system message and one of data', msgs.map((m) => m.role), ['system', 'user']);
+  check('the data is marked as data', msgs[1].content.startsWith(DATA_HEADER), true);
+  check('no weight, overnight gap or symptom leaves', /71\.6|72\.0|overnight|bloating|43200000/i.test(msgs[1].content), false);
+  check('the prompt keeps the judging with the app', ['already decided', 'Do not decide for', 'nothing else under either'].map((w) => WEEK_PROMPT.includes(w)), [true, true, true]);
+  check('and forbids what the report forbids, and praise', ['diagnosis', 'dose', 'target', 'causes another', 'praise'].map((w) => WEEK_PROMPT.includes(w)), [true, true, true, true, true]);
+  check('and asks for the shape the reader expects', ['LEAD', 'BETTER', 'WORK ON'].map((w) => WEEK_PROMPT.includes(w)), [true, true, true]);
+
+  section('The weekly summary: what the app keeps');
+  const read = (reply: string, d = data) => readWeekText(reply, d);
+  const good = read([
+    'LEAD', '- A week with meals logged on all 7 days.',
+    'BETTER', '- Protein averaged 67 g, up from 40 g the week before.', '- 12 of 14 doses were taken, against 10 the week before.',
+    'WORK ON', '- Protein was short of your 90 g target on 4 of 7 logged days.', '- Night doses were not taken 2 times.',
+  ].join('\n'));
+  check('sentences that pass are all kept', [good.lead !== null, good.better.length, good.workOn.length, good.removed], [true, 2, 2, 0]);
+  const one = (heading: 'BETTER' | 'WORK ON', line: string, d = data) =>
+    read(heading === 'BETTER' ? `LEAD\nBETTER\n- ${line}\nWORK ON` : `LEAD\nBETTER\nWORK ON\n- ${line}`, d);
+  const dropped = (line: string) => { const r = one('WORK ON', line); return r.workOn.length === 0 && r.removed === 1; };
+  check('telling someone what to eat is removed', [dropped('Eat more paneer to reach your protein target.'), dropped('Add a protein snack in the evening.'), dropped('You should eat more dal.')], [true, true, true]);
+  check('setting a target is removed', [dropped('Aim for 90 g of protein every day.'), dropped('Try to keep calories under your target.')], [true, true]);
+  check('an invented figure is removed', [dropped('Protein was short on 5 of 7 days.'), dropped('Calories were up 22% on the week before.')], [true, true]);
+  check('a dose, or a change to a medicine, is removed', [dropped('Take the night tablet 2 times a day.'), dropped('Consider skipping the night dose.')], [true, true]);
+  check('a condition or a cause is removed', [dropped('Low protein can point to anaemia.'), dropped('The missed doses are caused by late dinners.')], [true, true]);
+  check('a true sentence under the wrong heading is removed',
+    [one('BETTER', 'Calories were over your 1900 Cal target on 2 days.').better.length, one('WORK ON', 'Protein averaged 67 g, up from 40 g.').workOn.length, one('BETTER', 'Protein went up towards the target.').removed], [0, 0, 1]);
+  check('a fact against the person\'s own target is kept', one('WORK ON', 'Calories were over your 1900 Cal target on 2 days.').workOn.length, 1);
+  // Nothing was decided better: anything written there is the model's own judgement.
+  const none = weekData(week('2026-10-11', 6, 40, 10), week('2026-10-04', 7, 67, 12));
+  check('with nothing decided better, nothing written under BETTER is kept', [none.better.length, one('BETTER', 'Calories were a little lower.', none).better.length, one('BETTER', 'Calories were a little lower.', none).removed], [0, 0, 1]);
+  check('never more than two of each, the rest left out unread',
+    [read(`LEAD\n- 7 of 7 days.\n- 7 of 7 days.\nBETTER\n${'- Protein averaged 67 g.\n'.repeat(5)}WORK ON\n${'- Night doses were not taken 2 times.\n'.repeat(5)}`)].map((r) => [r.better.length, r.workOn.length, r.removed]),
+    [[MAX_POINTS, MAX_POINTS, 0]]);
+  check('a reply in the wrong shape gives nothing, and blames nothing', [read('What a week!'), read('')],
+    [{ lead: null, better: [], workOn: [], removed: 0 }, { lead: null, better: [], workOn: [], removed: 0 }]);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

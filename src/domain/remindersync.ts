@@ -44,6 +44,7 @@ import {
   scheduleDays,
   testRingAt,
   testRingTime,
+  weekRings,
   type ReminderSettings,
   type Ring,
 } from './reminders';
@@ -223,6 +224,7 @@ export async function buildRings(s: ReminderSettings, now = new Date()): Promise
   return inOrder([
     ...doseRings(days, s, now.getTime()),
     ...mealRings(scheduleDays(calendarDay(now)), logged, s, now.getTime()),
+    ...weekRings(scheduleDays(calendarDay(now)), s, now.getTime()),
     ...(test && test > now.getTime() ? [testRingAt(test)] : []),
   ]);
 }

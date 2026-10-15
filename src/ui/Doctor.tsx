@@ -75,6 +75,9 @@ import { chatWithTools } from '../llm/toolloop';
 import { checkNumbers, numbersIn, numbersOf, removedNote } from '../safety/numbers';
 import { checkClaims, dishesIn, NOT_SAVED } from '../safety/claims';
 import { draftFromText } from '../domain/meals';
+import { isoOf } from '../domain/doses';
+import { latestWeek, markWeekShown, readWeek, weekLabel, weekShown } from '../domain/week';
+import { WeekEntry, WeekSheet } from './WeekView';
 
 /**
  * One use of a pill, in the thread beside the questions. Held in this
@@ -104,7 +107,12 @@ type ReportItem = { kind: 'report'; id: number; at: number; report: Report };
 type FiguresItem = { kind: 'figures'; id: number; figures: Figures };
 /** A line from the app about what it did for an answer. This visit only. */
 type NoteItem = { kind: 'note'; id: number; text: string };
-type Item = Entry | FlowItem | PlanItem | ReportItem | FiguresItem | NoteItem;
+/**
+ * A week, put in the thread once when it ends (WeekView.tsx). This visit
+ * only, like a report: the week is always one tap away under "Your week".
+ */
+type WeekItem = { kind: 'week'; id: number; at: number; start: string; weeks?: Awaited<ReturnType<typeof readWeek>> };
+type Item = Entry | FlowItem | PlanItem | ReportItem | FiguresItem | NoteItem | WeekItem;
 
 const daysBack = (days: number) => Date.now() - days * 86_400_000;
 
@@ -137,8 +145,13 @@ function Answer({ text }: { text: string }) {
 export function Doctor({
   go,
   setDayStart,
+  openWeek,
+  onWeekOpened,
 }: {
   go: (s: Screen) => void;
+  /** Opened from the Sunday reminder: put the latest week in the thread even if it was shown before. */
+  openWeek?: boolean;
+  onWeekOpened?: () => void;
   /** Which day Track meals opens on: a plan's "View" goes to its own day. */
   setDayStart: (dayStart: number | null) => void;
 }) {
@@ -147,6 +160,8 @@ export function Doctor({
   /** The pill whose question the bar is answering, if any. */
   const [awaiting, setAwaiting] = useState<number | null>(null);
   const [history, setHistory] = useState(false);
+  /** "Your week": closed, or open this many weeks back from the latest. */
+  const [weekSheet, setWeekSheet] = useState<{ open: boolean; back: number }>({ open: false, back: 0 });
   /** Whether "Tick my doses" has anything to offer right now. */
   const [dueNow, setDueNow] = useState(false);
   /** The report sheet: closed, or open on these settings. */
@@ -186,6 +201,35 @@ export function Doctor({
       await refresh();
     })();
   }, [refresh]);
+
+  // The week that has just ended, once: on the first opening after it ends,
+  // or whenever the Sunday reminder is what opened the app. A week with
+  // nothing logged in it is not put in the thread at all; for someone in
+  // their first week that would push "What this is not" off the page for a
+  // card saying nothing happened.
+  useEffect(() => {
+    if (!loaded) return;
+    let live = true;
+    void (async () => {
+      const start = latestWeek(isoOf(new Date()));
+      if (!openWeek && (await weekShown()) === start) return;
+      onWeekOpened?.();
+      const weeks = await readWeek(start).catch(() => null);
+      if (!live || !weeks) return;
+      await markWeekShown(start);
+      if (!weeks.cur.any) return;
+      setThread((t) => (t.some((x) => x.kind === 'week' && x.start === start) ? t : [...t, { kind: 'week', id: nextId.current++, at: Date.now(), start, weeks }]));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [loaded, openWeek, onWeekOpened]);
+
+  /** "Ask about this week": the bar starts the question, the person finishes it. */
+  const askAboutWeek = (start: string) => {
+    setInput(`About the week ${weekLabel(start)}: `);
+    inputRef.current?.focus();
+  };
 
   useEffect(() => {
     // Not on an empty thread: the first page should open at its top, with
@@ -628,7 +672,17 @@ export function Doctor({
         )}
 
         {thread.map((e, i) =>
-          e.kind === 'report' ? (
+          e.kind === 'week' ? (
+            <WeekEntry
+              key={`w${e.id}`}
+              at={e.at}
+              start={e.start}
+              weeks={e.weeks}
+              settings={settings && ready ? settings : null}
+              onEarlier={() => setWeekSheet({ open: true, back: 1 })}
+              onAsk={askAboutWeek}
+            />
+          ) : e.kind === 'report' ? (
             <ReportCard key={`r${e.id}`} at={e.at} report={e.report} />
           ) : e.kind === 'plan' ? (
             <PlanFlow
@@ -749,6 +803,7 @@ export function Doctor({
             <FileIcon size={15} />
             Generate a report
           </button>
+          <button onClick={() => setWeekSheet({ open: true, back: 0 })}>Your week</button>
           <button onClick={() => startPill('meal')}>{PILLS.meal.label}</button>
           {/* Only while a dose is waiting. A pill that opens onto "nothing is
               due" most of the day teaches people not to press it. */}
@@ -783,6 +838,14 @@ export function Doctor({
         </div>
       </div>
 
+      <WeekSheet
+        open={weekSheet.open}
+        back={weekSheet.back}
+        onBack={(back) => setWeekSheet((w) => ({ ...w, back }))}
+        settings={settings && ready ? settings : null}
+        onClose={() => setWeekSheet((w) => ({ ...w, open: false }))}
+        onAsk={askAboutWeek}
+      />
       <SymptomHistory open={history} onClose={() => setHistory(false)} onLog={() => startPill('symptom')} onChanged={() => void refresh()} />
       <ReportSheet
         open={sheet.open}

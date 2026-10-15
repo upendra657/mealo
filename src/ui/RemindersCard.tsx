@@ -148,7 +148,7 @@ export function RemindersCard() {
   };
 
   const doseTimes = TIMES.map((t) => s.times[t.id]).join(', ');
-  const summary = [s.doses ? `Medicines ${doseTimes}` : 'No medicines', s.meals ? `meals ${s.mealTime}` : 'no meals'].join(' · ');
+  const summary = [s.doses ? `Medicines ${doseTimes}` : 'No medicines', s.meals ? `meals ${s.mealTime}` : 'no meals', s.week ? `week Sun ${s.weekTime}` : 'no week'].join(' · ');
 
   return (
     <section className="card">
@@ -221,6 +221,13 @@ export function RemindersCard() {
                 <label className="field">
                   <span>Meals at</span>
                   <input type="time" value={s.mealTime} onChange={(e) => e.target.value && void set({ mealTime: e.target.value })} />
+                </label>
+              )}
+              <Switch on={s.week} label="Your week, on Sunday" note="Sunday to Saturday, ready in Ask Mealo. The lock screen gives no figures." onFlip={() => void set({ week: !s.week })} />
+              {s.week && (
+                <label className="field">
+                  <span>Sunday at</span>
+                  <input type="time" value={s.weekTime} onChange={(e) => e.target.value && void set({ weekTime: e.target.value })} />
                 </label>
               )}
             </>

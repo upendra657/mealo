@@ -102,11 +102,18 @@ if (typeof self !== 'undefined' && self.addEventListener) {
 
   self.addEventListener('notificationclick', (event) => {
     event.notification.close();
+    // The Sunday ring opens on the week, in Ask Mealo. A window already open
+    // is told so; a closed app is opened with it in the address, which the
+    // app reads once and takes out again.
+    const week = event.notification.data && event.notification.data.kind === 'week';
     event.waitUntil(
       (async () => {
         const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        if (open.length) return open[0].focus();
-        return self.clients.openWindow('/');
+        if (open.length) {
+          if (week) open[0].postMessage({ open: 'week' });
+          return open[0].focus();
+        }
+        return self.clients.openWindow(week ? '/?open=week' : '/');
       })(),
     );
   });
