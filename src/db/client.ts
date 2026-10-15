@@ -173,16 +173,6 @@ export async function exportDatabase(): Promise<Uint8Array> {
   return call<Uint8Array>({ type: 'export' });
 }
 
-/** Triggers a browser download of the database file. */
-export async function downloadDatabase(): Promise<void> {
-  const bytes = await exportDatabase();
-  const stamp = new Date().toISOString().slice(0, 10);
-  saveFile(
-    new Blob([bytes as BlobPart], { type: 'application/vnd.sqlite3' }),
-    `mealo-${stamp}.sqlite3`,
-  );
-}
-
 /** What this phone holds now, counted the way a backup is. */
 /**
  * The weekly copy inside the phone (db/worker.ts), taken if this week's is
