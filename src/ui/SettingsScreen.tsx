@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { SyncCard } from './SyncCard';
 import { MedListsCard } from './MedListsCard';
+import { SampleListCard } from './SampleListCard';
 import { Chevron } from './bits';
 import type { Screen } from '../App';
 import {
@@ -43,7 +44,7 @@ export function SettingsScreen({
   const [outbound, setOutbound] = useState<OutboundEntry[]>([]);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [open, setOpen] = useState<null | 'told' | 'left' | 'meds'>(null);
+  const [open, setOpen] = useState<null | 'told' | 'left' | 'meds' | 'sample'>(null);
   /** Show working under Ask Mealo's answers. Off until switched on here (his call, 15 Oct 2026). */
   const [working, setWorking] = useState(false);
   const flip = (k: NonNullable<typeof open>) => setOpen((o) => (o === k ? null : k));
@@ -353,6 +354,14 @@ export function SettingsScreen({
             <Chevron dir={open === 'meds' ? 'down' : 'right'} />
           </button>
           {open === 'meds' && <MedListsCard embedded />}
+          <button className="dv-go" aria-expanded={open === 'sample'} onClick={() => flip('sample')}>
+            <span className="grow">
+              Sample dishes
+              <span className="amt">Vegetarian Indian dishes to log from, for an empty food table</span>
+            </span>
+            <Chevron dir={open === 'sample' ? 'down' : 'right'} />
+          </button>
+          {open === 'sample' && <SampleListCard />}
         </section>
       </div>
     </>

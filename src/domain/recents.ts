@@ -13,6 +13,8 @@
 import { scopedDb } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import { normaliseSlot, type SlotId } from './slots';
+import { isListFood } from './foods';
+import { liveSampleIds } from './samplelist';
 
 const db = scopedDb('nutritionist');
 
@@ -62,8 +64,16 @@ export async function recentItems(
     [activeProfile()],
   );
 
+  // A sample dish whose list has since been removed has nothing to open
+  // again with, and matching its name would land on some other dish: it is
+  // left out (domain/samplelist.ts). On a phone that never added the list
+  // no row names one, and nothing is read.
+  const listed = rows.map((r) => r.food_id ?? '').filter(isListFood);
+  const live = listed.length ? await liveSampleIds(listed) : new Set<string>();
+
   const seen = new Map<string, Recent>();
   for (const r of rows) {
+    if (isListFood(r.food_id) && !live.has(r.food_id!)) continue;
     const quantity = r.quantity ?? 1;
     const key = `${r.label.toLowerCase()}|${r.unit ?? ''}|${quantity}`;
     if (seen.has(key)) continue;

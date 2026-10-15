@@ -221,6 +221,19 @@ const SEEDS: Seed[] = [
   { version: 14, table: 'profiles', rows: [
     { id: 'fx-night', name: 'Night owl', created_at: T, updated_at: T, night_tomorrow: 'begun' },
   ] },
+  { version: 16, table: 'food_ref_sets', rows: [
+    { id: 'fx-sample', name: 'Sample dishes, vegetarian', tag: 'Sample', credits: 'UK CoFID 2021 · INDB 2024',
+      version: 1, row_count: 2, added_at: T, updated_at: T },
+    { id: 'fx-sample-gone', name: 'Removed half way', tag: 'Sample', updated_at: T, deleted_at: T + 1 },
+  ] },
+  { version: 16, table: 'food_ref_items', rows: [
+    { id: 'list:indb-ASC146', set_id: 'fx-sample', name: 'Masala dosa', slug: 'masala dosa', unit: 'dosa',
+      energy_kcal: 345, protein_g: 6.9, fat_g: 16.4, carbs_g: 46.3, fibre_g: 5.3, source: 'INDB 2024',
+      code: 'ASC146', lab: 0, updated_at: T },
+    { id: 'list:cofid-13-484', set_id: 'fx-sample', name: 'Mixed dal', slug: 'mixed dal', unit: '100g',
+      energy_kcal: 60, protein_g: 4.9, fat_g: 0.7, carbs_g: 11.3, fibre_g: 3.1, source: 'CoFID 2021',
+      code: '13-484', lab: 1, updated_at: T, deleted_at: T + 1 },
+  ] },
   { version: 15, table: 'symptoms', rows: [
     { id: 'fx-sym-3', profile_id: 'primary', noted_at: T, started_at: T - 7_200_000, raw_text: 'bloated after lunch',
       label: 'Bloating', updated_at: T },

@@ -1,10 +1,20 @@
 /**
- * The starter food list: vegetarian Indian dishes for someone's first day,
- * built from two published sources and nothing typed by hand but names.
+ * Sample dishes: vegetarian Indian dishes for someone's first day, built from
+ * two published sources and nothing typed by hand but names. ("Starter" until
+ * 16 Oct 2026, when Upendra named the list.)
  *
- *   npx esbuild scripts/import-starter.ts --bundle --platform=node --format=esm \
- *     --outfile=node_modules/.cache/import-starter.mjs && \
- *   node node_modules/.cache/import-starter.mjs <sources dir> <out.json>
+ *   npx esbuild scripts/build-sample-list.ts --bundle --platform=node --format=esm \
+ *     --outfile=node_modules/.cache/build-sample-list.mjs && \
+ *   node node_modules/.cache/build-sample-list.mjs <sources dir> <review.json> public/lists/sample-veg.json
+ *
+ * Two files out. <review.json> keeps everything the choices were made on
+ * (names in the source, method, which fibre, the refused recipes) and stays
+ * outside the repo with the review page. The third argument is what a phone
+ * fetches when someone taps Add in Dev: only the fields the app reads
+ * (his "lean", 15 Oct 2026), checked again on the phone by checkSampleFile.
+ * It carries a fixed version rather than the build date, so building twice
+ * from the same sources writes the same bytes and a commit shows only a real
+ * change.
  *
  * <sources dir> holds the original files, kept outside the repo
  * (../Mealo-Resources/data/sources, with a README naming each):
@@ -52,6 +62,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readXlsx } from '../src/lib/xlsx';
+import { checkSampleFile, SAMPLE_SET, type SampleFile } from '../src/domain/samplelist';
 
 type Style = string | null;
 type Row = {
@@ -303,8 +314,9 @@ const ANIMAL = /^gelatine?$|stock cubes, chicken/i;
 
 const dir = process.argv[2];
 const out = process.argv[3];
-if (!dir || !out) {
-  console.error('Usage: node import-starter.mjs <sources dir> <out.json>');
+const phone = process.argv[4];
+if (!dir || !out || !phone) {
+  console.error('Usage: node build-sample-list.mjs <sources dir> <review.json> <phone.json>');
   process.exit(1);
 }
 const xlsx = (file: string, sheet?: string) => readXlsx(new Uint8Array(readFileSync(join(dir, file))), sheet);
@@ -452,4 +464,40 @@ if (ids.size !== rows.length) throw new Error('two rows share an id');
 const now = new Date();
 const built = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 writeFileSync(out, JSON.stringify({ built, rows, refused: REFUSED.map(([code, why]) => ({ code, why })) }, null, 1) + '\n');
-console.log(`${rows.length} dishes: ${rows.filter((r) => r.source_db === 'CoFID 2021').length} from CoFID, ${rows.filter((r) => r.source_db === 'INDB 2024').length} from INDB → ${out}`);
+
+// ------------------------------------------------------------------ the phone's file
+
+/**
+ * Raise it when the dishes or their figures change. A phone that has the list
+ * keeps the version it added; there is no update path yet, because nobody has
+ * the list yet. The day one is needed it reads this.
+ */
+const VERSION = 1;
+
+const lean: SampleFile = {
+  list: SAMPLE_SET,
+  version: VERSION,
+  name: 'Sample dishes, vegetarian',
+  tag: 'Sample',
+  credits: 'UK CoFID 2021 (Open Government Licence v3.0) · Indian Nutrient Databank 2024',
+  count: rows.length,
+  rows: rows.map((r) => ({
+    id: `list:${r.id}`,
+    name: r.name,
+    unit: r.per_unit === '100g' ? '100g' : r.per_unit.replace(/^1 /, ''),
+    kcal: r.energy_kcal!,
+    protein: r.protein_g!,
+    fat: r.fat_g!,
+    carbs: r.carbs_g!,
+    fibre: r.fibre_g,
+    source: r.source_db,
+    code: r.source_code,
+    lab: r.method.startsWith('Measured'),
+  })),
+};
+// The phone's own check, run here first: a file it would refuse never ships.
+checkSampleFile(JSON.parse(JSON.stringify(lean)));
+// One dish a line: small, and a change to one dish is one line in a diff.
+writeFileSync(phone, `{"list":${JSON.stringify(lean.list)},"version":${lean.version},"name":${JSON.stringify(lean.name)},"tag":${JSON.stringify(lean.tag)},"credits":${JSON.stringify(lean.credits)},"count":${lean.count},"rows":[\n${lean.rows.map((r) => JSON.stringify(r)).join(',\n')}\n]}\n`);
+
+console.log(`${rows.length} dishes: ${rows.filter((r) => r.source_db === 'CoFID 2021').length} from CoFID, ${rows.filter((r) => r.source_db === 'INDB 2024').length} from INDB → ${out}, ${phone}`);

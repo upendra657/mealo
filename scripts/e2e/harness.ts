@@ -32,7 +32,16 @@ import {
   searchFoods,
   slugFor,
 } from '../../src/domain/foods';
-import { cyclePlan, deleteMeal, draftFromText, saveMeal, mealsOn, itemsFor, mealTime, setMealTime } from '../../src/domain/meals';
+import { cyclePlan, deleteMeal, draftFor, draftFromText, repriceItem, saveMeal, saveMealKeeping, mealsOn, itemsFor, mealTime, setMealTime, withManualGrams } from '../../src/domain/meals';
+import {
+  addSampleList,
+  finishRemovals,
+  removeSampleList,
+  sampleFood,
+  sampleListState,
+  searchSample,
+  SAMPLE_SET,
+} from '../../src/domain/samplelist';
 import { buildPlan, dayAhead, savePlan } from '../../src/domain/mealplanner';
 import { DEFAULT_REMINDERS } from '../../src/domain/reminders';
 import { buildRings, refreshReminders } from '../../src/domain/remindersync';
@@ -2192,6 +2201,172 @@ async function main() {
     check('there is a full record to protect', JSON.parse(held).filter((t: [string, unknown[]]) => t[1].length > 0).length >= 12, held.slice(0, 200));
     check('the start-up clean-up removes the register', (await retireBundled()) === 1);
     check('and every other row on the phone is exactly as it was', (await snapshot()) === held);
+  }
+
+  // ---- sample dishes ---------------------------------------------------------
+  // Two phones in one database. Up to "added", his: a full record, the list
+  // never added, and every answer the app gives must be what it was. Then a
+  // new person's: the list added by the tap, logged from, kept from, removed.
+  // At the end the rows his record held before any of it are compared, value
+  // for value, and the answers asked again (Upendra, 15-16 Oct 2026: nothing
+  // may happen to the data on the phones; he and his partner never add it).
+  step('sample dishes');
+  {
+    const RECORD = ['profiles', 'meals', 'meal_items', 'custom_foods', 'food_portions', 'food_aliases', 'medications', 'med_doses', 'med_products',
+      'intake_events', 'sick_episodes', 'weights', 'burns', 'symptoms', 'targets', 'messages', 'conversation_summaries', 'current_state', 'foods',
+      'med_ref_sets', 'med_ref_items'];
+    const rowsOf = async () => new Map(await Promise.all(RECORD.map(async (t) => [t, await query<Record<string, unknown>>(`SELECT rowid AS rid, * FROM ${t} ORDER BY rowid`)] as const)));
+    const held = await rowsOf();
+    /** What his screens and Ask Mealo's card would show, for words his record answers. */
+    const answers = async () => JSON.stringify([
+      await searchFoods('dal', 25),
+      await searchFoods('curd', 25),
+      await matchFood('dal tadka'),
+      await matchFood('set curd'),
+      await matchFood('roti'),
+      await draftFromText('1.5 katori dal tadka, 2 roti'),
+    ]);
+    const before = await answers();
+    const n = async (sqlText: string) => Number((await query<{ n: number }>(sqlText))[0].n);
+
+    check('a phone that never tapped Add holds no sample dish', (await sampleListState()) === null && (await n('SELECT COUNT(*) AS n FROM food_ref_items')) === 0
+      && (await n('SELECT COUNT(*) AS n FROM food_ref_sets')) === 0);
+    check('and search finds none', (await searchSample('dosa')).length === 0 && (await searchSample('dal')).length === 0);
+    check('and a typed dosa is not one', (await matchFood('masala dosa'))?.food.id.startsWith('list:') !== true);
+
+    // All or nothing: a dish already sitting under one of the file's ids
+    // makes the unit fail half way through, and nothing of it may stay.
+    await sql("INSERT INTO food_ref_items (id, set_id, name, slug, unit, energy_kcal, protein_g, fat_g, carbs_g, source, code, lab, updated_at) VALUES ('list:indb-BFP152', 'ghost', 'Uttapam', 'uttapam', 'uttapam', 1, 1, 1, 1, 'INDB 2024', 'BFP152', 0, 1)");
+    let half = '';
+    try {
+      await addSampleList();
+    } catch (e) {
+      half = e instanceof Error ? e.message : String(e);
+    }
+    check('an add that fails part way leaves nothing behind', half !== '' && (await sampleListState()) === null
+      && (await n("SELECT COUNT(*) AS n FROM food_ref_items WHERE set_id = 'sample-veg'")) === 0, half);
+    await sql("DELETE FROM food_ref_items WHERE set_id = 'ghost'");
+
+    let refused = '';
+    try {
+      await addSampleList(async () => ({ list: SAMPLE_SET, version: 1, name: 'x', tag: 'Sample', credits: 'c', count: 2, rows: [] }));
+    } catch (e) {
+      refused = e instanceof Error ? e.message : String(e);
+    }
+    check('a file that is not the list is refused, and nothing written', /did not pass its check/.test(refused) && (await n('SELECT COUNT(*) AS n FROM food_ref_items')) === 0, refused);
+
+    // ---- added: the real file, fetched from where the app serves it
+    const added = await addSampleList();
+    check('the tap adds all 169', added.count === 169 && (await n("SELECT COUNT(*) AS n FROM food_ref_items WHERE set_id = 'sample-veg'")) === 169, JSON.stringify(added));
+    check('a second tap adds nothing more', (await addSampleList()).count === 169 && (await n('SELECT COUNT(*) AS n FROM food_ref_items')) === 169);
+    const dosas = await searchSample('dosa');
+    check('search finds the eight dosas', dosas.length === 8 && dosas.some((f) => f.name === 'Masala dosa' && f.per_unit === '1 dosa'), dosas.map((f) => f.name).join(', '));
+    check('his own dishes answer as they did, the list beside them', (await answers()) === before);
+    check('nothing is learned or synced from the list being there', (await collect(0)).every((r) => !JSON.stringify(r).includes('list:')));
+
+    // A CoFID dish, per 100 g, by the katori nobody weighed.
+    const chana = (await searchSample('chana dal with tomato'))[0];
+    const c1 = await draftFor(chana, 1, 'katori');
+    check('chana dal: 1 katori is the household 150 g, estimated', [c1.grams, c1.energy_kcal, c1.protein_g, c1.fibre_g, c1.portionMeasured], [150, 228, 11.9, null, false]);
+    const cm = await saveMeal([c1], { mealType: 'lunch' });
+    const ci = (await query<Record<string, unknown>>('SELECT * FROM meal_items WHERE meal_id = ? AND profile_id = ?', [cm, activeProfile()]))[0];
+    check('logged with its figures and the list id', [ci.food_id, ci.net_weight_g, ci.energy_kcal, ci.fibre_g, ci.unit], [chana.id, 150, 228, null, 'katori']);
+
+    // An INDB dish, by the dosa.
+    const md = (await sampleFood('list:indb-ASC146'))!;
+    const d2 = await draftFor(md, 2, 'dosa');
+    check('two masala dosas, counted', [d2.energy_kcal, d2.protein_g, d2.fat_g, d2.carbs_g, d2.fibre_g, d2.unit, d2.basis], [690, 13.8, 32.8, 92.6, 10.6, 'dosa', 'serving']);
+    check('a bowl asked for is still dosas', (await repriceItem(d2, { unit: 'bowl', quantity: 3 })).energy_kcal === 1035);
+    check('and no weight can be typed for one', withManualGrams(d2, 300) === d2);
+    const dm = await saveMeal([d2], { mealType: 'breakfast' });
+    const di = (await query<Record<string, unknown>>('SELECT * FROM meal_items WHERE meal_id = ? AND profile_id = ?', [dm, activeProfile()]))[0];
+    check('stored with no weight at all', [di.net_weight_g, di.quantity, di.unit, di.energy_kcal], [null, 2, 'dosa', 690]);
+    const record = await collectExport('full', 2);
+    const items = record.meals.flatMap((m) => m.items);
+    const counted = items.filter((i) => i.counted);
+    check('what Ask Mealo reads marks the dosas counted, and nothing else', counted.length === 1 && counted[0].name === 'Masala dosa' && counted[0].grams === null,
+      JSON.stringify(counted));
+    const told = buildExport(record);
+    check('and says "2 × dosa", with no volume of the app\'s and no weight', /Masala dosa, 2 × dosa, 690 Cal/.test(told) && !/dosa \(/.test(told), told.split('\n').find((l) => /Masala dosa/.test(l)));
+    const typed = await draftFromText('2 masala dosa');
+    check('"2 masala dosa" typed, as Ask Mealo reads it, finds the sample dish', [typed[0]?.food?.id, typed[0]?.energy_kcal], ['list:indb-ASC146', 690]);
+    const again = await recentItems(null, 40);
+    check('Log again offers it', again.some((r) => r.foodId === 'list:indb-ASC146' && r.quantity === 2));
+
+    // Nothing that syncs may point at a list id.
+    check('no portion is remembered for a sample dish', (await upsertPortion({ foodId: chana.id, measure: 'katori', netWeightG: 180 })) === null);
+    check('no alias, no portion, nothing in what syncs names the list',
+      (await n("SELECT COUNT(*) AS n FROM food_aliases WHERE food_id LIKE 'list:%'")) === 0
+      && (await n("SELECT COUNT(*) AS n FROM food_portions WHERE food_id LIKE 'list:%'")) === 0
+      && (await collect(0)).every((r) => !JSON.stringify(r).includes('list:')));
+
+    // Kept in My food table, with the meal, as one unit.
+    const mixed = (await searchSample('mixed dal')).find((f) => f.name === 'Mixed dal')!;
+    const km = await saveMealKeeping(await draftFor(mixed, 1, 'katori'), { mealType: 'dinner' });
+    const kept = await dishNamed('Mixed dal');
+    const ki = (await query<Record<string, unknown>>('SELECT * FROM meal_items WHERE meal_id = ? AND profile_id = ?', [km, activeProfile()]))[0];
+    check('kept: a dish of one\'s own, per 100 g, as the source gave it', !!kept && kept.id !== mixed.id && !kept.id.startsWith('list:')
+      && [kept.energy_kcal, kept.protein_g, kept.fat_g, kept.carbs_g, kept.fibre_g, kept.per_unit].join() === '60,4.9,0.7,11.3,3.1,100g', JSON.stringify(kept));
+    check('and the meal points at it', ki.food_id === kept?.id && ki.energy_kcal === 90, JSON.stringify(ki));
+    check('the list no longer offers a dish of the same name', !(await searchSample('mixed dal')).some((f) => f.name === 'Mixed dal'));
+    check('the kept dish syncs like any other, and nothing else from the list does', (await collect(0)).some((r) => JSON.stringify(r).includes('mixed dal'))
+      && (await collect(0)).every((r) => !JSON.stringify(r).includes('list:')));
+    let twice = '';
+    try {
+      await saveMealKeeping(await draftFor(mixed, 1, 'katori'), { mealType: 'dinner' });
+    } catch (e) {
+      twice = e instanceof Error ? e.message : String(e);
+    }
+    check('keeping a name the table has is refused', /already has Mixed dal/.test(twice), twice);
+    let perDosa = '';
+    try {
+      await saveMealKeeping(d2, { mealType: 'dinner' });
+    } catch (e) {
+      perDosa = e instanceof Error ? e.message : String(e);
+    }
+    check('a dish given by the dosa cannot be kept', /per 100 g/.test(perDosa), perDosa);
+
+    // ---- removed
+    const figures = async () => JSON.stringify(await query('SELECT id, label, food_id, quantity, unit, net_weight_g, energy_kcal, protein_g, fat_g, carbs_g, fibre_g FROM meal_items WHERE meal_id IN (?, ?, ?) AND profile_id = ? ORDER BY id', [cm, dm, km, activeProfile()]));
+    const logged = await figures();
+    await removeSampleList();
+    check('removed: no list, no dishes', (await sampleListState()) === null && (await n('SELECT COUNT(*) AS n FROM food_ref_items')) === 0 && (await n('SELECT COUNT(*) AS n FROM food_ref_sets')) === 0);
+    check('meals logged from it keep every figure', (await figures()) === logged);
+    check('the kept dish stays', (await dishNamed('Mixed dal'))?.id === kept?.id);
+    const after = await recentItems(null, 40);
+    check('Log again drops what it can no longer open, and keeps the kept dish', !after.some((r) => r.foodId?.startsWith('list:')) && after.some((r) => r.foodId === kept?.id));
+    check('a typed dosa is no longer the sample dish', (await matchFood('masala dosa'))?.food.id.startsWith('list:') !== true);
+
+    // Added again: the same ids, so the meals name their dishes again.
+    await addSampleList();
+    check('added again, the same dish under the same id', (await sampleFood('list:indb-ASC146'))?.name === 'Masala dosa'
+      && (await recentItems(null, 40)).some((r) => r.foodId === 'list:indb-ASC146'));
+
+    // A removal cut short after its first write: gone from search at once,
+    // finished by the next look at the card.
+    await sql('UPDATE food_ref_sets SET deleted_at = 1 WHERE id = ?', [SAMPLE_SET]);
+    check('a list being removed is out of search at once', (await searchSample('dosa')).length === 0 && (await sampleFood('list:indb-ASC146')) === null);
+    await finishRemovals();
+    check('and the removal is finished later', (await n('SELECT COUNT(*) AS n FROM food_ref_items')) === 0 && (await n('SELECT COUNT(*) AS n FROM food_ref_sets')) === 0);
+
+    // His record, after all of it: every row it held is as it was. The rows
+    // this test added (three meals, their items, the kept dish and the alias
+    // its save taught) are the only new ones.
+    const now = await rowsOf();
+    const changed: string[] = [];
+    for (const [t, rows] of held) {
+      const later = new Map(now.get(t)!.map((r) => [r.rid, JSON.stringify(r)]));
+      for (const r of rows) if (later.get(r.rid) !== JSON.stringify(r)) changed.push(`${t}:${String(r.id ?? r.rid)}`);
+    }
+    check('every row the record held is exactly as it was', changed.length === 0, changed.slice(0, 8).join(', '));
+    const grew = [...now].map(([t, rows]) => [t, rows.length - held.get(t)!.length] as const).filter(([, d]) => d !== 0);
+    check('and the only new rows are the three meals, their items, the kept dish and its alias',
+      JSON.stringify(grew) === JSON.stringify([['meals', 3], ['meal_items', 3], ['custom_foods', 1], ['food_aliases', 1]]), JSON.stringify(grew));
+    // The kept "Mixed dal" now answers "dal" in his search, as a dish he
+    // added would; so the words compared here leave it out.
+    await deleteMeal(km);
+    await deleteCustomFood(kept!.id);
+    check('his own dishes answer as they did before any of it', (await answers()) === before);
   }
 
   // ---- backup and restore ------------------------------------------------

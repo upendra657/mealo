@@ -18,6 +18,9 @@
 import { scopedDb, type Writer } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import {
+  customFoodRow,
+  dishNamed,
+  isListFood,
   matchFood,
   parseMealText,
   withParts,
@@ -27,6 +30,7 @@ import {
   type Food,
 } from './foods';
 import { toMeasure } from './measures';
+import { isServing, servingMacros, servingWord } from './samplelist';
 import { canTick, nextPlanState, tickStamp, type PlanState } from './plan';
 import { guessSlot, normaliseSlot, type SlotId } from './slots';
 import {
@@ -172,6 +176,52 @@ async function apart(items: ParsedItem[]): Promise<ParsedItem[]> {
   return out;
 }
 
+/**
+ * A dish's weight and figures for an amount: the one place a draft is priced.
+ *
+ * Most dishes are per 100 g and go through the portion resolver. A sample
+ * dish given per dosa or per bowl (samplelist.ts) is counted instead: the
+ * quantity times the published figure for one, whatever measure was asked
+ * for, with no weight, because the source has no weight that is true of the
+ * dish as eaten.
+ */
+async function priced(
+  food: Food | null,
+  quantity: number | null,
+  unit: string | null,
+): Promise<{ res: Resolution; macros: ReturnType<typeof scaleMacros> | null }> {
+  if (food && isServing(food)) {
+    const q = quantity == null || quantity <= 0 ? 1 : quantity;
+    const word = servingWord(food);
+    const who = food.source_db.replace(/\s*\d{4}$/, '');
+    return {
+      res: {
+        grams: 0,
+        basis: 'serving',
+        measure: word,
+        quantity: q,
+        measured: false,
+        note: `${q} × ${word}, as ${who}’s recipe makes it`,
+      },
+      macros: servingMacros(food, q),
+    };
+  }
+  const res = await resolveFor(food?.id ?? null, quantity, unit);
+  return { res, macros: food ? scaleMacros(food, res.grams) : null };
+}
+
+/** A draft for a dish picked on screen, at an amount. */
+export async function draftFor(food: Food, quantity: number, unit: string | null): Promise<DraftItem> {
+  const { res, macros } = await priced(food, quantity, unit);
+  return withPortion(
+    { label: food.name, quantity, food, matchScore: 1, source: 'matched', ...macros! },
+    res,
+  );
+}
+
+/** What a saved item records as its weight: none for a dish never weighed. */
+const weightOf = (it: DraftItem): number | null => (it.food && isServing(it.food) ? null : it.grams);
+
 /** Turn typed text into draft items, using local matching only. */
 export async function draftFromText(text: string): Promise<DraftItem[]> {
   const parsed = await apart(parseMealText(text));
@@ -182,7 +232,7 @@ export async function draftFromText(text: string): Promise<DraftItem[]> {
     // The weight comes from the dish's own recorded portions when it has any,
     // and only falls back to a household size when it has none. This is the
     // difference between "2 roti" meaning 80g and meaning 200g.
-    const res = await resolveFor(match?.food.id ?? null, p.quantity, p.unit);
+    const { res, macros } = await priced(match?.food ?? null, p.quantity, p.unit);
 
     if (match) {
       out.push(
@@ -193,7 +243,7 @@ export async function draftFromText(text: string): Promise<DraftItem[]> {
             food: match.food,
             matchScore: match.score,
             source: 'matched',
-            ...scaleMacros(match.food, res.grams),
+            ...macros!,
           },
           res,
         ),
@@ -233,9 +283,9 @@ export async function repriceItem(
   const quantity = change.quantity !== undefined ? change.quantity : item.quantity;
   const unit = change.unit !== undefined ? change.unit : item.unit;
 
-  const res = await resolveFor(food?.id ?? null, quantity, unit);
-  const macros = food
-    ? scaleMacros(food, res.grams)
+  const { res, macros: scaled } = await priced(food, quantity, unit);
+  const macros = scaled
+    ? scaled
     : {
         energy_kcal: item.energy_kcal,
         protein_g: item.protein_g,
@@ -259,6 +309,9 @@ export async function repriceItem(
 
 /** Grams edited by hand — keep the number, drop the claim about where it came from. */
 export function withManualGrams(item: DraftItem, grams: number): DraftItem {
+  // A dish counted by the dosa has no weight to set: a typed one would be
+  // a number its figures do not follow.
+  if (item.food && isServing(item.food)) return item;
   return {
     ...item,
     grams,
@@ -295,6 +348,35 @@ export async function saveMeal(items: DraftItem[], opts: MealOpts = {}): Promise
   return id;
 }
 
+/**
+ * Save a meal from a sample dish and keep the dish in My food table, as one
+ * unit: the new dish and the meal pointing at it land together or not at all.
+ *
+ * The meal points at the kept dish rather than the sample one, so from this
+ * meal on it is the person's own: it syncs within the household, a katori
+ * weighed against it is remembered, and the list can be removed without it.
+ * Earlier meals logged from the sample dish are left as they are.
+ *
+ * Refused for a dish given per piece (no per-100 g figure to keep) and for a
+ * name the food table already has, which would otherwise be a second dish
+ * of one name.
+ */
+export async function saveMealKeeping(item: DraftItem, opts: MealOpts = {}): Promise<string> {
+  const sample = item.food;
+  if (!sample || !isListFood(sample.id) || isServing(sample)) throw new Error('Only a sample dish given per 100 g can be kept.');
+  const clash = await dishNamed(sample.name);
+  if (clash) throw new Error(`My food table already has ${clash.name}.`);
+
+  let kept: DraftItem = item;
+  const id = await db.atomically(async (tx) => {
+    const foodId = await tx.insert('custom_foods', customFoodRow({ ...sample, per_unit: '100g' }));
+    kept = { ...item, food: { ...sample, id: foodId, source_db: 'custom', per_unit: '100g', is_custom: 1 } };
+    return writeMeal(tx, [kept], opts);
+  });
+  await learnFrom([kept]);
+  return id;
+}
+
 /** Several meals as one unit: a planned day is saved whole or not at all. */
 export async function saveMeals(meals: { items: DraftItem[]; opts: MealOpts }[]): Promise<string[]> {
   const ids = await db.atomically(async (tx) => {
@@ -324,7 +406,7 @@ async function writeMeal(w: Writer, items: DraftItem[], opts: MealOpts): Promise
       food_id: it.food?.id ?? null,
       quantity: it.quantity,
       unit: it.unit,
-      net_weight_g: it.grams,
+      net_weight_g: weightOf(it),
       energy_kcal: it.energy_kcal,
       protein_g: it.protein_g,
       fat_g: it.fat_g,
@@ -416,7 +498,7 @@ export async function updateMealItem(
     food_id: item.food?.id ?? null,
     quantity: item.quantity,
     unit: item.unit,
-    net_weight_g: item.grams,
+    net_weight_g: weightOf(item),
     energy_kcal: item.energy_kcal,
     protein_g: item.protein_g,
     fat_g: item.fat_g,

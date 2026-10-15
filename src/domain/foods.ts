@@ -35,6 +35,34 @@ export type Food = {
 };
 
 /**
+ * A sample dish's id (domain/samplelist.ts). The prefix is the whole test,
+ * kept here because three writers must refuse these ids and foods.ts is the
+ * one module all of them already import.
+ *
+ * Nothing synced may point at one: food_aliases and food_portions travel to
+ * the other phones in the household, which may never have added the list, and
+ * a row pointing at a dish a phone does not have is the silent dangling
+ * anchor CLAUDE.md warns about. So no alias is learned and no portion is
+ * remembered for a sample dish; keeping it in My food table makes it a dish
+ * of one's own first.
+ */
+export const LIST_PREFIX = 'list:';
+export const isListFood = (id: string | null | undefined): boolean => !!id && id.startsWith(LIST_PREFIX);
+
+/**
+ * Sample dishes as Food rows, from lists that are on this phone and not being
+ * removed. `per_unit` is '100g' or '1 dosa', as the source gives it.
+ */
+export const LIST_FOODS = `
+  SELECT i.id, i.name, i.source AS source_db,
+         CASE WHEN i.unit = '100g' THEN '100g' ELSE '1 ' || i.unit END AS per_unit,
+         i.energy_kcal, i.protein_g, i.fat_g, i.carbs_g, i.fibre_g,
+         0 AS is_custom, LENGTH(i.name) AS name_len
+    FROM food_ref_items i
+    JOIN food_ref_sets s ON s.id = i.set_id AND s.deleted_at IS NULL
+   WHERE i.deleted_at IS NULL`;
+
+/**
  * Both food sources as one result set.
  *
  * `custom_foods` first and flagged, because something you defined by hand beats
@@ -66,6 +94,8 @@ const UNION_FOODS = `
          energy_kcal, protein_g, fat_g, carbs_g, fibre_g,
          0 AS is_custom, LENGTH(name) AS name_len
     FROM foods WHERE name LIKE ?
+  UNION ALL
+  SELECT * FROM (${LIST_FOODS} AND (i.name LIKE ? OR i.slug LIKE ?))
 `;
 
 export type Match = {
@@ -270,10 +300,14 @@ async function byExactName(needle: string): Promise<Food | null> {
        FROM custom_foods WHERE deleted_at IS NULL AND LOWER(name) = ?
      UNION ALL
      SELECT id, name, source_db, per_unit,
+            energy_kcal, protein_g, fat_g, carbs_g, fibre_g, is_custom
+       FROM (${LIST_FOODS} AND i.slug = ?)
+     UNION ALL
+     SELECT id, name, source_db, per_unit,
             energy_kcal, protein_g, fat_g, carbs_g, fibre_g, 0 AS is_custom
        FROM foods WHERE LOWER(name) = ?
      LIMIT 1`,
-    [needle, needle],
+    [needle, needle, needle],
   );
   return rows[0] ?? null;
 }
@@ -288,7 +322,20 @@ export async function saveCustomFood(food: {
   fibre_g: number | null;
   per_unit?: string;
 }): Promise<string> {
-  return db.insert('custom_foods', {
+  return db.insert('custom_foods', customFoodRow(food));
+}
+
+/** The row `saveCustomFood` writes, for a save that writes it inside a unit. */
+export function customFoodRow(food: {
+  name: string;
+  energy_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  fibre_g: number | null;
+  per_unit?: string;
+}): Record<string, unknown> {
+  return {
     name: food.name.trim(),
     slug: slugFor(food.name),
     per_unit: food.per_unit ?? '100g',
@@ -299,7 +346,7 @@ export async function saveCustomFood(food: {
     fibre_g: food.fibre_g,
     notes: null,
     deleted_at: null,
-  });
+  };
 }
 
 /** The dish this slug names, if this device already has it. */
@@ -452,13 +499,19 @@ export async function matchFood(
     like,
     like,
     like,
+    like,
+    like,
   ]);
   if (candidates.length === 0) return null;
 
   let best: Match | null = null;
   for (const food of candidates) {
-    // Small thumb on the scale for your own definitions.
-    const s = score(needle, normalise(food.name)) + (food.is_custom ? 0.15 : 0);
+    // Small thumb on the scale for your own definitions, and a smaller one
+    // for a sample dish over the old reference table: a sample dish is an
+    // Indian dish as eaten, the reference rows are USDA ingredients. The
+    // sample dishes are only there once someone tapped Add, so on a phone
+    // without them this scores exactly as it did before.
+    const s = score(needle, normalise(food.name)) + (food.is_custom ? 0.15 : isListFood(food.id) ? 0.05 : 0);
     if (!best || s > best.score) best = { food, score: Math.min(s, 1), via: 'fuzzy' };
   }
   return best && best.score >= minScore ? best : null;
@@ -470,7 +523,7 @@ export async function rememberAlias(
   foodId: string,
 ): Promise<void> {
   const alias = normalise(label);
-  if (!alias) return;
+  if (!alias || isListFood(foodId)) return;
   const existing = await db.query<{ id: string; hits: number }>(
     'SELECT id, hits FROM food_aliases WHERE alias = ? LIMIT 1',
     [alias],

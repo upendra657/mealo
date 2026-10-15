@@ -25,7 +25,9 @@ import {
   toMeasure,
   wheelMeasures,
 } from '../src/domain/measures';
-import { normalise, slugFor } from '../src/domain/foods';
+import { isListFood, normalise, slugFor, type Food } from '../src/domain/foods';
+import { checkSampleFile, isServing, servingMacros, servingWord, type SampleFile } from '../src/domain/samplelist';
+import { SYNC_TABLES } from '../src/domain/sync';
 import { settledValue } from '../src/lib/wheel';
 import { CsvReader, emptySkips, formFromText, parseComposition, presetFor, rowsToItems } from '../src/lib/tabular';
 import { columnIndex, readXlsx } from '../src/lib/xlsx';
@@ -1239,6 +1241,7 @@ const SHIPPED: Record<number, string> = {
   13: 'ca5525f7a2b617e6',
   14: '705d60a7e713cd93',
   15: '41352f50b2fd5321',
+  16: 'ade4679ffbdc35fa',
 };
 
 /**
@@ -2804,6 +2807,78 @@ function addDaysIso(isoDay: string, n: number): string {
   const [y, m, d] = isoDay.split('-').map(Number);
   const x = new Date(y, m - 1, d + n);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+section('Sample dishes: the file a phone fetches');
+{
+  // The file that ships, read as the phone reads it.
+  const raw = JSON.parse(readFileSync('public/lists/sample-veg.json', 'utf8')) as SampleFile;
+  const file = checkSampleFile(raw);
+  const by = (src: string) => file.rows.filter((r) => r.source === src).length;
+  // Dev's card names these three numbers before the file is fetched, so the
+  // words and the file must agree.
+  check('169 dishes: 137 from CoFID, 32 from INDB, as the Dev card says', [file.count, by('CoFID 2021'), by('INDB 2024')], [169, 137, 32]);
+  const card = readFileSync('src/ui/SampleListCard.tsx', 'utf8');
+  check('and the card does say so', [/>137<\/span> from UK CoFID 2021/.test(card), />32<\/span> from the Indian Nutrient Databank/.test(card), /Add 169 sample dishes/.test(card)], [true, true, true]);
+  check('every id is a list id, which no synced row may point at', file.rows.every((r) => isListFood(r.id)), true);
+  check('CoFID per 100 g, INDB by the piece or bowl only', [
+    file.rows.filter((r) => r.source === 'CoFID 2021').every((r) => r.unit === '100g'),
+    file.rows.filter((r) => r.source === 'INDB 2024').every((r) => r.unit !== '100g'),
+  ], [true, true]);
+  const dosa = file.rows.find((r) => r.name === 'Masala dosa')!;
+  check('masala dosa as INDB gives it, per dosa', [dosa.unit, dosa.kcal, dosa.protein, dosa.fat, dosa.carbs, dosa.fibre, dosa.code], ['dosa', 345, 6.9, 16.4, 46.3, 5.3, 'ASC146']);
+  const chana = file.rows.find((r) => r.name === 'Chana dal with tomato (Punjabi)')!;
+  check('a dish with no fibre figure carries none, not a zero', [chana.fibre, chana.kcal, chana.lab], [null, 152, false]);
+  check('a laboratory figure says so', file.rows.find((r) => r.name === 'Mixed dal')!.lab, true);
+  check('small enough to fetch on a bad connection', readFileSync('public/lists/sample-veg.json').byteLength < 40_000, true);
+
+  // Refused whole, for each way a file can be wrong.
+  const refuses = (why: string, mutate: (f: Record<string, unknown> & { rows: Record<string, unknown>[] }) => void, said: RegExp) => {
+    const f = JSON.parse(JSON.stringify(raw));
+    mutate(f);
+    let msg = '';
+    try {
+      checkSampleFile(f);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    check(`refused: ${why}`, said.test(msg) && /Nothing on this phone changed/.test(msg) ? 'refused' : msg || 'accepted', 'refused');
+  };
+  refuses('another list', (f) => { f.list = 'something-else'; }, /not the sample dishes/);
+  refuses('a count that is not the rows', (f) => { f.count = 170; }, /says 170 dishes and holds 169/);
+  refuses('a dish missing', (f) => { f.rows.pop(); }, /says 169 dishes and holds 168/);
+  refuses('a repeated id', (f) => { f.rows[1].id = f.rows[0].id; }, /repeats an id/);
+  refuses('a repeated name', (f) => { f.rows[1].name = f.rows[0].name; }, /repeats a name/);
+  refuses('an id that is not a list id', (f) => { f.rows[0].id = 'cofid-13-484'; }, /no proper id/);
+  refuses('calories that are not a number', (f) => { f.rows[0].kcal = 'sixty'; }, /believable calories/);
+  refuses('calories no food per 100 g has', (f) => { f.rows[0].kcal = 1200; }, /believable calories/);
+  refuses('a missing protein figure', (f) => { f.rows[0].protein = null; }, /no protein/);
+  refuses('more fibre than carbohydrate', (f) => { f.rows[0].fibre = 50; }, /more fibre than carbohydrate/);
+  refuses('more than 100 g in 100 g', (f) => { f.rows[0].fat = 99; }, /more than 100 g in 100 g/);
+  refuses('a source the app does not know', (f) => { f.rows[0].source = 'Somewhere'; }, /no known source/);
+  refuses('no word on how it was measured', (f) => { delete f.rows[0].lab; }, /how it was measured/);
+  refuses('a unit with markup in it', (f) => { f.rows[150].unit = '<b>dosa</b>'; }, /no proper unit/);
+  refuses('no dishes', (f) => { f.rows = []; f.count = 0; }, /no dishes/);
+  refuses('not a list at all', (f) => { for (const k of Object.keys(f)) delete f[k]; }, /not the sample dishes/);
+
+  // Counting by the dosa.
+  const asFood = (r: SampleFile['rows'][number]): Food => ({
+    id: r.id, name: r.name, source_db: r.source, per_unit: r.unit === '100g' ? '100g' : `1 ${r.unit}`,
+    energy_kcal: r.kcal, protein_g: r.protein, fat_g: r.fat, carbs_g: r.carbs, fibre_g: r.fibre, is_custom: 0,
+  });
+  const md = asFood(dosa);
+  check('a dosa is counted, not weighed', [isServing(md), servingWord(md), isServing(asFood(chana))], [true, 'dosa', false]);
+  check('two masala dosas', servingMacros(md, 2), { energy_kcal: 690, protein_g: 13.8, fat_g: 32.8, carbs_g: 92.6, fibre_g: 10.6 });
+  check('half a dosa is half', servingMacros(md, 0.5).energy_kcal, 172.5);
+  check('no quantity counts one', servingMacros(md, null).energy_kcal, 345);
+  check('fibre not known stays not known, however many', servingMacros({ ...md, fibre_g: null }, 3).fibre_g, null);
+
+  // Where it lives: served beside the app, never in the offline cache, and
+  // never in what syncs.
+  const vite = readFileSync('vite.config.ts', 'utf8');
+  const globs = vite.match(/globPatterns:\s*\[([^\]]*)\]/)?.[1] ?? '';
+  check('the offline cache takes no .json, so no phone downloads the list unasked', [globs.length > 0, /json/.test(globs), /lists/.test(vite)], [true, false, false]);
+  check('the sample tables never sync', SYNC_TABLES.some((t) => /food_ref/.test(t)), false);
 }
 
 // ------------------------------------------------------------------ done

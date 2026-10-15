@@ -30,8 +30,7 @@
  */
 
 import { clock } from './chat';
-import { dateLabel, MAX_DAYS, MIN_DAYS, type ExportInput, type Scope } from './export';
-import { describeMeasure } from './measures';
+import { dateLabel, MAX_DAYS, MIN_DAYS, measureWords, type ExportInput, type Scope } from './export';
 import { counts, DAYS_AHEAD } from './plan';
 import { humanReport, MACROS } from './report';
 import { suggestLabel, SYMPTOM_LABELS, wordsForModel } from './symptomlabels';
@@ -156,7 +155,7 @@ export function thaliDay(x: ExportInput, day: string) {
       time: clock(m.at),
       dishes: m.items.map((i) => ({
         dish: i.name,
-        amount: i.quantity != null && i.unit ? `${i.quantity} ${describeMeasure(i.unit).toLowerCase()}` : null,
+        amount: i.quantity != null && i.unit ? `${i.quantity} ${measureWords(i)}` : null,
         grams: whole(i.grams),
         calories: whole(i.energy_kcal),
         protein_g: tenth(i.protein_g),

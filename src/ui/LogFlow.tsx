@@ -14,9 +14,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  draftFor,
   guessMealType,
   repriceItem,
   saveMeal,
+  saveMealKeeping,
   startOfToday,
   updateMealItem,
   setMealSlot,
@@ -27,6 +29,7 @@ import {
 } from '../domain/meals';
 import {
   dishNamed,
+  isListFood,
   matchFood,
   scaleMacros,
   searchFoods,
@@ -39,6 +42,7 @@ import { daysFromToday, plansAt, stampFor } from '../domain/plan';
 import { clock } from '../domain/chat';
 import { slot as slotOf, SLOTS, type SlotId } from '../domain/slots';
 import { recentItems, type Recent } from '../domain/recents';
+import { isServing, sampleCredit, sampleFood, searchSample, servingWord } from '../domain/samplelist';
 import { EditDish } from './EditDish';
 import { MealDial } from './MealDial';
 import { Chevron, fmtQty, Plus, SearchIcon, Sheet, useToast, Wheel } from './bits';
@@ -74,6 +78,9 @@ const GRAM_QTYS = Array.from({ length: 100 }, (_, i) => (i + 1) * 5); // 5 … 5
 
 /** The typed box goes further than the wheel, but not indefinitely. */
 const TYPED_MAX = 1000;
+
+/** A sample dish given per 100 g, which My food table can hold (samplelist.ts). */
+const canKeep = (it: DraftItem) => !!it.food && isListFood(it.food.id) && !isServing(it.food);
 
 function laddersFor(unit: string | null): number[] {
   // The fine ladder is for units so small you need hundreds of them — grams
@@ -155,6 +162,8 @@ export function LogFlow({
    */
   const [when, setWhen] = useState<number | null>(null);
   const [kept, setKept] = useState<number | null>(null);
+  /** "Keep in My food table", for a sample dish given per 100 g. Off unless turned on. */
+  const [keep, setKeep] = useState(false);
   const toast = useToast();
   const day = editing?.dayStart ?? dayStart ?? startOfToday();
 
@@ -170,8 +179,15 @@ export function LogFlow({
       const match = editing.foodId
         ? await matchFood(editing.label)
         : null;
-      const food =
+      let food =
         match && match.food.id === editing.foodId ? match.food : null;
+      // A sample dish is found by its id: its name may also be one of the
+      // person's own dishes now, which the match above would prefer.
+      if (!food && isListFood(editing.foodId)) food = await sampleFood(editing.foodId!);
+      if (food) {
+        setItem({ ...(await draftFor(food, editing.quantity, editing.measure)), label: editing.label });
+        return;
+      }
       const res = await resolveFor(editing.foodId, editing.quantity, editing.measure);
       setItem({
         label: editing.label,
@@ -198,20 +214,8 @@ export function LogFlow({
   }, [editing]);
 
   const open = useCallback(async (food: Food, quantity: number, measure: string | null) => {
-    const res = await resolveFor(food.id, quantity, measure);
-    setItem({
-      label: food.name,
-      quantity,
-      unit: res.measure,
-      food,
-      grams: res.grams,
-      basis: res.basis,
-      portionNote: res.note,
-      portionMeasured: res.measured,
-      matchScore: 1,
-      source: 'matched',
-      ...scaleMacros(food, res.grams),
-    });
+    setItem(await draftFor(food, quantity, measure));
+    setKeep(false);
     setStep('dish');
   }, []);
 
@@ -237,16 +241,22 @@ export function LogFlow({
         // Decided at the moment of saving, against the clock then: dinner
         // chosen at 6:58 and saved at 7:01 was logged at dinner time.
         const planned = plansAt(day, slot);
-        await saveMeal([item], {
+        const opts = {
           mealType: slot,
           // A plan's time comes from its tick, so a chosen time is for a
           // meal eaten.
           eatenAt: !planned && when !== null ? when : stampFor(day, new Date(), slot),
           planned,
-        });
-        toast(`${item.label} ${planned ? 'planned' : 'added'}`);
+        };
+        if (keep && canKeep(item)) await saveMealKeeping(item, opts);
+        else await saveMeal([item], opts);
+        toast(`${item.label} ${planned ? 'planned' : 'added'}${keep && canKeep(item) ? ', and kept in My food table' : ''}`);
       }
       go('day');
+    } catch (e) {
+      // Only the keep path refuses on purpose (a name already in the table);
+      // nothing was written, so the screen stays for another try.
+      toast(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -287,6 +297,8 @@ export function LogFlow({
           setWhen={setWhen}
           editing={!!editing}
           busy={busy}
+          keep={keep}
+          setKeep={setKeep}
           onBack={back}
           onSave={save}
           onEdit={() => setStep('edit')}
@@ -366,6 +378,8 @@ function SearchStep({
 }) {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Food[]>([]);
+  /** Sample dishes, when this phone has the list; below the person's own. */
+  const [samples, setSamples] = useState<Food[]>([]);
   const [recents, setRecents] = useState<Recent[]>([]);
   const [searching, setSearching] = useState(false);
 
@@ -377,13 +391,15 @@ function SearchStep({
     const term = q.trim();
     if (term.length < 2) {
       setHits([]);
+      setSamples([]);
       return;
     }
     let live = true;
     setSearching(true);
-    void searchFoods(term, 25).then((r) => {
+    void Promise.all([searchFoods(term, 25), searchSample(term, 25)]).then(([r, sm]) => {
       if (live) {
         setHits(r);
+        setSamples(sm);
         setSearching(false);
       }
     });
@@ -435,13 +451,29 @@ function SearchStep({
 
       {term.length >= 2 ? (
         <>
-          <div className="section-h">
-            {searching ? 'Searching…' : `${hits.length} match${hits.length === 1 ? '' : 'es'}`}
-          </div>
+          {/* With nothing of their own matching, a new phone's sample dishes
+              stand in that place; otherwise they follow, under their own
+              heading, so a person's own dish is always the first answer. */}
+          {(hits.length > 0 || samples.length === 0 || searching) && (
+            <div className="section-h">
+              {searching ? 'Searching…' : `${hits.length} match${hits.length === 1 ? '' : 'es'}`}
+            </div>
+          )}
           {hits.map((f) => (
             <DishRow key={f.id} food={f} onPick={onPick} />
           ))}
-          {!searching && hits.length === 0 && (
+          {!searching && samples.length > 0 && (
+            <>
+              <div className="section-h">
+                {hits.length > 0 ? 'Sample dishes' : `${samples.length} match${samples.length === 1 ? '' : 'es'}`}
+                <span className="k">{hits.length > 0 ? `${samples.length} match${samples.length === 1 ? '' : 'es'}` : 'from sample dishes'}</span>
+              </div>
+              {samples.map((f) => (
+                <SampleRow key={f.id} food={f} onPick={onPick} />
+              ))}
+            </>
+          )}
+          {!searching && hits.length === 0 && samples.length === 0 && (
             <>
               <p className="empty-note">Nothing matches “{term}”.</p>
               {/* This button has had the name in its own label all along and
@@ -515,6 +547,36 @@ function DishRow({
   );
 }
 
+/**
+ * A sample dish in search: its calories per 100 g, or per dosa and never
+ * weighed, and the list's tag so it is never taken for one of the person's
+ * own.
+ */
+function SampleRow({
+  food,
+  onPick,
+}: {
+  food: Food;
+  onPick: (f: Food, q: number, m: string | null) => void;
+}) {
+  const kcal = food.energy_kcal === null ? '?' : Math.round(food.energy_kcal);
+  return (
+    <div className="row">
+      <button className="row-tap" onClick={() => onPick(food, 1, isServing(food) ? servingWord(food) : null)}>
+        <span className="grow">
+          <span className="nm" style={{ display: 'block' }}>
+            {food.name}
+          </span>
+          <span className="amt num" style={{ display: 'block' }}>
+            {isServing(food) ? `${kcal} Cal per ${servingWord(food)} · not weighed` : `${kcal} Cal/100g`}
+          </span>
+        </span>
+        <span className="srctag">Sample</span>
+      </button>
+    </div>
+  );
+}
+
 function RecentRow({
   recent,
   onPick,
@@ -523,6 +585,12 @@ function RecentRow({
   onPick: (f: Food, q: number, m: string | null) => void;
 }) {
   const go = async () => {
+    // A sample dish by its id; matching its name could land on another.
+    if (isListFood(recent.foodId)) {
+      const f = await sampleFood(recent.foodId!);
+      if (f) onPick(f, recent.quantity, recent.measure);
+      return;
+    }
     const m = await matchFood(recent.label);
     if (m) onPick(m.food, recent.quantity, recent.measure);
   };
@@ -565,6 +633,8 @@ function DishStep({
   setWhen,
   editing,
   busy,
+  keep,
+  setKeep,
   onBack,
   onSave,
   onEdit,
@@ -581,6 +651,8 @@ function DishStep({
   setWhen: (t: number) => void;
   editing: boolean;
   busy: boolean;
+  keep: boolean;
+  setKeep: (on: boolean) => void;
   onBack: () => void;
   onSave: () => void;
   onEdit: () => void;
@@ -630,6 +702,20 @@ function DishStep({
   const food = item.food;
   const measure = item.unit ? toMeasure(item.unit) : null;
   const kcal = item.energy_kcal ?? 0;
+  /** From Sample dishes (samplelist.ts), and whether it is counted rather than weighed. */
+  const sample = isListFood(food?.id);
+  const serving = !!food && isServing(food);
+  const word = food && serving ? servingWord(food) : null;
+  const who = food?.source_db.replace(/\s*\d{4}$/, '') ?? '';
+  const [credit, setCredit] = useState<string | null>(null);
+  useEffect(() => {
+    if (!food || !sample) return setCredit(null);
+    let live = true;
+    void sampleCredit(food.id).then((c) => live && setCredit(c));
+    return () => {
+      live = false;
+    };
+  }, [food, sample]);
 
   const reprice = async (change: { quantity?: number; unit?: string | null }) => {
     setItem(await repriceItem(item, change));
@@ -686,7 +772,7 @@ function DishStep({
             <span className="num">
               {food.energy_kcal === null ? '?' : Math.round(food.energy_kcal)}
             </span>{' '}
-            Cal per 100g · your table
+            Cal per {word ?? '100g'} · {sample ? 'sample dishes' : 'your table'}
             {/* Only your own dishes. A bundled IFCT or USDA row is the same
                 on every install and is not anyone's to correct. */}
             {food.source_db === 'custom' && (
@@ -712,11 +798,13 @@ function DishStep({
             <Chevron size={15} dir="down" />
           </span>
         </button>
-        <button className="afield" onClick={() => setPicker('meas')}>
+        {/* A dish counted by the dosa has the dosa and nothing else: any
+            other measure would need a weight the source does not give. */}
+        <button className="afield" onClick={() => setPicker('meas')} disabled={serving}>
           <span className="k">Measure</span>
           <span className="v">
-            <span className="t">{measure ? cap(measure.label) : '—'}</span>
-            <Chevron size={15} dir="down" />
+            <span className="t">{word ? cap(word) : measure ? cap(measure.label) : '—'}</span>
+            {!serving && <Chevron size={15} dir="down" />}
           </span>
         </button>
       </div>
@@ -762,7 +850,7 @@ function DishStep({
         <div className="head">
           <span className="cal num">{Math.round(kcal)}</span>
           <span className="cu">Cal</span>
-          <span className="wt num">Net wt {item.grams} g</span>
+          <span className="wt num">{serving ? 'not weighed' : `Net wt ${item.grams} g`}</span>
         </div>
         <div className="mlist">
           {(
@@ -775,23 +863,60 @@ function DishStep({
           ).map(([label, v]) => (
             <div className="mrow" key={label}>
               <span className="k">{label}</span>
-              <span className="v num">{v === null ? '—' : v} g</span>
+              <span className="v num">{v !== null ? `${v} g` : sample ? 'not known' : '— g'}</span>
             </div>
           ))}
         </div>
         <div className="basis">
           <span className={item.portionMeasured ? 'tag tag--known' : 'tag tag--guess'}>
-            {item.portionMeasured ? 'yours' : 'estimated'}
+            {serving ? 'recipe' : item.portionMeasured ? 'yours' : 'estimated'}
           </span>
-          <span>{item.portionNote}</span>
-          {food && measure && measure.kind !== 'weight' && !item.portionMeasured && !savedPortion && (
+          {/* "Record yours" is for a dish of one's own; a sample dish is
+              weighed once it is kept, which the switch below says. */}
+          <span>{sample ? item.portionNote.replace(/ — record yours.*$/, '') : item.portionNote}</span>
+          {/* Not for a sample dish: a portion is synced, and the other phone
+              may not have the list. Keeping the dish makes it yours first. */}
+          {food && !sample && measure && measure.kind !== 'weight' && !item.portionMeasured && !savedPortion && (
             <button className="link" onClick={() => void rememberPortion()}>
               remember this
             </button>
           )}
           {savedPortion && <span> · saved</span>}
         </div>
+        {sample && food?.fibre_g === null && (
+          <div className="basis" style={{ display: 'block' }}>
+            Fibre not known: {who} has no fibre figure for this dish, so it adds nothing to the day’s fibre.
+          </div>
+        )}
+        {serving && (
+          <div className="basis" style={{ display: 'block' }}>
+            Not weighed, and cannot be: {who} gives grams only for the raw ingredients. Logged by the {word}.
+          </div>
+        )}
+        {credit && (
+          <div className="basis" style={{ display: 'block' }}>
+            {credit}
+          </div>
+        )}
       </div>
+
+      {sample && !editing && !serving && (
+        <button className="lt" role="switch" aria-checked={keep} onClick={() => setKeep(!keep)}>
+          <span className="grow">
+            <span className="nm">Keep in My food table</span>
+            <span className="amt">
+              Then a {measure && measure.kind !== 'weight' ? measure.label : 'katori'} you weigh is remembered, and you can edit it. Off:
+              logged from Sample dishes as it is.
+            </span>
+          </span>
+          <span className="switch" />
+        </button>
+      )}
+      {serving && !editing && (
+        <p className="small muted" style={{ margin: '14px 2px 0' }}>
+          Stays in Sample dishes. My food table works per 100 g, and {who} gives this dish only by the {word}.
+        </p>
+      )}
 
       <button
         className="cta"
@@ -805,8 +930,9 @@ function DishStep({
       </button>
 
       <div className="foot">
-        Change the quantity or measure and the weight, calories and macros all
-        re-derive from your recorded portion.
+        {serving
+          ? `Change the quantity and the calories and macros follow, by the ${word}.`
+          : 'Change the quantity or measure and the weight, calories and macros all re-derive from your recorded portion.'}
       </div>
 
       {/* --- pickers --- */}

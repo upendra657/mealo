@@ -32,9 +32,9 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 1062 pure-logic assertions, node, fast
+npm run test:portions  # 1095 pure-logic assertions, node, fast
 npm run test:safety    # 1252 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 506 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 545 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -254,6 +254,25 @@ entry. Imports are staged ('importing' until complete, invisible to search,
 cleared if abandoned) and written through the worker's bulk path, which
 refuses every table but `med_ref_items` — an import cannot reach meals.
 
+**Sample dishes are a list on the phone, never the library** (v16,
+`domain/samplelist.ts`, `ui/SampleListCard.tsx`; 16 Oct 2026). 169
+vegetarian dishes (137 UK CoFID 2021 per 100 g, 32 INDB 2024 per dosa or
+bowl), for people Upendra gives access to; he and his partner never add it.
+One tap in Dev → Lists fetches `public/lists/sample-veg.json` (built by
+`scripts/build-sample-list.ts` from sources outside the repo; never in the
+offline cache, a test says so) and writes it in one transaction to
+`food_ref_sets`/`food_ref_items`. Ids are `list:…`, the same on every phone.
+**No synced row may point at a list id**: `rememberAlias` and
+`upsertPortion` refuse them (`isListFood`), and an e2e check reads what sync
+would send. A meal from a sample dish stores its own figures, so removing
+the list changes no meal; an INDB dish is counted (`priced` in `meals.ts`),
+never weighed, `net_weight_g` NULL, and reaches Ask Mealo as "2 × dosa"
+(`counted`), never as the app's 350 ml bowl. "Keep in My food table" (CoFID
+only) writes the dish and the meal as one unit. Search shows the person's
+own dishes first. On a phone without the list every table is empty and
+every answer is what it was; the e2e run compares his whole record and his
+search and match answers before and after adding and removing it.
+
 **Medicines split the way food does.** What a medicine *is* (`med_products`,
 its ingredients, a starting schedule) is the household library; what a person
 *takes* (`medications`, `med_doses`, `intake_events`, `sick_episodes`) is per
@@ -374,7 +393,7 @@ anything touching the database in `scripts/e2e/harness.ts` against real SQLite.
 Mocks are not used. Every bug fixed gets an assertion that would have caught it.
 
 **Migrations are forward-only**, numbered, never edited once shipped. Schema is
-at **v15**. **Shipped means any database has run it — a dev browser included.**
+at **v16**. **Shipped means any database has run it — a dev browser included.**
 v10 was edited after `npm run dev` had already run it on Upendra's Mac; that
 database never re-ran it, and every medicine save failed with "no column named
 freq". Never re-pin a checksum: write the next migration. A new one ships with two additions or the tests fail: its checksum

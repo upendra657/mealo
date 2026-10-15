@@ -33,6 +33,7 @@ import { asksAtNight, nightAhead, planReceipt, type NightTomorrow, type PlanAsk 
 import { buildPlan, dayAhead, savePlan, type DayPlan } from '../domain/mealplanner';
 import { deleteMeal, draftFromText, itemsFor, mealsBetween, saveMeal, startOfToday, type DraftItem } from '../domain/meals';
 import { describeMeasure } from '../domain/measures';
+import { isServing, servingWord } from '../domain/samplelist';
 import { markDose, readMedsDay, undoIntake, type Medication } from '../domain/medications';
 import { counts, dayLabel } from '../domain/plan';
 import { guessSlot, normaliseSlot, slot } from '../domain/slots';
@@ -168,7 +169,9 @@ export function MealFlow({ at, said, onRetype, onCancel, onWrote, onAddDish, onV
                 <span>{it.food?.name ?? it.label}</span>
                 <span className="am-li-q">
                   {it.food
-                    ? it.quantity && it.unit
+                    ? isServing(it.food)
+                      ? `${fmtQty(it.quantity ?? 1)} ${servingWord(it.food)}`
+                      : it.quantity && it.unit
                       ? `${fmtQty(it.quantity)} ${describeMeasure(it.unit).toLowerCase()}`
                       : `${Math.round(it.grams)} g`
                     : 'not in your food table'}

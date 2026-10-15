@@ -27,6 +27,7 @@
 
 import { scopedDb } from '../db/scope';
 import { canonicalMeasure, toMeasure, type Measure } from './measures';
+import { isListFood } from './foods';
 
 const db = scopedDb('nutritionist');
 
@@ -66,7 +67,13 @@ export type Basis =
   /** A restaurant portion with no recorded weight. Nothing to derive from. */
   | 'restaurant'
   /** Nothing at all to go on. */
-  | 'unknown';
+  | 'unknown'
+  /**
+   * A sample dish given per piece or bowl as a recipe makes it
+   * (domain/samplelist.ts). Counted, never weighed: its grams are 0 and
+   * are stored as none.
+   */
+  | 'serving';
 
 export type Resolution = {
   grams: number;
@@ -319,7 +326,9 @@ export async function upsertPortion(p: {
   source?: 'user' | 'derived';
 }): Promise<string | null> {
   const measure = canonicalMeasure(p.measure);
-  if (!measure || !(p.netWeightG > 0)) return null;
+  // A sample dish is not anyone's to record a katori against: portions sync,
+  // and the other phone may not have the list (foods.ts, LIST_PREFIX).
+  if (!measure || !(p.netWeightG > 0) || isListFood(p.foodId)) return null;
   const quantity = p.quantity && p.quantity > 0 ? p.quantity : 1;
   const source = p.source ?? 'user';
 

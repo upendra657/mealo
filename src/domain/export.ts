@@ -41,6 +41,7 @@ import { burnsSince, goalBurn } from './burn';
 import { clock } from './chat';
 import { mealsBetween } from './meals';
 import { describeMeasure, toMeasure } from './measures';
+import { isListFood } from './foods';
 import { listEpisodes, listStopped, listActive, medicineDetail, readLog, takenBetween } from './medications';
 import { counts, type PlanState } from './plan';
 import { slot } from './slots';
@@ -74,6 +75,13 @@ export type ExportItem = {
   carbs_g: number | null;
   fibre_g: number | null;
   plan_state: PlanState | null;
+  /**
+   * Counted by the dosa or the bowl as a sample dish's recipe makes it
+   * (domain/samplelist.ts), so `unit` is the source's word and not the app's
+   * measure: an INDB bowl is not the app's 350 ml one. Only present when
+   * true, so an export from a phone without sample dishes reads as before.
+   */
+  counted?: true;
 };
 
 export type ExportMeal = { day: string; at: number; slot: string; items: ExportItem[] };
@@ -165,6 +173,16 @@ function totalsOf(meals: ExportMeal[]): Totals | null {
  * one whose portion was once put on a scale. Understating what is known is
  * the honest side to err on.
  */
+/**
+ * The measure an item was logged in, as words. A sample dish counted by the
+ * recipe keeps the source's word: "bowl" there is INDB's bowl, and the app's
+ * "bowl (350 ml)" would hand a model a volume nobody measured.
+ */
+export function measureWords(i: Pick<ExportItem, 'unit' | 'counted'>): string {
+  if (!i.unit) return '';
+  return i.counted ? i.unit : describeMeasure(i.unit).toLowerCase();
+}
+
 function itemLine(i: ExportItem): string {
   const measure = i.unit ? toMeasure(i.unit) : null;
   const grams = i.grams !== null ? `${whole(i.grams)} g` : null;
@@ -173,7 +191,7 @@ function itemLine(i: ExportItem): string {
       ? grams && `${grams} (weighed)`
       : // "2 × piece", not "2 pieces": the measures include "large", "regular"
         // and "whole", which no plural rule survives, and the reader is a model.
-        [i.quantity && i.unit ? `${Math.round(i.quantity * 100) / 100} \u00d7 ${describeMeasure(i.unit).toLowerCase()}` : null, grams]
+        [i.quantity && i.unit ? `${Math.round(i.quantity * 100) / 100} \u00d7 ${measureWords(i)}` : null, grams]
           .filter(Boolean)
           .join(', ');
   const macros =
@@ -503,6 +521,7 @@ export async function collectExport(scope: Scope, nDays: number, now = new Date(
       carbs_g: i.carbs_g,
       fibre_g: i.fibre_g,
       plan_state: i.plan_state,
+      ...(isListFood(i.food_id) && i.net_weight_g === null ? { counted: true as const } : {}),
     })),
   }));
 

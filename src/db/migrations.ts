@@ -780,4 +780,59 @@ MIGRATIONS.push({
   `,
 });
 
+MIGRATIONS.push({
+  version: 16,
+  name: 'sample dishes',
+  sql: `
+    -- Sample dishes: published dishes a phone that starts with an empty food
+    -- table can log from (Upendra, 15-16 Oct 2026). For the people he gives
+    -- access to; he and his partner never add it. Added by one tap in Dev,
+    -- fetched then and not before, so until that tap these tables are empty
+    -- and every search, match and list reads exactly as it did at v15.
+    --
+    -- A list on the phone, like the medicine lists (v12) and for the same
+    -- reasons: never synced, never in the household library, removed by
+    -- deleting its rows outright. Only a dish someone chooses to keep is
+    -- copied into custom_foods, as a dish of their own.
+    CREATE TABLE IF NOT EXISTS food_ref_sets (
+      id           TEXT PRIMARY KEY,   -- 'sample-veg'
+      name         TEXT NOT NULL,
+      tag          TEXT NOT NULL,      -- on every row in search: "Sample"
+      credits      TEXT,               -- the sources and their licences
+      version      INTEGER,            -- the file's own version
+      row_count    INTEGER NOT NULL DEFAULT 0,
+      added_at     INTEGER,
+      updated_at   INTEGER NOT NULL,
+      -- Set first when the list is removed, so it leaves search at once and
+      -- a removal cut short is finished on the next start.
+      deleted_at   INTEGER
+    );
+
+    -- One dish. Its id is the file's ('list:cofid-13-484'), the same on every
+    -- phone and every time the list is added, so a meal logged from it still
+    -- names it after a remove and add. Figures as the source published them:
+    -- per 100 g as eaten when unit is '100g', else per one unit as a recipe
+    -- makes it ('dosa', 'bowl'), which no weight can be derived from.
+    CREATE TABLE IF NOT EXISTS food_ref_items (
+      id           TEXT PRIMARY KEY,
+      set_id       TEXT NOT NULL,
+      name         TEXT NOT NULL,
+      slug         TEXT NOT NULL,      -- slugFor(name), as custom_foods
+      unit         TEXT NOT NULL,
+      energy_kcal  REAL,
+      protein_g    REAL,
+      fat_g        REAL,
+      carbs_g      REAL,               -- fibre included, Mealo's convention
+      fibre_g      REAL,               -- NULL: the source has no figure
+      source       TEXT NOT NULL,      -- 'CoFID 2021', 'INDB 2024'
+      code         TEXT NOT NULL,      -- the source's own code for it
+      lab          INTEGER NOT NULL DEFAULT 0,  -- 1: measured, 0: from a recipe
+      updated_at   INTEGER NOT NULL,
+      deleted_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_food_ref_items_set ON food_ref_items(set_id);
+    CREATE INDEX IF NOT EXISTS idx_food_ref_items_slug ON food_ref_items(slug);
+  `,
+});
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

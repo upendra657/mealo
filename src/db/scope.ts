@@ -76,6 +76,8 @@ const ALL_TABLES = [
   'custom_foods',
   'food_portions',
   'food_aliases',
+  'food_ref_sets',
+  'food_ref_items',
   'symptoms',
   'current_state',
   'targets',
@@ -172,6 +174,8 @@ export const SCOPES: Record<Agent, Scope> = {
       'custom_foods',
       'food_portions',
       'food_aliases',
+      'food_ref_sets',
+      'food_ref_items',
       'current_state',
       // Read, never written. Weight is a body measurement, so Ask Mealo owns
       // it; Thali sees it because the home banner speaks in its
@@ -195,6 +199,9 @@ export const SCOPES: Record<Agent, Scope> = {
       'custom_foods',
       'food_portions',
       'food_aliases',
+      // Sample dishes, device-local, like the medicine lists.
+      'food_ref_sets',
+      'food_ref_items',
       'citations',
       'messages',
       'conversation_summaries',
