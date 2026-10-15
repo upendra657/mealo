@@ -1639,5 +1639,50 @@ section('The weekly summary: what the model is sent');
     [{ lead: null, better: [], workOn: [], removed: 0 }, { lead: null, better: [], workOn: [], removed: 0 }]);
 }
 
+// ============================================================ show working
+import { buildWorking, rowsFor } from '../src/domain/working';
+import { dateLabel } from '../src/domain/export';
+
+section('Show working: what the loop records for it');
+{
+  const call = (id: string, name: string, args: unknown): ToolCall => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+  const said = (text: string, toolCalls: ToolCall[], ms: number, tokens?: number): ChatResult => ({ text, toolCalls, usage: { totalTokens: tokens }, ms, model: 'test/model-1' });
+  let i = 0;
+  const script = [said('', [call('a', 'thali_summary', { days: 7 }), call('b', 'propose_meal', { text: '2 roti' })], 1200, 900), said('Six days logged.', [], 800, 1240)];
+  const loop = await chatWithTools(async () => script[i++], {
+    messages: [{ role: 'user', content: 'how was my week' }], tools: TOOLS, run: async (n, a) => (await runTool(n, a, read)).result,
+  });
+  check('time and tokens are added over every request, and the model is named', [loop.requests, loop.ms, loop.tokens, loop.model], [2, 2000, 2140, 'test/model-1']);
+  check('each lookup keeps the very message the model was sent for it', loop.runs[0].sent, `${DATA_HEADER}\n${JSON.stringify(loop.runs[0].result)}`);
+  let j = 0;
+  const silent = await chatWithTools(async () => [said('Hi.', [], 300)][j++], { messages: [{ role: 'user', content: 'hi' }], tools: TOOLS, run: async () => null });
+  check('a provider that gives no token count gives none, not zero', silent.tokens, null);
+
+  const w = buildWorking(loop, { figures: ['Protein is 87% of target.'], doses: 2, claims: ['Your meal is logged.'] });
+  check('lookups and cards are told apart', [w.lookups.map((l) => l.name), w.shown], [['thali_summary'], ['a meal card']]);
+  check('a removed figure and a false claim are shown in their words', w.removed.filter((r) => r.why !== 'dose').map((r) => ('text' in r ? r.text : '')), ['Protein is 87% of target.', 'Your meal is logged.']);
+  check('a removed dose is counted, and its words are kept nowhere', [w.removed.find((r) => r.why === 'dose'), JSON.stringify(w).includes('mg')], [{ why: 'dose', count: 2 }, false]);
+
+  section('Show working: each lookup in plain rows, with its own figures');
+  const rows = (name: string, result: unknown) => Object.fromEntries(rowsFor(name, result));
+  const summary = rows('thali_summary', thaliSummary(REC));
+  check('meals: days logged, each average against its target', [summary['Days logged'], summary.Calories, summary.Protein], ['4 of 7', '608 Cal avg · target 1,900 Cal', '24 g avg · target 90 g']);
+  check('meals: the dishes behind the most', summary['Most calories from'].startsWith('Rajma'), true);
+  check('a day', rows('thali_day', thaliDay(REC, REC.days[REC.days.length - 1])).Day, dateLabel(REC.days[REC.days.length - 1]));
+  check('doses', rows('dawa_adherence', dawaAdherence(REC)).Doses, `${dawaAdherence(REC).doses.taken} taken of ${dawaAdherence(REC).doses.scheduled}`);
+  check('weight', rows('weight_trend', weightTrend(REC)).Readings, String(weightTrend(REC).readings.length));
+  check('symptoms', rows('symptom_log', symptomLog(REC)).Entries, String(symptomLog(REC).entries.length));
+  check('a lookup that failed says why', rowsFor('thali_before_symptom', { error: 'Say which symptom.' }), [['Answer', 'Say which symptom.']]);
+  // Every figure on a row must be one the result already held: a row that
+  // worked something out would show a figure the model never saw. Counting
+  // the entries of a list the model was sent is the one exception.
+  const COUNTS = new Set(['Readings', 'Entries', 'Still open']);
+  for (const [name, result] of [['thali_summary', thaliSummary(REC)], ['dawa_adherence', dawaAdherence(REC)], ['weight_trend', weightTrend(REC)], ['symptom_log', symptomLog(REC)]] as const) {
+    const held = new Set(numbersIn(JSON.stringify(result)));
+    const shown = rowsFor(name, result).filter(([k]) => !COUNTS.has(k)).flatMap(([, v]) => numbersIn(v));
+    check(`${name}: no row figure the result did not hold`, shown.filter((x) => !held.has(x)), []);
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

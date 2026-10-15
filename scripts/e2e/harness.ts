@@ -2069,6 +2069,22 @@ async function main() {
     check('nor these lines, nor this mark', (await keptWeek(latest)) === null && (await weekShown()) !== latest);
   }
 
+  // ---- Show working: off unless chosen, and "exact" means after R5 --------
+  step('show working');
+  {
+    const { showsWorking, setShowsWorking } = await import('../../src/domain/working');
+    const { asSent, clearIdentityCache } = await import('../../src/llm/adapter');
+    check('Show working is off on a phone where nobody turned it on', (await showsWorking()) === false);
+    await setShowsWorking(true);
+    check('on once switched on', (await showsWorking()) === true);
+    await setShowsWorking(false);
+    check('and off again', (await showsWorking()) === false);
+    clearIdentityCache();
+    const name = (await listProfiles()).map((p) => p.name).find((n) => n.length > 3) ?? '';
+    const sent = await asSent(`DATA\n{"note":"${name} had dal"}`);
+    check('"exactly what was sent" is the scrubbed text, without a profile name', !!name && !sent.includes(name) && sent.includes('had dal'), sent);
+  }
+
   // ---- reminders: the rings follow the record -----------------------------
   // What rings is worked out from the record each time it changes. A ticked
   // dose, a stopped medicine and a logged meal each have to take their ring

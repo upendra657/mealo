@@ -4589,6 +4589,123 @@ button.am-opt {
   opacity: 0.3;
 }
 
+/* -- Show working (Working.tsx), approved from the mock-up, 16 Oct 2026.
+   Quiet on purpose: it is for checking an answer, not part of it. */
+.sw-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.sw {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.sw-step {
+  padding: 11px 12px;
+  border-top: 1px solid var(--line);
+}
+.sw-step:first-child {
+  border-top: 0;
+}
+.sw-t {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.sw-t .n {
+  flex: none;
+  width: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--am-g);
+}
+.sw-t .s {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.sw-r {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0 0 22px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.sw-r .k {
+  flex: none;
+  width: 104px;
+  color: var(--muted);
+}
+.sw-r .v {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #c9d3cd;
+}
+.sw-x {
+  padding: 6px 0 0 22px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+/* A struck sentence stays readable: the point is to see what was taken out. */
+.sw-x s {
+  color: #c9d3cd;
+  text-decoration-color: var(--bad);
+}
+.sw-x .why {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--warn);
+}
+.sw-ok {
+  color: var(--am-g);
+}
+.sw-tog {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 7px 0 0 22px;
+  font-size: 12.5px;
+  color: var(--am-g);
+}
+.sw-raw {
+  margin: 8px 0 0 22px;
+  padding: 9px 10px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #aab6af;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sw-foot {
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.sw-foot span {
+  white-space: nowrap;
+}
+
 @media print {
   html.rp-open body > *:not(.rp) {
     display: none !important;

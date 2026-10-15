@@ -94,6 +94,16 @@ async function identity(): Promise<Identity> {
   return identityCache;
 }
 
+/**
+ * A message as it leaves: the same R5 scrub `chat` applies, with the same
+ * identity. For Show working's "exactly what was sent", so that what the
+ * screen calls exact is what went over the wire and not the app's copy
+ * from before the scrub.
+ */
+export async function asSent(content: string): Promise<string> {
+  return deidentify([{ role: 'tool', content }], await identity()).messages[0].content;
+}
+
 function headers(cfg: ProviderConfig): HeadersInit {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) h.Authorization = `Bearer ${cfg.apiKey}`;

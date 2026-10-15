@@ -78,6 +78,8 @@ import { draftFromText } from '../domain/meals';
 import { isoOf } from '../domain/doses';
 import { latestWeek, markWeekShown, readWeek, weekLabel, weekShown } from '../domain/week';
 import { WeekEntry, WeekSheet } from './WeekView';
+import { buildWorking, showsWorking, type Working } from '../domain/working';
+import { WorkingCard } from './Working';
 
 /**
  * One use of a pill, in the thread beside the questions. Held in this
@@ -112,7 +114,13 @@ type NoteItem = { kind: 'note'; id: number; text: string };
  * only, like a report: the week is always one tap away under "Your week".
  */
 type WeekItem = { kind: 'week'; id: number; at: number; start: string; weeks?: Awaited<ReturnType<typeof readWeek>> };
-type Item = Entry | FlowItem | PlanItem | ReportItem | FiguresItem | NoteItem | WeekItem;
+/**
+ * An answer given this visit carries its working (domain/working.ts). One
+ * read back from the stored thread does not: the lookups were never stored,
+ * and a working rebuilt today would be today's record under an old answer.
+ */
+type AnswerItem = Extract<Entry, { kind: 'answer' }> & { working?: Working };
+type Item = Exclude<Entry, { kind: 'answer' }> | AnswerItem | FlowItem | PlanItem | ReportItem | FiguresItem | NoteItem | WeekItem;
 
 const daysBack = (days: number) => Date.now() - days * 86_400_000;
 
@@ -160,6 +168,8 @@ export function Doctor({
   /** The pill whose question the bar is answering, if any. */
   const [awaiting, setAwaiting] = useState<number | null>(null);
   const [history, setHistory] = useState(false);
+  /** Show working, switched on in Dev. Off unless it was. */
+  const [working, setWorking] = useState(false);
   /** "Your week": closed, or open this many weeks back from the latest. */
   const [weekSheet, setWeekSheet] = useState<{ open: boolean; back: number }>({ open: false, back: 0 });
   /** Whether "Tick my doses" has anything to offer right now. */
@@ -195,6 +205,7 @@ export function Doctor({
 
   useEffect(() => {
     void loadSettings().then(setSettings);
+    void showsWorking().then(setWorking);
     void (async () => {
       setThread(entriesFrom(await loadThread('doctor')));
       setLoaded(true);
@@ -520,7 +531,8 @@ export function Doctor({
       ].filter((x): x is string => typeof x === 'string');
       if (notes.length) setThread((t) => [...t, ...notes.map((note) => ({ kind: 'note' as const, id: nextId.current++, text: note }))]);
       await appendMessage('doctor', 'assistant', reply);
-      setThread((t) => [...t, { kind: 'answer', text: reply, at: Date.now() }]);
+      const worked = buildWorking(loop, { figures: checked.removed, doses: filtered.removed.length, claims: claims.removed });
+      setThread((t) => [...t, { kind: 'answer', text: reply, at: Date.now(), working: worked }]);
       // The same cards the pills open, already holding the person's words.
       // Nothing is written by putting one on screen; see AskPills.tsx.
       if (cards.length) {
@@ -769,6 +781,7 @@ export function Doctor({
                 <span className="am-eyeb">Ask Mealo</span>
               </div>
               <Answer text={e.text} />
+              {working && e.kind === 'answer' && e.working && <WorkingCard w={e.working} />}
             </div>
           ),
         )}

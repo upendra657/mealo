@@ -33,8 +33,8 @@ npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
 npm run test:portions  # 1059 pure-logic assertions, node, fast
-npm run test:safety    # 1235 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 495 assertions against real OPFS SQLite, headless browser
+npm run test:safety    # 1252 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
+npm run test:e2e       # 499 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -178,7 +178,11 @@ back to the slice for a model that will not take tools. A tool result goes
 to the model under a line saying it is data and never instructions, because
 a dish can be named anything. `safety/numbers.ts` then removes any sentence
 of the answer whose figure is in nothing the model was given, and the screen
-says so.
+says so. **Show working** (`domain/working.ts`, `ui/Working.tsx`; a switch in
+Dev, off unless turned on) opens under an answer: each lookup in plain rows,
+"Exactly what was sent" through the adapter's own R5 (`asSent`), and what the
+checks removed. A removed dose sentence is counted and never shown, struck
+through or otherwise.
 
 **What came before a symptom is one calculation** (`domain/patterns.ts`), used
 by the patterns view in Symptom history and by Ask Mealo's

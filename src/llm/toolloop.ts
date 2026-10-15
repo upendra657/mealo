@@ -23,7 +23,8 @@ import { LlmError, type ChatMessage, type ChatOptions, type ChatResult, type Too
 /** How many rounds of lookups one question may make before it must be answered. */
 export const MAX_TOOL_STEPS = 3;
 
-export type ToolRun = { name: string; args: Record<string, unknown>; result: unknown };
+/** `sent` is the message the model was sent for it, before R5 (adapter.ts `asSent` gives the form that left). */
+export type ToolRun = { name: string; args: Record<string, unknown>; result: unknown; sent: string };
 
 export type LoopResult = {
   text: string;
@@ -33,6 +34,14 @@ export type LoopResult = {
   requests: number;
   /** The model or provider would not take tools; answered from the slice alone. */
   withoutTools: boolean;
+  /**
+   * What the question cost, over all its requests: for Show working. Tokens
+   * are null when the provider did not say; the model is the one that
+   * answered, as the provider named it.
+   */
+  ms: number;
+  tokens: number | null;
+  model: string | null;
 };
 
 /**
@@ -91,6 +100,19 @@ export async function chatWithTools(
   const runs: ToolRun[] = [];
   let requests = 0;
   let asked = false;
+  let ms = 0;
+  let tokens: number | null = null;
+  let model: string | null = null;
+  // Every request goes through here, so the totals cannot miss one.
+  const counted = async (o: ChatOptions) => {
+    requests++;
+    const res = await ask(o);
+    ms += res.ms ?? 0;
+    if (res.usage?.totalTokens != null) tokens = (tokens ?? 0) + res.usage.totalTokens;
+    if (res.model) model = res.model;
+    return res;
+  };
+  const done = (text: string, withoutTools: boolean): LoopResult => ({ text, runs, requests, withoutTools, ms, tokens, model });
 
   for (let step = 0; ; step++) {
     // Past the cap the tools are withheld: the model has what it asked for
@@ -98,15 +120,13 @@ export async function chatWithTools(
     const offer = step < maxSteps && tools.length > 0;
     let res: ChatResult;
     try {
-      requests++;
-      res = await ask({ messages, temperature, maxTokens, ...(offer ? { tools } : {}) });
+      res = await counted({ messages, temperature, maxTokens, ...(offer ? { tools } : {}) });
     } catch (e) {
       // Only on the first request: a model that took tools once and then
       // failed has failed for some other reason.
       if (step === 0 && offer && refusesTools(e)) {
-        requests++;
-        const plain = await ask({ messages, temperature, maxTokens });
-        return { text: plain.text, runs, requests, withoutTools: true };
+        const plain = await counted({ messages, temperature, maxTokens });
+        return done(plain.text, true);
       }
       throw e;
     }
@@ -121,11 +141,10 @@ export async function chatWithTools(
       if (res.text.trim() === '' && runs.length > 0 && !asked) {
         asked = true;
         messages.push({ role: 'system', content: 'You returned no words. Answer the person now, briefly, from the data above.' });
-        requests++;
-        const again = await ask({ messages, temperature, maxTokens });
-        return { text: again.text, runs, requests, withoutTools: false };
+        const again = await counted({ messages, temperature, maxTokens });
+        return done(again.text, false);
       }
-      return { text: res.text, runs, requests, withoutTools: false };
+      return done(res.text, false);
     }
 
     messages.push({ role: 'assistant', content: res.text ?? '', tool_calls: res.toolCalls });
@@ -134,8 +153,9 @@ export async function chatWithTools(
       // A call the app cannot read is answered, not dropped: every tool call
       // must get a reply or the next request is malformed.
       const result = args === null ? { error: 'The arguments were not a JSON object.' } : await run(call.function.name, args);
-      runs.push({ name: call.function.name, args: args ?? {}, result });
-      messages.push(toolMessage(call, result));
+      const sent = toolMessage(call, result);
+      runs.push({ name: call.function.name, args: args ?? {}, result, sent: sent.content });
+      messages.push(sent);
     }
   }
 }

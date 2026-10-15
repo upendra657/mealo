@@ -23,6 +23,7 @@ import { BackupCard } from './BackupCard';
 import { RemindersCard } from './RemindersCard';
 import { ModelCheck } from './ModelCheck';
 import { DEMO } from '../lib/demo';
+import { setShowsWorking, showsWorking } from '../domain/working';
 
 type TestState =
   | { kind: 'idle' }
@@ -43,10 +44,13 @@ export function SettingsScreen({
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [open, setOpen] = useState<null | 'told' | 'left' | 'meds'>(null);
+  /** Show working under Ask Mealo's answers. Off until switched on here (his call, 16 Oct 2026). */
+  const [working, setWorking] = useState(false);
   const flip = (k: NonNullable<typeof open>) => setOpen((o) => (o === k ? null : k));
 
   useEffect(() => {
     loadSettings().then(setS);
+    void showsWorking().then(setWorking);
   }, []);
 
   if (!s) return <p className="muted">Loading settings…</p>;
@@ -186,6 +190,22 @@ export function SettingsScreen({
           {/* Not in the demo: its provider is the shared relay, and a check
               would spend the shared allowance. */}
           {provider.key !== 'demo' && <ModelCheck cfg={s} needsKey={provider.needsKey} />}
+
+          <button
+            className="lt"
+            role="switch"
+            aria-checked={working}
+            onClick={async () => {
+              await setShowsWorking(!working);
+              setWorking(!working);
+            }}
+          >
+            <span className="grow">
+              <span className="nm">Show working</span>
+              <span className="amt">Under each answer, what Ask Mealo looked up, exactly what it was sent, and what the app took out.</span>
+            </span>
+            <span className="switch" />
+          </button>
 
           {test.kind === 'ok' && (
             <div className="result result--ok">
