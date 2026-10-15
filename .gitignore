@@ -35,6 +35,11 @@ FoodData_Central_*
 # be un-ignored below, deliberately.
 /*.csv
 
+# Other people's documents read for the app: charts, papers, guides (the
+# NNWA calorie chart, 16 Oct 2026). Source material to check figures against,
+# not ours to publish. The root again, for the same reason as the CSVs.
+/*.pdf
+
 # Context handoff for whoever picks this up next. Notes on how we work, not
 # code, and it names the two of us. Hand it over as a file.
 HANDOFF.md
