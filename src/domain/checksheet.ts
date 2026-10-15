@@ -17,14 +17,14 @@
  */
 
 import type { Food } from './foods';
-import { toMeasure, type Measure } from './measures';
+import { HOUSE_BOWL, toMeasure, type Measure } from './measures';
 import { resolvePortion, type Anchor, type Basis } from './portions';
 
 /** Quantities worth showing. Half portions are common; thirds are not. */
 const QUANTITIES = [0.5, 1, 1.5, 2];
 
 /** Measures offered for a dish that has never been measured by volume. */
-const VOLUME_SPREAD = ['katori', 'bowl', 'cup', 'tbsp'];
+const VOLUME_SPREAD = [HOUSE_BOWL, 'bowl', 'cup', 'tbsp'];
 const COUNT_SPREAD = ['piece'];
 
 export type CheckRow = {

@@ -34,7 +34,7 @@ npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
 npm run test:portions  # 1095 pure-logic assertions, node, fast
 npm run test:safety    # 1252 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 545 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 549 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
 npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
@@ -329,6 +329,11 @@ sends, caps the answer, answers the demo's own origin only, and logs
 nothing. It does not count visitors: the limit is the provider's free
 allowance, on an account with no payment method. No D1, no sync relay, no
 cron for the demo, and **never a relay like this for the real app**.
+The demo says "small bowl" where the real app says "katori" (`HOUSE_BOWL`
+in `measures.ts`; katori is out of the demo's pickers, still read when
+typed), at Upendra's word, 16 Oct 2026. `deploy:demo` builds from the
+**working tree**, not a commit: deploy it from a clean tree, or uncommitted
+work goes out with it.
 **Run nothing `wrangler pages …` from this folder except through
 `npm run deploy:demo`:** here wrangler finds the real app's `wrangler.jsonc`,
 and `wrangler pages dev` once served the real build and opened the real D1
@@ -385,7 +390,10 @@ queues the writes under the same checks and profile stamp as single ones and
 sends them to the worker as one transaction in one message, so all land or
 none do (meals, a planned day, a medicine, a re-ticked dose; 15 Oct 2026).
 Pass its Writer down rather than calling `db.insert` inside: a mode on the
-handle would catch another screen's write. Learning (aliases, derived
+handle would catch another screen's write. Inside a transaction already
+open (only the demo seeder opens one) a unit is a savepoint (`openUnit`,
+`db/worker.ts`): a nested BEGIN broke the demo's first open from 15 Oct
+until 16 Oct. Learning (aliases, derived
 portions) comes after the unit, and its failure must not fail the save.
 
 **Tests go with the logic.** Pure functions in `scripts/test-portions.ts`;

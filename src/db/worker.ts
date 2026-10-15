@@ -92,7 +92,7 @@ type OoStmt = {
   finalize(): void;
 };
 
-type Capi = { sqlite3_js_db_export(ptr: number): Uint8Array };
+type Capi = { sqlite3_js_db_export(ptr: number): Uint8Array; sqlite3_get_autocommit(ptr: number): number };
 
 /** The OPFS database class, with the one static it has that the app uses. */
 type OpfsStatic = (new (path: string) => OoDb) & {
@@ -214,6 +214,33 @@ function exec(sql: string, bind?: unknown[]): unknown[] {
 const BULK_TABLES = new Set(['med_ref_items']);
 
 /**
+ * How a unit opens and closes: BEGIN and COMMIT on its own, a savepoint when
+ * a transaction is already open around it.
+ *
+ * The one writer that opens a transaction around others is the demo's
+ * seeder (src/demo/seed.ts), which writes its whole made-up person inside
+ * one so a reload half way leaves nothing. From 15 Oct 2026 a meal or a
+ * medicine saved through `atomically` sent its own BEGIN, SQLite refused
+ * the nested one, and the demo stopped on "The database would not open"
+ * for every new visitor; it was found on 16 Oct, before any demo built from
+ * that code was deployed. A savepoint nests where BEGIN cannot, and rolling
+ * back to it undoes the unit alone. Outside a transaction (every save on a
+ * real phone) this is BEGIN and COMMIT exactly as before.
+ */
+function openUnit(): { done(): void; undo(): void } {
+  const nested = !!db && !!capi && capi.sqlite3_get_autocommit(db.pointer) === 0;
+  if (nested) {
+    db!.exec({ sql: 'SAVEPOINT unit' });
+    return {
+      done: () => db!.exec({ sql: 'RELEASE unit' }),
+      undo: () => db!.exec({ sql: 'ROLLBACK TO unit; RELEASE unit' }),
+    };
+  }
+  db!.exec({ sql: 'BEGIN' });
+  return { done: () => db!.exec({ sql: 'COMMIT' }), undo: () => db!.exec({ sql: 'ROLLBACK' }) };
+}
+
+/**
  * Many rows in one transaction with one prepared statement: an import of
  * 240,000 rows one message at a time would take minutes. All of a batch goes
  * in or none of it does.
@@ -225,7 +252,7 @@ function bulk(table: string, columns: string[], rows: unknown[][]): number {
     throw new Error('bulk write with an unusable column list');
   }
   const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
-  db.exec({ sql: 'BEGIN' });
+  const unit = openUnit();
   let stmt: OoStmt | null = null;
   try {
     stmt = db.prepare(sql);
@@ -235,7 +262,7 @@ function bulk(table: string, columns: string[], rows: unknown[][]): number {
     }
     stmt.finalize();
     stmt = null;
-    db.exec({ sql: 'COMMIT' });
+    unit.done();
     return rows.length;
   } catch (e) {
     try {
@@ -243,7 +270,7 @@ function bulk(table: string, columns: string[], rows: unknown[][]): number {
     } catch {
       /* already gone */
     }
-    db.exec({ sql: 'ROLLBACK' });
+    unit.undo();
     throw e;
   }
 }
@@ -259,13 +286,13 @@ function bulk(table: string, columns: string[], rows: unknown[][]): number {
  */
 function transaction(statements: { sql: string; bind?: unknown[] }[]): number {
   if (!db) throw new Error('database not open');
-  db.exec({ sql: 'BEGIN' });
+  const unit = openUnit();
   try {
     for (const s of statements) db.exec({ sql: s.sql, bind: s.bind });
-    db.exec({ sql: 'COMMIT' });
+    unit.done();
     return statements.length;
   } catch (e) {
-    db.exec({ sql: 'ROLLBACK' });
+    unit.undo();
     throw e;
   }
 }

@@ -31,6 +31,7 @@
 
 import { clock } from './chat';
 import { dateLabel, MAX_DAYS, MIN_DAYS, measureWords, type ExportInput, type Scope } from './export';
+import { HOUSE_BOWL, toMeasure } from './measures';
 import { counts, DAYS_AHEAD } from './plan';
 import { humanReport, MACROS } from './report';
 import { suggestLabel, SYMPTOM_LABELS, wordsForModel } from './symptomlabels';
@@ -84,7 +85,7 @@ export const TOOLS: ToolDef[] = [
     { days: DAYS }, ['days']),
   fn('propose_meal',
     'Show a card to log a meal they say they had, from their own words. Saves nothing until they press it. Add no dishes or amounts they did not say.',
-    { text: { type: 'string', description: 'Their words, e.g. "2 roti and 1 katori dal".' } }, ['text']),
+    { text: { type: 'string', description: `Their words, e.g. "2 roti and 1 ${toMeasure(HOUSE_BOWL)?.label} dal".` } }, ['text']),
   fn('propose_doses',
     'Show the card of doses due, when they say they took or skipped medicines; they tick each. Never say what to take or how much.',
     {}),

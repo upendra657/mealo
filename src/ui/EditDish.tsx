@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'react';
 import { dishNamed, type Food } from '../domain/foods';
 import { per100Of, type Per100 } from '../domain/import';
-import { MEASURES, toMeasure } from '../domain/measures';
+import { HOUSE_BOWL, MEASURES, toMeasure } from '../domain/measures';
 import { portionsFor, type Portion } from '../domain/portions';
 import {
   deleteDish,
@@ -56,7 +56,7 @@ export function EditDish({
   const [entries, setEntries] = useState<Entry[]>([]);
   const [name, setName] = useState(food.name);
   const [quantity, setQuantity] = useState('1');
-  const [measure, setMeasure] = useState('katori');
+  const [measure, setMeasure] = useState(HOUSE_BOWL);
   const [weight, setWeight] = useState('');
   const [vals, setVals] = useState<Partial<Record<Key, string>>>({});
   /**

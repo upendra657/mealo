@@ -25,6 +25,7 @@ import { activeProfile } from '../../src/lib/active-profile';
 import { importPersonalFoods, saveDishFromPortion } from '../../src/domain/import';
 import {
   customFoodIdBySlug,
+  customFoodRow,
   deleteCustomFood,
   dishNamed,
   initFoodLibrary,
@@ -2201,6 +2202,41 @@ async function main() {
     check('there is a full record to protect', JSON.parse(held).filter((t: [string, unknown[]]) => t[1].length > 0).length >= 12, held.slice(0, 200));
     check('the start-up clean-up removes the register', (await retireBundled()) === 1);
     check('and every other row on the phone is exactly as it was', (await snapshot()) === held);
+  }
+
+  // ---- a unit inside an open transaction ---------------------------------------
+  // The demo's seeder writes its whole person inside one transaction, and
+  // saves made one unit (15 Oct) sent a BEGIN of their own inside it, which
+  // SQLite refuses: every new demo visitor would have met "The database would
+  // not open" (found 16 Oct, before a deploy). A unit there is a savepoint.
+  step('a unit inside an open transaction');
+  {
+    const lib = scopedDb('nutritionist');
+    const named = async (n: string) => Number((await query<{ n: number }>('SELECT COUNT(*) AS n FROM custom_foods WHERE name = ?', [n]))[0].n);
+    const dish = (name: string, id?: string) => ({ ...(id ? { id } : {}), ...customFoodRow({ name, energy_kcal: 100, protein_g: 1, fat_g: 1, carbs_g: 1, fibre_g: 1 }) });
+    await sql('BEGIN');
+    let said = '';
+    try {
+      await lib.atomically(async (tx) => { await tx.insert('custom_foods', dish('Nested dish')); });
+    } catch (e) {
+      said = e instanceof Error ? e.message : String(e);
+    }
+    check('a unit inside an open transaction lands', said === '' && (await named('Nested dish')) === 1, said);
+    let failed = false;
+    try {
+      await lib.atomically(async (tx) => {
+        await tx.insert('custom_foods', dish('Half a unit', 'nest-dup'));
+        await tx.insert('custom_foods', dish('Half a unit, again', 'nest-dup'));
+      });
+    } catch {
+      failed = true;
+    }
+    check('one that fails undoes itself and nothing before it', failed && (await named('Half a unit')) === 0 && (await named('Nested dish')) === 1);
+    await sql('ROLLBACK');
+    check('and the transaction around it still decides', (await named('Nested dish')) === 0);
+    await lib.atomically(async (tx) => { await tx.insert('custom_foods', dish('Unit on its own')); });
+    check('outside one, a unit is its own transaction as before', (await named('Unit on its own')) === 1);
+    await sql("DELETE FROM custom_foods WHERE name = 'Unit on its own'");
   }
 
   // ---- sample dishes ---------------------------------------------------------

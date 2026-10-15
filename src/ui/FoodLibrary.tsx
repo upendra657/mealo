@@ -33,7 +33,7 @@ import {
 import { checkRowsFor, checkSheetCsv, type CheckRow } from '../domain/checksheet';
 import { entriesUsing } from '../domain/dishedit';
 import { DeleteDishSheet, EditDish } from './EditDish';
-import { measureGroups, toMeasure } from '../domain/measures';
+import { HOUSE_BOWL, measureGroups, toMeasure } from '../domain/measures';
 import {
   deletePortion,
   portionsForMany,
@@ -153,7 +153,7 @@ export function FoodLibrary({ go }: { go: (s: Screen) => void }) {
           A CSV with these columns, in any order:{' '}
           <b>Meal/Ingredient · Quantity · Measure · Net weight (g) · Calories ·
           Protein · Fats · Carbs · Fiber</b>. One row per portion — list a dish
-          twice to record both its katori and its bowl. Re-import the whole file
+          twice to record both its {toMeasure(HOUSE_BOWL)?.label} and its bowl. Re-import the whole file
           whenever you update it.
         </p>
 
@@ -373,7 +373,7 @@ const NUMBERS = [
 function AddDish({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
-  const [measure, setMeasure] = useState<string | null>('katori');
+  const [measure, setMeasure] = useState<string | null>(HOUSE_BOWL);
   const [weight, setWeight] = useState('');
   const [vals, setVals] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState<string | null>(null);
@@ -512,7 +512,7 @@ function DishRow({
   const [checking, setChecking] = useState(false);
   /** Entries using this dish, counted when Delete is pressed; null = sheet shut. */
   const [deleting, setDeleting] = useState<number | null>(null);
-  const [measure, setMeasure] = useState<string | null>('katori');
+  const [measure, setMeasure] = useState<string | null>(HOUSE_BOWL);
   const [weight, setWeight] = useState('');
 
   const anchors = portions.map((p) => ({

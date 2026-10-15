@@ -35,7 +35,7 @@ import {
   searchFoods,
   type Food,
 } from '../domain/foods';
-import { describeMeasure, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
+import { describeMeasure, HOUSE_BOWL, MEASURES, toMeasure, wheelMeasures } from '../domain/measures';
 import { portionsFor, resolveFor, upsertPortion } from '../domain/portions';
 import { saveDishFromPortion } from '../domain/import';
 import { daysFromToday, plansAt, stampFor } from '../domain/plan';
@@ -905,7 +905,7 @@ function DishStep({
           <span className="grow">
             <span className="nm">Keep in My food table</span>
             <span className="amt">
-              Then a {measure && measure.kind !== 'weight' ? measure.label : 'katori'} you weigh is remembered, and you can edit it. Off:
+              Then a {measure && measure.kind !== 'weight' ? measure.label : toMeasure(HOUSE_BOWL)?.label} you weigh is remembered, and you can edit it. Off:
               logged from Sample dishes as it is.
             </span>
           </span>
@@ -1052,7 +1052,7 @@ function NewDishStep({
   // term rather than the stale one.
   const [name, setName] = useState(seed);
   const [quantity, setQuantity] = useState('1');
-  const [measure, setMeasure] = useState('katori');
+  const [measure, setMeasure] = useState(HOUSE_BOWL);
   const [custom, setCustom] = useState('');
   const [weight, setWeight] = useState('');
   const [vals, setVals] = useState<Record<string, string>>({});

@@ -25,7 +25,7 @@
 
 import { scopedDb } from '../db/scope';
 import { dishNamed, normalise, rememberAlias, slugFor, type Food } from './foods';
-import { canonicalMeasure, toMeasure } from './measures';
+import { canonicalMeasure, HOUSE_BOWL, toMeasure } from './measures';
 import { deletePortion, portionsFor, upsertPortion } from './portions';
 
 const db = scopedDb('nutritionist');
@@ -556,13 +556,17 @@ export async function saveDishFromPortion(input: {
   return { foodId: counts.lastFoodId, issues, warnings: counts.warnings };
 }
 
-/** The exact header row the importer expects, for a starter file. */
+/**
+ * The exact header row the importer expects, for a starter file. Its bowl is
+ * the house bowl: katori, or small bowl in the demo (measures.ts).
+ */
+const BOWL_WORD = toMeasure(HOUSE_BOWL)!.label;
 export const TEMPLATE_CSV = [
   'Meal/Ingredient,Quantity,Measure,Net weight (g),Calories (Kcal),Protein (g),Fats (g),Carbs (g),Fiber (g)',
-  'Dal tadka,1,katori,150,176,8.4,6.2,21.5,5.1',
+  `Dal tadka,1,${BOWL_WORD},150,176,8.4,6.2,21.5,5.1`,
   'Dal tadka,1,bowl,250,293,14,10.3,35.8,8.5',
   'Roti,1,piece,40,104,3.1,0.4,20.6,3.2',
-  'Curd,1,katori,150,90,5.1,4.9,6.3,0',
+  `Curd,1,${BOWL_WORD},150,90,5.1,4.9,6.3,0`,
   'Boiled egg,1,egg,50,78,6.3,5.3,0.6,0',
 ].join('\n');
 

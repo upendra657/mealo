@@ -69,10 +69,10 @@ function seeded(seed: number): () => number {
 
 /** One portion as a person would enter it: name, measure, its weight, then the five figures for that portion. */
 const DISHES: [string, string, number, number, number, number, number, number][] = [
-  ['Poha', 'katori', 150, 250, 5, 8, 40, 2.5],
-  ['Upma', 'katori', 160, 230, 6, 7, 36, 3],
+  ['Poha', 'smallbowl', 150, 250, 5, 8, 40, 2.5],
+  ['Upma', 'smallbowl', 160, 230, 6, 7, 36, 3],
   ['Idli', 'piece', 40, 58, 2, 0.4, 12, 0.8],
-  ['Sambar', 'katori', 150, 110, 5.5, 3, 16, 4],
+  ['Sambar', 'smallbowl', 150, 110, 5.5, 3, 16, 4],
   ['Masala dosa', 'piece', 180, 330, 7, 11, 50, 4],
   ['Boiled egg', 'piece', 50, 78, 6.3, 5.3, 0.6, 0],
   ['Masala chai', 'cup', 150, 95, 3, 3.5, 13, 0],
@@ -80,26 +80,26 @@ const DISHES: [string, string, number, number, number, number, number, number][]
   ['Banana', 'piece', 110, 98, 1.2, 0.3, 25, 2.8],
   ['Almonds', 'piece', 1.2, 7, 0.25, 0.6, 0.25, 0.15],
   ['Roti', 'piece', 40, 104, 3.1, 0.4, 20.6, 3.2],
-  ['Dal tadka', 'katori', 150, 176, 8.4, 6.2, 21.5, 5.1],
-  ['Jeera rice', 'katori', 150, 215, 4, 4.5, 39, 1],
-  ['Curd', 'katori', 150, 90, 5.1, 4.9, 6.3, 0],
-  ['Rajma', 'katori', 150, 190, 9.5, 5, 27, 8],
-  ['Aloo gobi', 'katori', 150, 160, 3.5, 8, 18, 4],
-  ['Mixed veg sabzi', 'katori', 150, 130, 3.5, 6.5, 14, 4.5],
-  ['Chicken curry', 'katori', 200, 310, 29, 17, 8, 1.5],
-  ['Paneer bhurji', 'katori', 150, 300, 19, 22, 7, 1.5],
-  ['Khichdi', 'katori', 200, 240, 9, 5, 39, 4],
-  ['Roasted chana', 'katori', 50, 185, 10, 3, 29, 8.5],
+  ['Dal tadka', 'smallbowl', 150, 176, 8.4, 6.2, 21.5, 5.1],
+  ['Jeera rice', 'smallbowl', 150, 215, 4, 4.5, 39, 1],
+  ['Curd', 'smallbowl', 150, 90, 5.1, 4.9, 6.3, 0],
+  ['Rajma', 'smallbowl', 150, 190, 9.5, 5, 27, 8],
+  ['Aloo gobi', 'smallbowl', 150, 160, 3.5, 8, 18, 4],
+  ['Mixed veg sabzi', 'smallbowl', 150, 130, 3.5, 6.5, 14, 4.5],
+  ['Chicken curry', 'smallbowl', 200, 310, 29, 17, 8, 1.5],
+  ['Paneer bhurji', 'smallbowl', 150, 300, 19, 22, 7, 1.5],
+  ['Khichdi', 'smallbowl', 200, 240, 9, 5, 39, 4],
+  ['Roasted chana', 'smallbowl', 50, 185, 10, 3, 29, 8.5],
   ['Buttermilk', 'glass', 250, 60, 3, 1.5, 7, 0],
 ];
 
 /** What this person eats, by meal time, as they would type it. First is most usual. */
 const MEALS: Record<Exclude<SlotId, 'other'>, { hour: number; often: number; said: string[] }> = {
-  breakfast: { hour: 8.5, often: 0.95, said: ['1 katori poha, 1 cup masala chai', '3 piece idli, 1 katori sambar', '1 katori upma, 1 cup filter coffee', '2 piece boiled egg, 2 piece roti', '1 piece masala dosa, 1 katori sambar'] },
+  breakfast: { hour: 8.5, often: 0.95, said: ['1 small bowl poha, 1 cup masala chai', '3 piece idli, 1 small bowl sambar', '1 small bowl upma, 1 cup filter coffee', '2 piece boiled egg, 2 piece roti', '1 piece masala dosa, 1 small bowl sambar'] },
   msnack: { hour: 11, often: 0.45, said: ['1 piece banana', '10 piece almonds'] },
-  lunch: { hour: 13.25, often: 0.95, said: ['1 katori dal tadka, 1 katori jeera rice, 1 katori curd', '1 katori rajma, 1 katori jeera rice', '2 piece roti, 1 katori aloo gobi, 1 katori curd', '1 katori chicken curry, 2 piece roti'] },
-  esnack: { hour: 17, often: 0.6, said: ['1 katori roasted chana', '1 cup masala chai', '1 glass buttermilk'] },
-  dinner: { hour: 20.25, often: 0.9, said: ['2 piece roti, 1 katori paneer bhurji', '1 katori khichdi, 1 katori curd', '1 katori chicken curry, 1 katori jeera rice', '2 piece roti, 1 katori mixed veg sabzi, 1 katori dal tadka'] },
+  lunch: { hour: 13.25, often: 0.95, said: ['1 small bowl dal tadka, 1 small bowl jeera rice, 1 small bowl curd', '1 small bowl rajma, 1 small bowl jeera rice', '2 piece roti, 1 small bowl aloo gobi, 1 small bowl curd', '1 small bowl chicken curry, 2 piece roti'] },
+  esnack: { hour: 17, often: 0.6, said: ['1 small bowl roasted chana', '1 cup masala chai', '1 glass buttermilk'] },
+  dinner: { hour: 20.25, often: 0.9, said: ['2 piece roti, 1 small bowl paneer bhurji', '1 small bowl khichdi, 1 small bowl curd', '1 small bowl chicken curry, 1 small bowl jeera rice', '2 piece roti, 1 small bowl mixed veg sabzi, 1 small bowl dal tadka'] },
 };
 /** Days back with nothing logged at all: a record with no gaps would not look like anyone's. */
 const BLANK_DAYS = new Set([9, 16, 27, 38]);
@@ -244,7 +244,7 @@ async function person(now: Date): Promise<void> {
     }
   }
   // Tomorrow, planned ahead, so the plan-ahead circles have something to show.
-  for (const [slot, said] of [['lunch', '1 katori dal tadka, 1 katori jeera rice, 1 katori curd'], ['dinner', '2 piece roti, 1 katori paneer bhurji']] as const) {
+  for (const [slot, said] of [['lunch', '1 small bowl dal tadka, 1 small bowl jeera rice, 1 small bowl curd'], ['dinner', '2 piece roti, 1 small bowl paneer bhurji']] as const) {
     await saveMeal(await rowsFor(said), { rawText: said, mealType: slot, eatenAt: dayAt(1, now) + 12 * 3_600_000, planned: true });
   }
 

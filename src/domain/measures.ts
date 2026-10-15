@@ -22,6 +22,8 @@
  * inherits the correction through density.
  */
 
+import { DEMO } from '../lib/demo';
+
 export type MeasureKind = 'weight' | 'volume' | 'count';
 
 export type Measure = {
@@ -100,8 +102,12 @@ export const MEASURES: readonly Measure[] = [
     aliases: ['scoops'] },
   { id: 'ladle',   label: 'ladle',     kind: 'volume', ml: 60,  grams: 60,  hidden: true, group: 'Bowls & spoons',
     aliases: ['ladles', 'karchi', 'karchhi'] },
+  // Out of the demo's pickers: its visitors are mostly people reading a
+  // resume, and "katori" is a word they would have to look up (Upendra, 16
+  // Oct 2026, "replace all instances of katori in the demo with small
+  // bowl"). Still read when typed, and in every real build as before.
   { id: 'katori',  label: 'katori',    kind: 'volume', ml: 150, grams: 150, group: 'Bowls & spoons',
-    aliases: ['katoris'] },
+    aliases: ['katoris'], ...(DEMO ? { hidden: true } : {}) },
   // Same 150 ml as a katori, kept as its own entry on purpose: some people
   // reach for "small bowl" and shouldn't have to learn that it means katori.
   { id: 'smallbowl', label: 'small bowl', kind: 'volume', ml: 150, grams: 150, group: 'Bowls & spoons',
@@ -275,6 +281,13 @@ export function everyMeasureId(): string[] {
 export function canonicalMeasure(raw: string | null | undefined): string | null {
   return toMeasure(raw)?.id ?? null;
 }
+
+/**
+ * The everyday bowl a new dish starts in and an example names: the katori,
+ * or in the demo the small bowl, which is the same 150 ml (see the katori
+ * entry above).
+ */
+export const HOUSE_BOWL: string = DEMO ? 'smallbowl' : 'katori';
 
 /** Dropdown contents, in groups, in the order declared above. */
 export function measureGroups(): { group: string; measures: Measure[] }[] {
