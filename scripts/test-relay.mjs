@@ -201,6 +201,19 @@ try {
   // ---- reminders ---------------------------------------------------------
   const MIN = 60_000;
   const now = Date.now();
+  /**
+   * A moment to schedule as "due now", taken when it is sent. The relay
+   * rounds a ring down to its minute and keeps it only if that minute began
+   * less than a minute ago, so a `now` taken at the top of the suite went
+   * stale as the checks before it ran: on 15 Oct 2026 a slower run on his
+   * Mac dropped the due ring and seventeen checks after it failed with it,
+   * where the same suite had passed here. Away from the end of a minute, so
+   * the minute this lands in has most of itself left.
+   */
+  const dueNow = async () => {
+    if (Date.now() % MIN > 45_000) await new Promise((r) => setTimeout(r, MIN - (Date.now() % MIN) + 500));
+    return Date.now();
+  };
   const mine = `${PUSH_ORIGIN}/send/${b32()}`;
 
   console.log('\nReminders: what the relay will and will not take');
@@ -242,7 +255,8 @@ try {
   ok('an unknown push route', (await fetch(`${BASE}/push/nope`)).status === 404);
 
   console.log('\nReminders: a ring');
-  const set = await post('/push/schedule', { endpoint: mine, times: [now, now + 3 * 86_400_000, now - 10 * MIN] });
+  const due = await dueNow();
+  const set = await post('/push/schedule', { endpoint: mine, times: [due, due + 3 * 86_400_000, due - 10 * MIN] });
   ok('due now and in three days are kept, one already past is dropped', set.j.rings === 2, JSON.stringify(set.j));
   await tick();
   const got = received.filter((r) => r.path === new URL(mine).pathname);
@@ -262,7 +276,7 @@ try {
     Buffer.from(sig, 'base64url'), new TextEncoder().encode(`${head}.${claims}`)));
   ok('an ES256 JWT', parsed(head).alg === 'ES256' && parsed(head).typ === 'JWT', JSON.stringify(parsed(head)));
   ok('for this push service and no other', parsed(claims).aud === PUSH_ORIGIN, parsed(claims).aud);
-  const life = parsed(claims).exp - now / 1000;
+  const life = parsed(claims).exp - due / 1000;
   ok('valid for under a day, as the RFC requires', life > 0 && life <= 24 * 3600, String(life));
   ok('with someone to contact', parsed(claims).sub === 'mailto:relay-test@example.com');
   ok('and nothing else: no name, no medicine, no time', Object.keys(parsed(claims)).sort().join() === 'aud,exp,sub');
@@ -274,14 +288,15 @@ try {
   console.log('\nReminders: ticked, failed, gone');
   // A new schedule replaces the old one: this is how a ticked dose cancels.
   const again = `${PUSH_ORIGIN}/send/${b32()}`;
-  await post('/push/schedule', { endpoint: again, times: [now, now + MIN * 30] });
-  await post('/push/schedule', { endpoint: again, times: [now + MIN * 30] });
+  const due2 = await dueNow();
+  await post('/push/schedule', { endpoint: again, times: [due2, due2 + MIN * 30] });
+  await post('/push/schedule', { endpoint: again, times: [due2 + MIN * 30] });
   await tick();
   ok('a ring left out of the next schedule never sounds', received.filter((r) => r.path === new URL(again).pathname).length === 0);
 
   const flaky = `${PUSH_ORIGIN}/send/${b32()}`;
   answers.set(new URL(flaky).pathname, [500]);
-  await post('/push/schedule', { endpoint: flaky, times: [now] });
+  await post('/push/schedule', { endpoint: flaky, times: [await dueNow()] });
   await tick();
   await tick();
   ok('a push service that failed is tried again', received.filter((r) => r.path === new URL(flaky).pathname).length === 2);
@@ -290,7 +305,8 @@ try {
 
   const gone = `${PUSH_ORIGIN}/send/${b32()}`;
   answers.set(new URL(gone).pathname, [410]);
-  await post('/push/schedule', { endpoint: gone, times: [now, now + 86_400_000, now + 2 * 86_400_000] });
+  const due3 = await dueNow();
+  await post('/push/schedule', { endpoint: gone, times: [due3, due3 + 86_400_000, due3 + 2 * 86_400_000] });
   await tick();
   ok('a browser that unsubscribed is forgotten whole', ringsHeld(gone) === 0);
 
