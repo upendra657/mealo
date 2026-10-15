@@ -19,7 +19,29 @@
 
 import { activeProfile } from '../lib/active-profile';
 import { noteChange } from '../lib/changes';
-import { bulkInsert, insert, query, run, softDelete, update } from './client';
+import {
+  bulkInsert,
+  insert,
+  insertStmt,
+  query,
+  run,
+  softDelete,
+  softDeleteStmt,
+  transaction,
+  update,
+  updateStmt,
+  type Stmt,
+} from './client';
+
+/**
+ * What writes, either now (a handle) or as part of a unit (`atomically`):
+ * code that builds a medicine or a meal takes one and does not care which.
+ */
+export type Writer = {
+  insert(table: string, values: Record<string, unknown>): Promise<string>;
+  update(table: string, id: string, values: Record<string, unknown>): Promise<void>;
+  softDelete(table: string, id: string): Promise<void>;
+};
 
 /**
  * Internal ids, never shown to anyone. What people see, since Oct 2026:
@@ -341,6 +363,51 @@ export function scopedDb(agent: Agent, profileId: () => string = activeProfile) 
       assertAllowed(agent, table, 'write');
       await softDelete(table, id);
       rang([table]);
+    },
+
+    /**
+     * Several writes as one unit: all of them land or none do (approved
+     * 15 Oct 2026: "Atomicity. I like it."). `build` writes through the
+     * Writer it is handed, under exactly the checks and the profile stamp a
+     * single write gets; nothing reaches the database until it returns, and
+     * then everything goes in one transaction (db/worker.ts). Reads inside
+     * `build` go to the database as usual and do not see the writes queued
+     * so far, which is why ids come back at once: a row written later in the
+     * unit can point at one written earlier.
+     *
+     * An explicit Writer rather than a mode on this handle: a mode would
+     * catch a write from anything else running while `build` awaits a read
+     * (a sync, a reminder rebuild) and bind it to this unit's fate.
+     */
+    async atomically<T>(build: (tx: Writer) => Promise<T>): Promise<T> {
+      const statements: Stmt[] = [];
+      const tables = new Set<string>();
+      const tx: Writer = {
+        async insert(table, values) {
+          assertAllowed(agent, table, 'write');
+          const row = isProfileScoped(table) && values.profile_id === undefined ? { ...values, profile_id: profileId() } : values;
+          const { stmt, id } = await insertStmt(table, row);
+          statements.push(stmt);
+          tables.add(table);
+          return id;
+        },
+        async update(table, id, values) {
+          assertAllowed(agent, table, 'write');
+          statements.push(updateStmt(table, id, values));
+          tables.add(table);
+        },
+        async softDelete(table, id) {
+          assertAllowed(agent, table, 'write');
+          statements.push(softDeleteStmt(table, id));
+          tables.add(table);
+        },
+      };
+      const out = await build(tx);
+      if (statements.length > 0) {
+        await transaction(statements);
+        rang([...tables]);
+      }
+      return out;
     },
   };
 }

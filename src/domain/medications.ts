@@ -17,7 +17,7 @@
  * confirm-before-save rule the model's drafts live under.
  */
 
-import { scopedDb } from '../db/scope';
+import { scopedDb, type Writer } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import {
   addDays,
@@ -396,14 +396,14 @@ export async function draftFromLibrary(productId: string): Promise<MedForm | nul
   };
 }
 
-async function writeIngredients(productId: string, list: Ingredient[]): Promise<void> {
+async function writeIngredients(w: Writer, productId: string, list: Ingredient[]): Promise<void> {
   const old = await db.query<{ id: string }>(
     'SELECT id FROM med_product_ingredients WHERE product_id = ? AND deleted_at IS NULL',
     [productId],
   );
-  for (const r of old) await db.softDelete('med_product_ingredients', r.id);
+  for (const r of old) await w.softDelete('med_product_ingredients', r.id);
   for (const [i, ing] of list.entries()) {
-    await db.insert('med_product_ingredients', {
+    await w.insert('med_product_ingredients', {
       product_id: productId,
       position: i + 1,
       name: ing.name,
@@ -423,7 +423,7 @@ async function writeIngredients(productId: string, list: Ingredient[]): Promise<
  * list, because those are facts about the same strip and correcting them is
  * meant to reach both phones.
  */
-async function libraryEntryFor(f: MedForm): Promise<string> {
+async function libraryEntryFor(w: Writer, f: MedForm): Promise<string> {
   const name = f.name.trim();
   const strength = clean(f.strength);
   const slug = medSlug(name, strength);
@@ -438,7 +438,7 @@ async function libraryEntryFor(f: MedForm): Promise<string> {
   )[0];
 
   if (!found) {
-    const id = await db.insert('med_products', {
+    const id = await w.insert('med_products', {
       slug,
       name,
       form: f.form,
@@ -447,11 +447,11 @@ async function libraryEntryFor(f: MedForm): Promise<string> {
       hidden: 0,
       deleted_at: null,
     });
-    await writeIngredients(id, ingredients);
+    await writeIngredients(w, id, ingredients);
     // Whoever adds a medicine first gives the library their schedule.
     const { freq, freq_days } = scheduleColumns(f.schedule);
     for (const [i, d] of f.doses.entries()) {
-      await db.insert('med_product_doses', {
+      await w.insert('med_product_doses', {
         product_id: id,
         position: i + 1,
         amount: d.amount,
@@ -470,9 +470,9 @@ async function libraryEntryFor(f: MedForm): Promise<string> {
   if (f.form && f.form !== found.form) patch.form = f.form;
   // Taken up again, so back in the search for the next person.
   if (found.hidden) patch.hidden = 0;
-  if (Object.keys(patch).length) await db.update('med_products', found.id, patch);
+  if (Object.keys(patch).length) await w.update('med_products', found.id, patch);
   if (!sameIngredients(ingredients, await ingredientsOf(found.id))) {
-    await writeIngredients(found.id, ingredients);
+    await writeIngredients(w, found.id, ingredients);
   }
   return found.id;
 }
@@ -490,13 +490,13 @@ function checkForm(f: MedForm) {
  * rhythm with no anchor yet starts today too; one carried over from an edit
  * keeps its own, so changing an amount does not shift which days are due.
  */
-async function writeDoses(medicationId: string, doses: DoseSlot[], schedule: Schedule): Promise<void> {
+async function writeDoses(w: Writer, medicationId: string, doses: DoseSlot[], schedule: Schedule): Promise<void> {
   const today = medDay();
   const cols = scheduleColumns(
     schedule.freq === 'alternate' && !schedule.from ? { ...schedule, from: today } : schedule,
   );
   for (const [i, d] of sortByTime(doses).entries()) {
-    await db.insert('med_doses', {
+    await w.insert('med_doses', {
       medication_id: medicationId,
       position: i + 1,
       amount: d.amount,
@@ -513,28 +513,35 @@ async function writeDoses(medicationId: string, doses: DoseSlot[], schedule: Sch
 /**
  * Save from Add meds. With `episodeId`, the medicine belongs to that sickness
  * and stops being due when it ends.
+ *
+ * One unit (scope.ts, `atomically`): the library entry, its ingredients and
+ * starting schedule, the medicine and its doses land together or not at all.
+ * Half of it was a medicine with no doses, shown as "unscheduled", or a
+ * library entry nobody takes.
  */
 export async function addMedicine(f: MedForm, episodeId: string | null = null): Promise<string> {
   checkForm(f);
-  const productId = await libraryEntryFor(f);
-  const id = await db.insert('medications', {
-    name: f.name.trim(),
-    raw_text: null,
-    rxcui: null,
-    dose_text: clean(f.strength),
-    schedule: null,
-    started_on: medDay(),
-    ended_on: null,
-    notes: null,
-    product_id: productId,
-    // A sickness's own medicine ends with it, so "keep taking when sick" has
-    // nothing to mean there and is written as 0, not left unasked.
-    long_term: episodeId ? 0 : f.long_term ? 1 : 0,
-    episode_id: episodeId,
-    deleted_at: null,
+  return db.atomically(async (w) => {
+    const productId = await libraryEntryFor(w, f);
+    const id = await w.insert('medications', {
+      name: f.name.trim(),
+      raw_text: null,
+      rxcui: null,
+      dose_text: clean(f.strength),
+      schedule: null,
+      started_on: medDay(),
+      ended_on: null,
+      notes: null,
+      product_id: productId,
+      // A sickness's own medicine ends with it, so "keep taking when sick" has
+      // nothing to mean there and is written as 0, not left unasked.
+      long_term: episodeId ? 0 : f.long_term ? 1 : 0,
+      episode_id: episodeId,
+      deleted_at: null,
+    });
+    await writeDoses(w, id, f.doses, f.schedule);
+    return id;
   });
-  await writeDoses(id, f.doses, f.schedule);
-  return id;
 }
 
 export type MedDetail = {
@@ -598,21 +605,25 @@ export async function editMedicine(id: string, f: MedForm): Promise<void> {
   checkForm(f);
   const before = await medicineDetail(id);
   if (!before) throw new Error('That medicine is no longer here.');
-  const productId = await libraryEntryFor(f);
-  await db.update('medications', id, {
-    name: f.name.trim(),
-    dose_text: clean(f.strength),
-    product_id: productId,
-    long_term: before.med.episode_id ? 0 : f.long_term ? 1 : 0,
-  });
+  // One unit, as addMedicine: an edit half-applied could leave the old doses
+  // removed and the new ones never written.
+  await db.atomically(async (w) => {
+    const productId = await libraryEntryFor(w, f);
+    await w.update('medications', id, {
+      name: f.name.trim(),
+      dose_text: clean(f.strength),
+      product_id: productId,
+      long_term: before.med.episode_id ? 0 : f.long_term ? 1 : 0,
+    });
 
-  const key = (l: DoseSlot[]) =>
-    JSON.stringify(sortByTime(l).map((d) => [d.amount, d.unit, d.time_of_day, d.meal]));
-  const was = before.doses[0] ? scheduleOfDose(before.doses[0]) : EVERY_DAY;
-  if (key(before.doses) !== key(f.doses) || !sameSchedule(was, f.schedule)) {
-    for (const d of before.doses) await db.softDelete('med_doses', d.id);
-    await writeDoses(id, f.doses, f.schedule);
-  }
+    const key = (l: DoseSlot[]) =>
+      JSON.stringify(sortByTime(l).map((d) => [d.amount, d.unit, d.time_of_day, d.meal]));
+    const was = before.doses[0] ? scheduleOfDose(before.doses[0]) : EVERY_DAY;
+    if (key(before.doses) !== key(f.doses) || !sameSchedule(was, f.schedule)) {
+      for (const d of before.doses) await w.softDelete('med_doses', d.id);
+      await writeDoses(w, id, f.doses, f.schedule);
+    }
+  });
 }
 
 /** Out of the household's search. Anyone taking it keeps it. */
@@ -705,15 +716,19 @@ export async function markDose(
   day: string,
   status: 'taken' | 'skipped' = 'taken',
 ): Promise<string> {
-  if (p.eventId) await db.softDelete('intake_events', p.eventId);
-  return db.insert('intake_events', {
-    medication_id: p.med.id,
-    dose_id: p.dose.id,
-    for_day: day,
-    taken_at: Date.now(),
-    status,
-    note: null,
-    deleted_at: null,
+  // The old answer out and the new one in, as one unit: between the two, the
+  // dose would read as never answered.
+  return db.atomically(async (w) => {
+    if (p.eventId) await w.softDelete('intake_events', p.eventId);
+    return w.insert('intake_events', {
+      medication_id: p.med.id,
+      dose_id: p.dose.id,
+      for_day: day,
+      taken_at: Date.now(),
+      status,
+      note: null,
+      deleted_at: null,
+    });
   });
 }
 

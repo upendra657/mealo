@@ -29,7 +29,7 @@ import { scopedDb } from '../db/scope';
 import { kvGet, kvSet } from '../lib/kv';
 import { newId } from '../lib/device';
 import { medSlug } from './doses';
-import { collapse, nextCursor, resolve, type SyncTable, type WireRow } from './sync';
+import { collapse, fingerprint, nextCursor, resolve, type SyncTable, type WireRow } from './sync';
 
 const db = scopedDb('pharmacist');
 
@@ -198,6 +198,13 @@ async function productId(slug: string): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+/** This phone's version on a tie, as `collectMeds` would send it. See localFp in librarysync.ts. */
+async function localFp(r: WireRow, local: { updated_at: number; deleted_at: number | null }): Promise<string | undefined> {
+  if (local.updated_at !== r.at) return undefined;
+  const mine = (await collectMeds(r.at)).find((w) => w.t === r.t && w.k === r.k);
+  return mine ? fingerprint(mine) : undefined;
+}
+
 async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
   if (r.t === 'med_products') {
     const slug = String(r.f.slug ?? '');
@@ -218,8 +225,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
     }
     const verdict = resolve(
       'med_products',
-      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, id: local[0].id },
-      { updated_at: r.at, deleted_at: r.del },
+      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, fp: await localFp(r, local[0]) },
+      { updated_at: r.at, deleted_at: r.del, fp: fingerprint(r) },
     );
     if (verdict === 'local') return 'skip';
     // `private` is not in this list. See the header.
@@ -266,8 +273,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
   }
   const verdict = resolve(
     r.t,
-    { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, id: local[0].id },
-    { updated_at: r.at, deleted_at: r.del },
+    { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, fp: await localFp(r, local[0]) },
+    { updated_at: r.at, deleted_at: r.del, fp: fingerprint(r) },
   );
   if (verdict === 'local') return 'skip';
   await db.run(

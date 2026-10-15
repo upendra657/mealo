@@ -40,7 +40,7 @@ import {
   type Applied,
 } from './librarysync';
 import { applyMeds, collectMeds, medPushCursor, setMedPushCursor } from './medsync';
-import { isMedTable, READS, type Batch, type WireRow } from './sync';
+import { chunkRows, isMedTable, READS, type Batch, type WireRow } from './sync';
 import { kvGet, kvSet } from '../lib/kv';
 
 export type Received = Applied & { medicines: number };
@@ -105,19 +105,20 @@ export async function syncLibrary(): Promise<SyncResult> {
     // ---- push ----
     const foodRows: WireRow[] = await collect(await pushCursor());
     const medRows: WireRow[] = await collectMeds(await medPushCursor());
-    const rows = [...foodRows, ...medRows];
-    if (rows.length > 0) {
-      const body = toB64(await seal(household.key, JSON.stringify(batchOf(rows))));
+    // In batches the relay will take, oldest first (chunkRows in sync.ts).
+    for (const chunk of chunkRows([...foodRows, ...medRows])) {
+      const body = toB64(await seal(household.key, JSON.stringify(batchOf(chunk))));
       const res = await fetch('/sync/push', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ household: household.id, device, body }),
       });
       if (!res.ok) throw new Error(`relay refused the batch (${res.status})`);
-      // Only now: the relay has it.
-      await setPushCursor(foodRows);
-      await setMedPushCursor(medRows);
-      sent = rows.length;
+      // Only now: the relay has this batch, and every older row was in it or
+      // in one before it.
+      await setPushCursor(chunk.filter((r) => !isMedTable(r.t)));
+      await setMedPushCursor(chunk.filter((r) => isMedTable(r.t)));
+      sent += chunk.length;
     }
 
     // ---- pull ----

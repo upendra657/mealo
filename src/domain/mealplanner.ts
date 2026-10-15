@@ -23,7 +23,7 @@ import {
   type PlanAsk,
   type SlotOptions,
 } from './mealplan';
-import { itemsFor, mealsBetween, mealsOn, saveMeal, type DraftItem } from './meals';
+import { itemsFor, mealsBetween, mealsOn, saveMeals, type DraftItem } from './meals';
 import { counts, isPlanned, plansAt, stampFor } from './plan';
 import { resolveFor } from './portions';
 import { normaliseSlot, type SlotId } from './slots';
@@ -205,16 +205,12 @@ export async function buildPlan(ask: PlanAsk, now = new Date()): Promise<DayPlan
  * can be written from the rows read back and Undo can remove exactly these.
  */
 export async function savePlan(dayStart: number, choice: PlanChoice, said: string | null, now = new Date()): Promise<string[]> {
-  const ids: string[] = [];
-  for (const m of choice.meals) {
-    ids.push(
-      await saveMeal(m.items, {
-        rawText: said,
-        mealType: m.slot,
-        eatenAt: stampFor(dayStart, now),
-        planned: plansAt(dayStart, m.slot, now),
-      }),
-    );
-  }
-  return ids;
+  // The day whole or not at all: a plan with breakfast and lunch saved and
+  // dinner lost would read as a smaller day, not a failed save.
+  return saveMeals(
+    choice.meals.map((m) => ({
+      items: m.items,
+      opts: { rawText: said, mealType: m.slot, eatenAt: stampFor(dayStart, now), planned: plansAt(dayStart, m.slot, now) },
+    })),
+  );
 }

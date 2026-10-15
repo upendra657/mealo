@@ -101,7 +101,10 @@ import {
   type TimeOfDay,
 } from '../src/domain/doses';
 import {
+  chunkRows,
+  CHUNK_BYTES,
   collapse,
+  fingerprint,
   isAddressable,
   isMedTable,
   READS,
@@ -829,13 +832,29 @@ section('Sync: who wins');
   ];
   for (const [aAt, aSrc, aId] of cases) for (const [bAt, bSrc, bId] of cases) {
     if (aId === bId) continue;
-    const A = { updated_at: aAt, deleted_at: null, source: aSrc, id: aId };
-    const B = { updated_at: bAt, deleted_at: null, source: bSrc, id: bId };
+    // Each side as the code now builds it: its content, fingerprinted.
+    const A = { updated_at: aAt, deleted_at: null, source: aSrc, fp: fingerprint({ del: null, f: { v: aId } }) };
+    const B = { updated_at: bAt, deleted_at: null, source: bSrc, fp: fingerprint({ del: null, f: { v: bId } }) };
     const fromA = resolve('food_portions', A, B) === 'incoming' ? bId : aId;
     const fromB = resolve('food_portions', B, A) === 'incoming' ? aId : bId;
     if (fromA !== fromB) disagreements++;
   }
   check('both devices always pick the same row', disagreements, 0);
+
+  // The bug, as the apply code really called it until 15 Oct 2026: the
+  // incoming side had no id, so on a tie it always won, on both phones, and
+  // each took the other's version. Now both compare the wire content.
+  const dalA = { t: 'custom_foods' as const, k: 'dal', at: 500, del: null, f: { slug: 'dal', name: 'Dal', energy_kcal: 120 } };
+  const dalB = { ...dalA, f: { ...dalA.f, energy_kcal: 135 } };
+  const side = (w: typeof dalA) => ({ updated_at: w.at, deleted_at: w.del, fp: fingerprint(w) });
+  const onA = resolve('custom_foods', side(dalA), side(dalB)) === 'incoming' ? 135 : 120;
+  const onB = resolve('custom_foods', side(dalB), side(dalA)) === 'incoming' ? 120 : 135;
+  check('two edits in the same millisecond: both phones keep the same one', onA, onB);
+  check('the same version arriving again is no change', resolve('custom_foods', side(dalA), side(dalA)), 'local');
+  check('a fingerprint does not depend on the order of the fields',
+    fingerprint({ del: null, f: { a: 1, b: 'x' } }), fingerprint({ del: null, f: { b: 'x', a: 1 } }));
+  check('a delete and a live row in the same millisecond differ', fingerprint({ del: 5, f: { a: 1 } }) === fingerprint({ del: null, f: { a: 1 } }), false);
+  check('with this phone\'s version unknown, it keeps what is here', resolve('custom_foods', { updated_at: 500, deleted_at: null }, side(dalB)), 'local');
 }
 
 section('Sync: batching');
@@ -2467,7 +2486,7 @@ import { stampFor } from '../src/domain/plan';
 
 // ------------------------------------------------------------ reminders
 import { ago, backupDue, BACKUP_NUDGE_DAYS, RELAY_KEEP_DAYS, SYNC_AMBER_DAYS, SYNC_URGENT_DAYS, syncTone } from '../src/domain/upkeep';
-import { testRingAt, testRingTime } from '../src/domain/reminders';
+import { needsSending, RESEND_AFTER_MS, scheduleSig, testRingAt, testRingTime, wordsOf } from '../src/domain/reminders';
 import { clockOn, clockOnCalendar, DEFAULT_REMINDERS, doseRings, inOrder, isClock, mealRings, readSettings, scheduleDays, SCHEDULE_DAYS, type ReminderSettings } from '../src/domain/reminders';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -2555,6 +2574,30 @@ import { runInNewContext } from 'node:vm';
   check('every push ends in showNotification, whatever happened before it', /if \(rings\.length === 0\) rings = \[FALLBACK\];\s+await Promise\.all\(\s+rings\.map\(\(r\) =>\s+self\.registration\.showNotification/.test(src), true);
 }
 
+section('Sync: a large push goes in batches the relay will take');
+{
+  // A dish as it crosses the wire, with a long name and notes, the heavy case.
+  const dish = (i: number): WireRow => ({
+    t: 'custom_foods', k: `dish-${i}`, at: 1_000_000 + (i % 977) * 13 + i, del: null,
+    f: { slug: `dish-${i}`, name: `Home-style dish number ${i} with a longish name`, per_unit: 'g', energy_kcal: 123.4,
+      protein_g: 5.6, fat_g: 7.8, carbs_g: 9.1, fibre_g: 2.3, notes: 'x'.repeat(120), share: 1 },
+  });
+  const many = Array.from({ length: 3000 }, (_, i) => dish(i));
+  const chunks = chunkRows(many);
+  const sealedBase64 = (rows: WireRow[]) => Math.ceil((new TextEncoder().encode(JSON.stringify({ v: 2, rows })).length + 28) / 3) * 4;
+  check('3,000 dishes go as more than one batch', chunks.length > 1, true);
+  check('every batch is under the relay\'s 512 KiB once sealed', chunks.every((c) => sealedBase64(c) < 512 * 1024), true);
+  check('with room to spare', Math.max(...chunks.map(sealedBase64)) < 400 * 1024, true);
+  check('nothing lost, nothing doubled', chunks.flat().map((r) => r.k).sort().join() === many.map((r) => r.k).sort().join(), true);
+  const flat = chunks.flat();
+  check('oldest first, so the cursor can follow each batch', flat.every((r, i) => i === 0 || flat[i - 1].at <= r.at), true);
+  check('a small push is one batch', chunkRows(many.slice(0, 10)).length, 1);
+  check('nothing to push, no batch', chunkRows([]).length, 0);
+  const huge = { ...dish(1), f: { ...dish(1).f, notes: 'y'.repeat(CHUNK_BYTES) } };
+  check('a row bigger than a batch goes alone', chunkRows([dish(2), huge, dish(3)]).map((c) => c.length).sort().join(), '1,2');
+  check('the relay\'s limit is what this was sized against', /const MAX_BODY = 512 \* 1024;/.test(readFileSync('worker/index.ts', 'utf8')), true);
+}
+
 section('Keeping the record safe: backup and sync warnings, the test ring');
 {
   const DAY = 86_400_000;
@@ -2575,6 +2618,18 @@ section('Keeping the record safe: backup and sync warnings, the test ring');
   const at = (h: number, m: number, sec: number) => new Date(2026, 9, 15, h, m, sec).getTime();
   check('asked at 03:41:10, rings at 03:42', testRingTime(at(3, 41, 10)), at(3, 42, 0));
   check('asked at 03:41:40, rings at 03:43', testRingTime(at(3, 41, 40)), at(3, 43, 0));
+  // A list the relay already took is not sent again unless its minutes
+  // changed or a day has passed (15 Oct 2026, "why waste compute").
+  const r = (m: number) => ({ at: m, kind: 'meals' as const, title: 'Today’s meals', body: 'x' });
+  const sig = scheduleSig('https://e/1', [r(1), r(2)]);
+  check('nothing sent yet: send', needsSending(null, sig, now), true);
+  check('the same minutes within a day: do not', needsSending({ sig, at: now - 3_600_000 }, sig, now), false);
+  check('a day on: send anyway', needsSending({ sig, at: now - RESEND_AFTER_MS }, sig, now), true);
+  check('a ring added or gone: send', needsSending({ sig, at: now - 60_000 }, scheduleSig('https://e/1', [r(1)]), now), true);
+  check('another browser: send', scheduleSig('https://e/2', [r(1), r(2)]) === sig, false);
+  check('words changed but not minutes: the relay need not hear, the phone rewrites its words',
+    [scheduleSig('https://e/1', [{ ...r(1), body: 'y' }, r(2)]) === sig, wordsOf([{ ...r(1), body: 'y' }, r(2)]) === wordsOf([r(1), r(2)])], [true, false]);
+  check('a ring marked shown is not a change of words', wordsOf([{ ...r(1), shown: true }]) === wordsOf([r(1)]), true);
   check('a test ring says so, with no medicine and no amount', [testRingAt(0).kind, /test/i.test(testRingAt(0).body), /\d/.test(testRingAt(0).body)], ['test', true, false]);
 }
 

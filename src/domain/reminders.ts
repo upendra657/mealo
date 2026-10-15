@@ -174,6 +174,30 @@ export function testRingAt(at: number): Ring {
   return { at, kind: 'test', title: 'Mealo', body: 'A test reminder. Reminders work on this phone.' };
 }
 
+/**
+ * How long a list the relay took is trusted before it is sent again
+ * unchanged. Opening the app re-sent the whole list every time, two D1
+ * writes a ring, for a list that had not moved; his word on 15 Oct 2026:
+ * "why waste compute". Once a day it goes anyway, in case the relay lost it
+ * (a browser it forgot, a reset), which costs one request a day a phone.
+ */
+export const RESEND_AFTER_MS = 24 * 3_600_000;
+
+/** What the relay is told for one browser: its address and the minutes. */
+export function scheduleSig(endpoint: string, rings: readonly Ring[]): string {
+  return `${endpoint}|${rings.map((r) => r.at).join(',')}`;
+}
+
+/** Whether this list needs sending, given what was last sent and taken. */
+export function needsSending(last: { sig: string; at: number } | null, sig: string, now: number): boolean {
+  return !last || last.sig !== sig || now - last.at >= RESEND_AFTER_MS;
+}
+
+/** The words of a list, without the service worker's "shown" marks, to tell whether they changed. */
+export function wordsOf(rings: readonly (Ring & { shown?: boolean })[] | undefined): string {
+  return JSON.stringify((rings ?? []).map((r) => [r.at, r.kind, r.title, r.body]));
+}
+
 /** Soonest first, and no more than the relay will hold for one browser. */
 export function inOrder(rings: Ring[], cap = 100): Ring[] {
   return [...rings].sort((a, b) => a.at - b.at).slice(0, cap);

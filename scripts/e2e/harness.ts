@@ -58,6 +58,7 @@ import { readDay, contributors, dayAt, localDayKey, loggedDays } from '../../src
 import { guessSlot, normaliseSlot, SLOTS } from '../../src/domain/slots';
 import { recentItems } from '../../src/domain/recents';
 import { apply, collect } from '../../src/domain/librarysync';
+import { fingerprint } from '../../src/domain/sync';
 import {
   customFood,
   deleteDish,
@@ -552,6 +553,26 @@ async function main() {
       "SELECT id, updated_at FROM custom_foods WHERE slug = 'rajma masala'",
     );
     check('carrying the sender timestamp, not ours', rajma[0]?.updated_at === far, `${rajma[0]?.updated_at} vs ${far}`);
+
+    // Both phones changed Rajma in the same millisecond, differently. Each
+    // phone holds its own and receives the other's; both must end on the same
+    // version: the one whose wire content sorts lower. Played out here as this
+    // phone in both seats in turn.
+    const tieAt = far + 1;
+    const mineR = { t: 'custom_foods' as const, k: 'rajma masala', at: tieAt, del: null,
+      f: { slug: 'rajma masala', name: 'Rajma Masala', per_unit: '100g', energy_kcal: 127, protein_g: 6.2,
+        fat_g: 3.1, carbs_g: 18.4, fibre_g: 5.2, notes: null, share: 0 } };
+    const theirsR = { ...mineR, f: { ...mineR.f, energy_kcal: 141 } };
+    const settle = async (here: typeof mineR, arriving: typeof mineR) => {
+      await nut.run("UPDATE custom_foods SET energy_kcal = ?, updated_at = ? WHERE slug = 'rajma masala'", [here.f.energy_kcal, tieAt]);
+      await apply([arriving]);
+      return (await nut.query<{ e: number }>("SELECT energy_kcal AS e FROM custom_foods WHERE slug = 'rajma masala'"))[0].e;
+    };
+    const onA = await settle(mineR, theirsR);
+    const onB = await settle(theirsR, mineR);
+    check('two edits in the same millisecond: both phones keep the same one', onA === onB, `${onA} vs ${onB}`);
+    const lower = fingerprint(mineR) < fingerprint(theirsR) ? 127 : 141;
+    check('the one whose content sorts lower', onA === lower, `${onA}, expected ${lower}`);
     check('and it got a local id of its own', (rajma[0]?.id ?? '').length > 0);
 
     // The portion resolved the slug to this device's row.
@@ -1302,6 +1323,63 @@ async function main() {
   }
 
   // ---- v10: the medicine library on the wire ------------------------------
+  // ---- saves as one unit (15 Oct 2026) ------------------------------------
+  // Each unit is made to fail on a late write; nothing from it may be left.
+  step('atomic saves');
+  {
+    const nut = scopedDb('nutritionist');
+    const mealsWith = async (raw: string) =>
+      Number((await query<{ n: number }>('SELECT COUNT(*) AS n FROM meals WHERE raw_text = ?', [raw]))[0].n);
+
+    let threw = false;
+    try {
+      await nut.atomically(async (tx) => {
+        const m = await tx.insert('meals', { eaten_at: Date.now(), raw_text: 'fixture atomic raw', meal_type: 'lunch', deleted_at: null });
+        await tx.insert('meal_items', { meal_id: m, label: 'fine', source: 'direct', plan_state: null, deleted_at: null });
+        await tx.insert('meal_items', { meal_id: m, label: 'broken', source: 'direct', plan_state: 'nonsense', deleted_at: null });
+      });
+    } catch {
+      threw = true;
+    }
+    check('a unit with a bad last write fails', threw);
+    check('and leaves neither the meal nor its first item', (await mealsWith('fixture atomic raw')) === 0 &&
+      Number((await query<{ n: number }>("SELECT COUNT(*) AS n FROM meal_items WHERE label = 'fine'"))[0].n) === 0);
+
+    // Through saveMeal, the way the screen saves: an item with no name is
+    // refused by the table, after the meal row has been written.
+    const [good] = await draftFromText('1 katori fixture atomic dal');
+    threw = false;
+    try {
+      await saveMeal([good, { ...good, label: null as unknown as string, food: null }], { rawText: 'fixture atomic meal', mealType: 'dinner' });
+    } catch {
+      threw = true;
+    }
+    check('a meal whose second item is refused is not saved at all', threw && (await mealsWith('fixture atomic meal')) === 0);
+    const ok = await saveMeal([good], { rawText: 'fixture atomic meal ok', mealType: 'dinner' });
+    check('and a sound one still saves, item and all', (await mealsWith('fixture atomic meal ok')) === 1 && (await itemsFor([ok])).length === 1);
+    await deleteMeal(ok);
+
+    // A medicine: the dose rows are its last writes. A unit the table cannot
+    // take there leaves no medicine and no new library entry behind.
+    const medsNamed = async (name: string) =>
+      Number((await query<{ n: number }>('SELECT COUNT(*) AS n FROM medications WHERE name = ? AND deleted_at IS NULL', [name]))[0].n);
+    const productsNamed = async (name: string) =>
+      Number((await query<{ n: number }>('SELECT COUNT(*) AS n FROM med_products WHERE name = ?', [name]))[0].n);
+    threw = false;
+    try {
+      await addMedicine({
+        name: 'Fixture atomic tablet', form: 'tablet', strength: '5 mg', ingredients: [{ name: 'Atomium', strength_text: '5 mg' }],
+        // An object where a word goes: the database cannot take it.
+        doses: [{ amount: 1, unit: {} as unknown as 'tablet', time_of_day: 'morning', meal: 'after' }],
+        schedule: EVERY_DAY, long_term: true, private: false,
+      });
+    } catch {
+      threw = true;
+    }
+    check('a medicine whose dose cannot be written is not saved at all', threw && (await medsNamed('Fixture atomic tablet')) === 0);
+    check('nor is its library entry', (await productsNamed('Fixture atomic tablet')) === 0);
+  }
+
   step('medsync');
   {
     const pharm = scopedDb('pharmacist');

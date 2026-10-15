@@ -223,6 +223,20 @@ try {
   ok('and all seventy are held', ringsHeld(busy) === 70);
   ok('a hundred, the most allowed, are held too', (await post('/push/schedule', { endpoint: busy, times: Array.from({ length: 100 }, (_, i) => now + (i + 1) * 60 * MIN) })).j.rings === 100 && ringsHeld(busy) === 100);
   await post('/push/forget', { endpoint: busy });
+  // At most fifty browsers. Filled with made-up addresses, a new one is
+  // turned away, and one already held still gets through.
+  const known = `https://fcm.googleapis.com/fcm/send/${b32()}`;
+  await post('/push/schedule', { endpoint: known, times: [now + 3 * 86_400_000] });
+  const filler = [];
+  for (let i = 0; i < 49; i++) {
+    const e = `https://fcm.googleapis.com/fcm/send/${b32()}`;
+    filler.push(e);
+    await post('/push/schedule', { endpoint: e, times: [now + 3 * 86_400_000] });
+  }
+  ok('a fifty-first browser is turned away', (await post('/push/schedule', { endpoint: `https://fcm.googleapis.com/fcm/send/${b32()}`, times: [now + 86_400_000] })).s === 507);
+  ok('a browser already held still gets through', (await post('/push/schedule', { endpoint: known, times: [now + 86_400_000, now + 2 * 86_400_000] })).s === 200 && ringsHeld(known) === 2);
+  for (const e of [known, ...filler]) await post('/push/forget', { endpoint: e });
+  ok('once they are gone, a new one is taken again', (await post('/push/schedule', { endpoint: `https://fcm.googleapis.com/fcm/send/${b32()}`, times: [] })).s === 200);
   ok('no more than a hundred', (await post('/push/schedule', { endpoint: mine, times: Array.from({ length: 101 }, (_, i) => now + i * MIN) })).s === 400);
   ok('and none more than fifteen days ahead', (await post('/push/schedule', { endpoint: mine, times: [now + 16 * 86_400_000] })).s === 400);
   ok('an unknown push route', (await fetch(`${BASE}/push/nope`)).status === 404);

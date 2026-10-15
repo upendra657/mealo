@@ -99,18 +99,52 @@ export async function bulkInsert(table: string, columns: string[], rows: unknown
  * Insert helper that fills in the three columns every table carries.
  * Returns the new row id.
  */
-export async function insert(
+/** One write, as a value: what `transaction` runs, in order. */
+export type Stmt = { sql: string; bind: unknown[] };
+
+/** The INSERT `insert` runs, and the id it gives the row. */
+export async function insertStmt(
   table: string,
   values: Record<string, unknown>,
-): Promise<string> {
+): Promise<{ stmt: Stmt; id: string }> {
   const id = (values.id as string | undefined) ?? (await newId());
   const row: Record<string, unknown> = { ...values, id, updated_at: now() };
   const cols = Object.keys(row);
   const placeholders = cols.map(() => '?').join(', ');
-  await run(
-    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`,
-    cols.map((c) => row[c]),
-  );
+  return {
+    stmt: { sql: `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`, bind: cols.map((c) => row[c]) },
+    id,
+  };
+}
+
+/** The UPDATE `update` runs, which always bumps updated_at. */
+export function updateStmt(table: string, id: string, values: Record<string, unknown>): Stmt {
+  const row: Record<string, unknown> = { ...values, updated_at: now() };
+  const cols = Object.keys(row);
+  return {
+    sql: `UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+    bind: [...cols.map((c) => row[c]), id],
+  };
+}
+
+/** The soft delete `softDelete` runs. */
+export function softDeleteStmt(table: string, id: string): Stmt {
+  const ts = now();
+  return { sql: `UPDATE ${table} SET deleted_at = ?, updated_at = ? WHERE id = ?`, bind: [ts, ts, id] };
+}
+
+/** Several writes as one unit, in one message to the worker (db/worker.ts). */
+export async function transaction(statements: Stmt[]): Promise<void> {
+  await initDb();
+  await call<number>({ type: 'tx', statements });
+}
+
+export async function insert(
+  table: string,
+  values: Record<string, unknown>,
+): Promise<string> {
+  const { stmt, id } = await insertStmt(table, values);
+  await run(stmt.sql, stmt.bind);
   return id;
 }
 
@@ -120,13 +154,8 @@ export async function update(
   id: string,
   values: Record<string, unknown>,
 ): Promise<void> {
-  const row: Record<string, unknown> = { ...values, updated_at: now() };
-  const cols = Object.keys(row);
-  const assignments = cols.map((c) => `${c} = ?`).join(', ');
-  await run(`UPDATE ${table} SET ${assignments} WHERE id = ?`, [
-    ...cols.map((c) => row[c]),
-    id,
-  ]);
+  const stmt = updateStmt(table, id, values);
+  await run(stmt.sql, stmt.bind);
 }
 
 /**
@@ -134,11 +163,8 @@ export async function update(
  * caller should ever issue one against a synced table.
  */
 export async function softDelete(table: string, id: string): Promise<void> {
-  const ts = now();
-  await run(
-    `UPDATE ${table} SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-    [ts, ts, id],
-  );
+  const stmt = softDeleteStmt(table, id);
+  await run(stmt.sql, stmt.bind);
 }
 
 /** Raw bytes of the whole database, for the export button. */

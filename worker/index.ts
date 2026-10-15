@@ -181,8 +181,17 @@ const MAX_RINGS = 100;
 const MAX_AHEAD_MS = 15 * 86_400_000;
 /** A ring this late is not sent. A reminder for the morning is noise at noon. */
 const LATE_MS = 60 * 60_000;
-/** Most rows the table may hold. A runaway client cannot fill D1. */
-const MAX_ROWS = 20_000;
+/**
+ * Most browsers the relay will ring. Two today, perhaps ten people later,
+ * each with a phone and a laptop: fifty is generous for that and small for
+ * anyone trying to fill the table with made-up addresses, which every push
+ * host accepts in the right shape. A browser already held always gets
+ * through; only a new one past the limit is turned away (15 Oct 2026, "the
+ * server should not be overloaded").
+ */
+const MAX_PHONES = 50;
+/** Most rows the table may hold: every phone at its most. A runaway client cannot fill D1. */
+const MAX_ROWS = MAX_PHONES * MAX_RINGS;
 /**
  * Most browsers rung per run. The free plan allows a Worker 50 subrequests
  * per invocation; whoever does not fit is first in line a minute later.
@@ -264,9 +273,14 @@ async function schedule(request: Request, env: Env): Promise<Response> {
 
   await ensurePushTable(env);
   const endpoint = body.endpoint;
+  const held = await env.DB.prepare(
+    'SELECT COUNT(DISTINCT endpoint) AS phones, COUNT(*) AS n, COALESCE(MAX(endpoint = ?), 0) AS known, SUM(endpoint = ?) AS mine FROM push_rings',
+  )
+    .bind(endpoint, endpoint)
+    .first<{ phones: number; n: number; known: number; mine: number | null }>();
+  if (!held?.known && (held?.phones ?? 0) >= MAX_PHONES) return json({ error: 'relay is full' }, 507);
+  if ((held?.n ?? 0) - (held?.mine ?? 0) + minutes.size > MAX_ROWS) return json({ error: 'relay is full' }, 507);
   await env.DB.prepare('DELETE FROM push_rings WHERE endpoint = ?').bind(endpoint).run();
-  const held = await env.DB.prepare('SELECT COUNT(*) AS n FROM push_rings').first<{ n: number }>();
-  if ((held?.n ?? 0) + minutes.size > MAX_ROWS) return json({ error: 'relay is full' }, 507);
   // The whole list in one statement. One INSERT per ring ran past the free
   // plan's 50 D1 queries per invocation once a phone had medicines in three
   // parts of the day (14 days x 4 rings), and failed halfway: the old rows

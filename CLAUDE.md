@@ -32,11 +32,11 @@ npm run build          # tsc -b && vite build
 npm run dev:demo       # the public demo, on port 5174, with a made-up person
 npm run build:demo     # the same, built into dist-demo/
 npm run test           # portions + safety + e2e
-npm run test:portions  # 965 pure-logic assertions, node, fast
+npm run test:portions  # 1008 pure-logic assertions, node, fast
 npm run test:safety    # 1156 assertions: the gates, the tools, the numbers and claims checks, the lookup loop, AI insights
-npm run test:e2e       # 463 assertions against real OPFS SQLite, headless browser
+npm run test:e2e       # 480 assertions against real OPFS SQLite, headless browser
 npm run test:demo      # 42 assertions on the demo's AI relay, against a stand-in provider
-npm run test:relay     # 48 assertions against real D1 via wrangler dev --local
+npm run test:relay     # 54 assertions against real D1 via wrangler dev --local
 npx tsc --noEmit -p tsconfig.app.json
 npx oxlint src/ scripts/
 ```
@@ -330,6 +330,14 @@ considered and rejected, what a reader would otherwise get wrong. End with:
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
+
+**A save that writes more than one row is one unit.** `scopedDb(...).atomically`
+queues the writes under the same checks and profile stamp as single ones and
+sends them to the worker as one transaction in one message, so all land or
+none do (meals, a planned day, a medicine, a re-ticked dose; 15 Oct 2026).
+Pass its Writer down rather than calling `db.insert` inside: a mode on the
+handle would catch another screen's write. Learning (aliases, derived
+portions) comes after the unit, and its failure must not fail the save.
 
 **Tests go with the logic.** Pure functions in `scripts/test-portions.ts`;
 anything touching the database in `scripts/e2e/harness.ts` against real SQLite.

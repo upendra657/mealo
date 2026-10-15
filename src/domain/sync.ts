@@ -46,8 +46,11 @@
  * later would launder a guess into a measurement — the same rule
  * `upsertPortion` already enforces locally.
  *
- * Ties on `updated_at` go to the row whose id sorts lower. Arbitrary, but it
- * has to be *the same* arbitrary on both devices or they never converge.
+ * Ties on `updated_at` go to the version whose content, as it crosses the
+ * wire, sorts lower (`fingerprint`). Arbitrary, but it has to be *the same*
+ * arbitrary on both devices or they never converge. It was the row id until
+ * 15 Oct 2026, which could never work: a wire row carries no id, so the
+ * incoming side was always '' and each phone took the other's version.
  *
  * Deletes are soft everywhere, so they merge like any other edit: a row with
  * `deleted_at` set and a newer `updated_at` wins and the dish disappears on
@@ -154,9 +157,19 @@ export type Side = {
   deleted_at: number | null;
   /** Only meaningful for food_portions. */
   source?: string | null;
-  /** Tie-break of last resort. */
-  id?: string;
+  /**
+   * The version as it crosses the wire, from `fingerprint`: what breaks a
+   * tie in the same millisecond. The same text on both phones for the same
+   * version, which is the only thing a tie-break needs.
+   */
+  fp?: string;
 };
+
+/** A wire row's content, keys in order, so equal versions give equal text on any phone. */
+export function fingerprint(r: Pick<WireRow, 'del' | 'f'>): string {
+  const keys = Object.keys(r.f).sort();
+  return JSON.stringify([r.del ?? null, keys.map((k) => [k, r.f[k] ?? null])]);
+}
 
 export type Verdict = 'incoming' | 'local';
 
@@ -179,11 +192,12 @@ export function resolve(t: SyncTable, local: Side, incoming: Side): Verdict {
   if (incoming.updated_at > local.updated_at) return 'incoming';
   if (incoming.updated_at < local.updated_at) return 'local';
 
-  // Same millisecond. Pick by id so both devices pick the same one; without
-  // this they can disagree forever and each keep re-pushing its own.
-  const li = local.id ?? '';
-  const ii = incoming.id ?? '';
-  if (ii === li) return 'local';
+  // Same millisecond. Pick by content so both devices pick the same version;
+  // without this they disagree forever. The same content is no change at
+  // all, and a side whose content is unknown keeps what is here.
+  const li = local.fp ?? '';
+  const ii = incoming.fp ?? '';
+  if (ii === li || !li || !ii) return 'local';
   return ii < li ? 'incoming' : 'local';
 }
 
@@ -206,8 +220,8 @@ export function collapse(rows: WireRow[]): Map<string, WireRow> {
     }
     const verdict = resolve(
       r.t,
-      { updated_at: prev.at, deleted_at: prev.del, source: prev.f.source as string | null },
-      { updated_at: r.at, deleted_at: r.del, source: r.f.source as string | null },
+      { updated_at: prev.at, deleted_at: prev.del, source: prev.f.source as string | null, fp: fingerprint(prev) },
+      { updated_at: r.at, deleted_at: r.del, source: r.f.source as string | null, fp: fingerprint(r) },
     );
     if (verdict === 'incoming') best.set(id, r);
   }
@@ -237,4 +251,44 @@ export function nextCursor(rows: WireRow[], previous: number): number {
  */
 export function since(rows: { updated_at: number }[], cursor: number) {
   return rows.filter((r) => r.updated_at >= cursor);
+}
+
+/**
+ * How much of a batch, as JSON, goes in one push. The relay refuses a body
+ * over 512 KiB (MAX_BODY in worker/index.ts), measured on what it is sent:
+ * the sealed batch in base64, which is 4/3 of the JSON plus 28 bytes of IV
+ * and tag. 256 KiB of JSON is about 350 KiB on the wire, with room to spare.
+ */
+export const CHUNK_BYTES = 256 * 1024;
+
+/**
+ * A push cut into batches the relay will take, oldest first.
+ *
+ * Everything since the cursor used to go as one batch. A big enough push (a
+ * large import, a phone that had not synced for a long while) was refused
+ * with a 400, the cursor never moved, and every sync after it failed the
+ * same way, for good (15 Oct 2026 health check). Oldest first so that the
+ * cursor can move after each batch the relay takes: a push cut short halfway
+ * resends only what had not gone, and since `since` includes the cursor, a
+ * row on the boundary goes twice and costs nothing. A single row bigger than
+ * a batch goes alone; nothing in the library is that big.
+ */
+export function chunkRows(rows: readonly WireRow[], max = CHUNK_BYTES): WireRow[][] {
+  const sorted = [...rows].sort((a, b) => a.at - b.at);
+  const enc = new TextEncoder();
+  const out: WireRow[][] = [];
+  let cur: WireRow[] = [];
+  let size = 2;
+  for (const r of sorted) {
+    const n = enc.encode(JSON.stringify(r)).length + 1;
+    if (cur.length > 0 && size + n > max) {
+      out.push(cur);
+      cur = [];
+      size = 2;
+    }
+    cur.push(r);
+    size += n;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out;
 }

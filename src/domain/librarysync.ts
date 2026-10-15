@@ -47,6 +47,7 @@ import { newId, now } from '../lib/device';
 import { slugFor } from './foods';
 import {
   collapse,
+  fingerprint,
   nextCursor,
   resolve,
   wireKey,
@@ -274,6 +275,21 @@ export async function apply(rows: WireRow[]): Promise<Applied> {
   return stats;
 }
 
+/**
+ * On a tie in the same millisecond, this phone's version as it would send
+ * it, fingerprinted, so both phones compare the same thing (sync.ts,
+ * `resolve`). Built by `collect` itself rather than by a second copy of its
+ * mapping: the two could drift, and then a tie would split the phones.
+ * Ties are rare enough that reading what changed since then costs nothing.
+ */
+async function localFp(r: WireRow, local: { updated_at: number; deleted_at: number | null }): Promise<string | undefined> {
+  if (local.updated_at !== r.at) return undefined;
+  const mine = (await collect(r.at)).find(
+    (w) => w.t === r.t && w.k === r.k && w.at === local.updated_at && (w.del ?? null) === local.deleted_at,
+  );
+  return mine ? fingerprint(mine) : undefined;
+}
+
 async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
   if (r.t === 'custom_foods') {
     const slug = String(r.f.slug ?? '');
@@ -302,8 +318,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
     }
     const verdict = resolve(
       'custom_foods',
-      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, id: local[0].id },
-      { updated_at: r.at, deleted_at: r.del },
+      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, fp: await localFp(r, local[0]) },
+      { updated_at: r.at, deleted_at: r.del, fp: fingerprint(r) },
     );
     if (verdict === 'local') return 'skip';
     await db.run(
@@ -341,8 +357,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
     }
     const verdict = resolve(
       'food_portions',
-      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, source: local[0].source, id: local[0].id },
-      { updated_at: r.at, deleted_at: r.del, source: r.f.source as string },
+      { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, source: local[0].source, fp: await localFp(r, local[0]) },
+      { updated_at: r.at, deleted_at: r.del, source: r.f.source as string, fp: fingerprint(r) },
     );
     if (verdict === 'local') return 'skip';
     await db.run(
@@ -374,8 +390,8 @@ async function applyOne(r: WireRow): Promise<'wrote' | 'skip'> {
   }
   const verdict = resolve(
     'food_aliases',
-    { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, id: local[0].id },
-    { updated_at: r.at, deleted_at: r.del },
+    { updated_at: local[0].updated_at, deleted_at: local[0].deleted_at, fp: await localFp(r, local[0]) },
+    { updated_at: r.at, deleted_at: r.del, fp: fingerprint(r) },
   );
   if (verdict === 'local') return 'skip';
   await db.run(

@@ -37,6 +37,9 @@ import {
   doseRings,
   inOrder,
   mealRings,
+  needsSending,
+  scheduleSig,
+  wordsOf,
   readSettings,
   scheduleDays,
   testRingAt,
@@ -52,6 +55,8 @@ const NOTE_KEY = 'reminders.note';
 const STATE_KEY = 'reminders.state';
 /** A test ring asked for and not yet due, kept so a rebuild before it rings keeps it. */
 const TEST_KEY = 'reminders.test';
+/** The last list the relay took, by its signature, and when. */
+const SENT_KEY = 'reminders.sent';
 
 /**
  * The last hand-over, for the card to say. Before 15 Oct 2026 a refused list
@@ -171,6 +176,7 @@ export async function turnOff(): Promise<void> {
   const s = await loadReminders();
   await kvSet(SETTINGS_KEY, { ...s, on: false });
   await kvDelete(NOTE_KEY);
+  await kvDelete(SENT_KEY);
   const sub = await (await registration())?.pushManager.getSubscription();
   if (!sub) return;
   await fetch('/push/forget', {
@@ -241,7 +247,12 @@ export async function refreshReminders(now = new Date()): Promise<number | null>
   if (!sub) return null;
 
   const rings = await buildRings(s, now);
-  await kvSet(NOTE_KEY, rings);
+  // The words live on the phone. Rewritten only when they changed, so a
+  // ring already shown keeps its mark.
+  if (wordsOf(await kvGet<Ring[]>(NOTE_KEY)) !== wordsOf(rings)) await kvSet(NOTE_KEY, rings);
+  // The relay is told only when the minutes changed, or a day has passed.
+  const sig = scheduleSig(sub.endpoint, rings);
+  if (!needsSending((await kvGet<{ sig: string; at: number }>(SENT_KEY)) ?? null, sig, now.getTime())) return rings.length;
   let status = 0;
   try {
     const res = await fetch('/push/schedule', {
@@ -255,6 +266,10 @@ export async function refreshReminders(now = new Date()): Promise<number | null>
     // the next time the app comes to the front.
   }
   const ok = status >= 200 && status < 300;
+  // Only a list the relay took counts as sent. A refused one is tried again
+  // at the next chance, whatever its minutes.
+  if (ok) await kvSet(SENT_KEY, { sig, at: now.getTime() });
+  else await kvDelete(SENT_KEY);
   await kvSet<RelayState>(STATE_KEY, {
     at: now.getTime(),
     ok,

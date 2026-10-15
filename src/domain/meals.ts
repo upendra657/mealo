@@ -15,7 +15,7 @@
  * by a later table match.
  */
 
-import { scopedDb } from '../db/scope';
+import { scopedDb, type Writer } from '../db/scope';
 import { activeProfile } from '../lib/active-profile';
 import {
   matchFood,
@@ -277,17 +277,37 @@ export function localHitRate(items: DraftItem[]): number {
 
 // ------------------------------------------------------------- writes
 
-export async function saveMeal(
-  items: DraftItem[],
-  opts: {
-    rawText?: string | null;
-    mealType?: MealType;
-    eatenAt?: number;
-    /** Logged ahead of its time; the caller decides with plansAt. */
-    planned?: boolean;
-  } = {},
-): Promise<string> {
-  const mealId = await db.insert('meals', {
+export type MealOpts = {
+  rawText?: string | null;
+  mealType?: MealType;
+  eatenAt?: number;
+  /** Logged ahead of its time; the caller decides with plansAt. */
+  planned?: boolean;
+};
+
+/**
+ * Save a meal and its items as one unit: the meal and every item land, or
+ * nothing does (scope.ts, `atomically`). Then the app learns from it.
+ */
+export async function saveMeal(items: DraftItem[], opts: MealOpts = {}): Promise<string> {
+  const id = await db.atomically((tx) => writeMeal(tx, items, opts));
+  await learnFrom(items);
+  return id;
+}
+
+/** Several meals as one unit: a planned day is saved whole or not at all. */
+export async function saveMeals(meals: { items: DraftItem[]; opts: MealOpts }[]): Promise<string[]> {
+  const ids = await db.atomically(async (tx) => {
+    const out: string[] = [];
+    for (const m of meals) out.push(await writeMeal(tx, m.items, m.opts));
+    return out;
+  });
+  for (const m of meals) await learnFrom(m.items);
+  return ids;
+}
+
+async function writeMeal(w: Writer, items: DraftItem[], opts: MealOpts): Promise<string> {
+  const mealId = await w.insert('meals', {
     eaten_at: opts.eatenAt ?? Date.now(),
     raw_text: opts.rawText ?? null,
     meal_type: opts.mealType ?? guessMealType(),
@@ -295,7 +315,7 @@ export async function saveMeal(
   });
 
   for (const it of items) {
-    await db.insert('meal_items', {
+    await w.insert('meal_items', {
       meal_id: mealId,
       // The dish's own name when one matched: the typed words are already
       // kept on the meal as raw_text, and a row reading "teacup filter
@@ -314,37 +334,55 @@ export async function saveMeal(
       plan_state: opts.planned ? 'planned' : null,
       deleted_at: null,
     });
-    // Only learn from matches the user kept.
-    if (it.food && it.source === 'matched') {
-      await rememberAlias(it.label, it.food.id);
-    }
-    // Learn the portion, but only from a weight the user actually set. A
-    // household guess the app made must never come back as "your katori" —
-    // that would launder an assumption into a measurement. `basis === 'weight'`
-    // means the grams were typed, not derived.
-    //
-    // Saved as 'derived', which upsertPortion will not let overwrite anything
-    // measured, so a real figure always wins and never the other way round.
-    const measure = it.unit ? toMeasure(it.unit) : null;
-    if (
-      it.food &&
-      measure &&
-      measure.kind !== 'weight' &&
-      it.basis === 'weight' &&
-      it.grams > 0 &&
-      it.quantity &&
-      it.quantity > 0
-    ) {
-      await upsertPortion({
-        foodId: it.food.id,
-        measure: measure.id,
-        quantity: it.quantity,
-        netWeightG: it.grams,
-        source: 'derived',
-      });
-    }
   }
   return mealId;
+}
+
+/**
+ * What a saved meal teaches: the words typed for a dish, and a portion from
+ * a weight typed by hand. After the save, not inside it: learning is a
+ * side effect, and a failure here must not make a saved meal look unsaved.
+ */
+async function learnFrom(items: DraftItem[]): Promise<void> {
+  for (const it of items) {
+    try {
+      await learnOne(it);
+    } catch (e) {
+      console.warn('[meals] nothing learned from', it.label, e);
+    }
+  }
+}
+
+async function learnOne(it: DraftItem): Promise<void> {
+  // Only learn from matches the user kept.
+  if (it.food && it.source === 'matched') {
+    await rememberAlias(it.label, it.food.id);
+  }
+  // Learn the portion, but only from a weight the user actually set. A
+  // household guess the app made must never come back as "your katori" —
+  // that would launder an assumption into a measurement. `basis === 'weight'`
+  // means the grams were typed, not derived.
+  //
+  // Saved as 'derived', which upsertPortion will not let overwrite anything
+  // measured, so a real figure always wins and never the other way round.
+  const measure = it.unit ? toMeasure(it.unit) : null;
+  if (
+    it.food &&
+    measure &&
+    measure.kind !== 'weight' &&
+    it.basis === 'weight' &&
+    it.grams > 0 &&
+    it.quantity &&
+    it.quantity > 0
+  ) {
+    await upsertPortion({
+      foodId: it.food.id,
+      measure: measure.id,
+      quantity: it.quantity,
+      netWeightG: it.grams,
+      source: 'derived',
+    });
+  }
 }
 
 /**

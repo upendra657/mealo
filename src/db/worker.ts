@@ -65,7 +65,8 @@ type Req =
   | { id: number; type: 'describe' }
   | { id: number; type: 'inspect'; bytes: Uint8Array; purpose: 'restore' | 'check' }
   | { id: number; type: 'restore' }
-  | { id: number; type: 'weekly'; now: number };
+  | { id: number; type: 'weekly'; now: number }
+  | { id: number; type: 'tx'; statements: { sql: string; bind?: unknown[] }[] };
 
 type Ok = { id: number; ok: true; result: unknown };
 type Err = { id: number; ok: false; error: string };
@@ -242,6 +243,28 @@ function bulk(table: string, columns: string[], rows: unknown[][]): number {
     } catch {
       /* already gone */
     }
+    db.exec({ sql: 'ROLLBACK' });
+    throw e;
+  }
+}
+
+/**
+ * Several writes as one unit: all of them land, or none do.
+ *
+ * In one message, so nothing else the app does can run between them: a
+ * BEGIN sent as its own message would let another screen's write join this
+ * transaction, and a ROLLBACK would then take that write with it. Saving a
+ * meal was four separate writes before 15 Oct 2026, and the phone closing
+ * the app between them left a meal with some of its items, silently.
+ */
+function transaction(statements: { sql: string; bind?: unknown[] }[]): number {
+  if (!db) throw new Error('database not open');
+  db.exec({ sql: 'BEGIN' });
+  try {
+    for (const s of statements) db.exec({ sql: s.sql, bind: s.bind });
+    db.exec({ sql: 'COMMIT' });
+    return statements.length;
+  } catch (e) {
     db.exec({ sql: 'ROLLBACK' });
     throw e;
   }
@@ -470,6 +493,9 @@ self.onmessage = async (ev: MessageEvent<Req>) => {
         break;
       case 'weekly':
         reply({ id: req.id, ok: true, result: await weekly(req.now) });
+        break;
+      case 'tx':
+        reply({ id: req.id, ok: true, result: transaction(req.statements) });
         break;
     }
   } catch (e) {
